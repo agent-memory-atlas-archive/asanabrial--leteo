@@ -6,6 +6,14 @@ All notable changes to Leteo are documented in this file.
 
 ### Fixed
 
+- **Two tools described their `relation` argument as a "Verdict", and an agent read the
+  description as the key name.** `mem_judge` and `mem_compare` publish the argument as
+  `relation`, but the `description` beside it began with the word "Verdict" — the slot where a
+  key name would sit. On 2026-09-27 an agent that had just listed the tool called `mem_judge`
+  with `verdict: "related"`; the call was refused before it ran (`relation: Missing key`) and
+  retried correctly eight seconds later. The two descriptions now say how the two observations
+  relate; the key and the six accepted verbs are unchanged (#109).
+
 - **The Windows binary needed a runtime the docs said it did not.** Every
   Windows release so far linked the MSVC CRT and UCRT dynamically, so
   `leteo.exe` imported `VCRUNTIME140.dll` and ten `api-ms-win-crt-*.dll`

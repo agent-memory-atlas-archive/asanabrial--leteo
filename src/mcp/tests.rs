@@ -4774,6 +4774,10 @@ fn a_parameter_this_surface_does_not_have_is_refused() {
             "mem_compare",
             json!({ "memory_id_a": 1, "memory_id_b": 2, "relation": "related", "reason": "x" }),
         ),
+        (
+            "mem_judge",
+            json!({ "judgment_id": "rel-1", "verdict": "related" }),
+        ),
         ("mem_context", json!({ "projects": "leteo" })),
     ] {
         let error = serde_json::from_value::<serde_json::Value>(arguments.clone())
@@ -4791,6 +4795,7 @@ fn parameters_error(tool: &str, arguments: serde_json::Value) -> Option<String> 
     let result = match tool {
         "mem_search" => serde_json::from_value::<SearchParams>(arguments).err(),
         "mem_compare" => serde_json::from_value::<CompareParams>(arguments).err(),
+        "mem_judge" => serde_json::from_value::<JudgeParams>(arguments).err(),
         "mem_context" => serde_json::from_value::<ContextParams>(arguments).err(),
         other => panic!("nobody has taught this test about {other}"),
     };

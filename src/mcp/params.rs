@@ -370,7 +370,7 @@ pub(super) struct DoctorParams {
 pub(super) struct JudgeParams {
     /// Relation sync ID returned as candidates[].judgment_id by mem_save.
     pub(super) judgment_id: String,
-    /// Verdict: related, compatible, scoped, conflicts_with, supersedes, or not_conflict.
+    /// How the two observations relate: related, compatible, scoped, conflicts_with, supersedes, or not_conflict.
     pub(super) relation: String,
     /// Optional explanation for the verdict.
     pub(super) reason: Option<String>,
@@ -389,7 +389,7 @@ pub(super) struct CompareParams {
     pub(super) memory_id_a: i64,
     /// Integer ID of the second observation.
     pub(super) memory_id_b: i64,
-    /// Verdict: related, compatible, scoped, conflicts_with, supersedes, or not_conflict.
+    /// How the two observations relate: related, compatible, scoped, conflicts_with, supersedes, or not_conflict.
     pub(super) relation: String,
     /// Optional confidence score in the inclusive range 0.0..1.0.
     ///
