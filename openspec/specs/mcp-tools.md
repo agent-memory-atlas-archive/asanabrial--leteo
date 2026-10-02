@@ -698,6 +698,16 @@ useful part out of a context window has failed even if every field is right.
     byte-identical between a new-revision session and a legacy one, and the
     guard confirmed by removing each setter and watching it fail.
 
+15. **The server instructions fit the client that delivers them.** The
+    `instructions` block is what an agent reads before it calls anything, and
+    Claude Code cuts it at 2,048 characters, appending `… [truncated]`. The
+    block rendered to 2,246, so every session silently lost the whole SUMMARIES
+    paragraph and the tail of CONFLICTS — the rules that keep a summary
+    findable. It is now shorter than the bound with margin and still states
+    every rule it carried, and `SERVER_INSTRUCTIONS_LIMIT` in `src/mcp/mod.rs`
+    is the one constant the test counts against, so lengthening the text past
+    the bound fails rather than truncating again.
+
 ## Invariants
 
 - Titles printed into anything an agent reads are folded to a single line and
