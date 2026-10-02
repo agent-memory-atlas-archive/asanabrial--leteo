@@ -96,6 +96,7 @@ mod tests {
             app_data: None,
             claude_config: None,
             dsh_home: None,
+            pi_agent_dir: None,
         }
     }
 

@@ -164,6 +164,8 @@ pub struct SetupOptions {
     pub app_data: Option<PathBuf>,
     pub executable: Option<PathBuf>,
     pub dsh_home: Option<PathBuf>,
+    pub claude_config: Option<PathBuf>,
+    pub pi_agent_dir: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -224,6 +226,7 @@ struct SetupEnvironment {
     executable: PathBuf,
     claude_config: Option<PathBuf>,
     dsh_home: Option<PathBuf>,
+    pi_agent_dir: Option<PathBuf>,
 }
 
 impl SetupEnvironment {
@@ -858,8 +861,44 @@ fn is_leteo_hook_entry(entry: &Value) -> bool {
         })
 }
 
+/// The root directories setup may take from the process environment.
+///
+/// Gathered into one value rather than read at each place a path is built, so a
+/// test can substitute the whole set instead of writing to the process
+/// environment. `std::env::set_var` is `unsafe` in the 2024 edition precisely
+/// because it races every other thread, and a test that called it would decide
+/// for the whole suite which directory setup reads. `SetupOptions` overrides
+/// every field here, so a test that names them all never resolves this
+/// machine's.
+#[derive(Debug, Clone)]
+struct EnvironmentRoots {
+    config_home: Option<PathBuf>,
+    app_data: Option<PathBuf>,
+    claude_config: Option<PathBuf>,
+    dsh_home: Option<PathBuf>,
+    pi_agent_dir: Option<PathBuf>,
+}
+
+impl EnvironmentRoots {
+    fn from_process() -> Self {
+        Self {
+            config_home: env::var_os("XDG_CONFIG_HOME").map(PathBuf::from),
+            app_data: env::var_os("APPDATA").map(PathBuf::from),
+            claude_config: env::var_os("CLAUDE_CONFIG_DIR").map(PathBuf::from),
+            dsh_home: env::var_os("DSH_HOME").map(PathBuf::from),
+            pi_agent_dir: env::var_os("PI_CODING_AGENT_DIR").map(PathBuf::from),
+        }
+    }
+}
+
 impl SetupEnvironment {
     fn resolve(options: &SetupOptions) -> Result<Self> {
+        Self::resolve_with(options, &EnvironmentRoots::from_process())
+    }
+
+    /// `resolve` with the environment handed in, so a test can prove that
+    /// `SetupOptions` overrides every root the environment could supply.
+    fn resolve_with(options: &SetupOptions, environment: &EnvironmentRoots) -> Result<Self> {
         let platform = options.platform.unwrap_or_else(Platform::current);
         let home = match &options.home_dir {
             Some(path) => path.clone(),
@@ -867,14 +906,10 @@ impl SetupEnvironment {
         };
         require_absolute(&home, "home directory")?;
 
-        let config_home = resolve_optional_root(
-            options.config_home.clone(),
-            env::var_os("XDG_CONFIG_HOME").map(PathBuf::from),
-        );
-        let app_data = resolve_optional_root(
-            options.app_data.clone(),
-            env::var_os("APPDATA").map(PathBuf::from),
-        );
+        let config_home =
+            resolve_optional_root(options.config_home.clone(), environment.config_home.clone());
+        let app_data =
+            resolve_optional_root(options.app_data.clone(), environment.app_data.clone());
         let executable = match &options.executable {
             Some(path) => path.clone(),
             None => env::current_exe().context("resolve the Leteo executable")?,
@@ -896,12 +931,13 @@ impl SetupEnvironment {
             // so one run cannot resolve half its paths against one directory
             // and half against another.
             claude_config: resolve_optional_root(
-                None,
-                env::var_os("CLAUDE_CONFIG_DIR").map(PathBuf::from),
+                options.claude_config.clone(),
+                environment.claude_config.clone(),
             ),
-            dsh_home: resolve_optional_root(
-                options.dsh_home.clone(),
-                env::var_os("DSH_HOME").map(PathBuf::from),
+            dsh_home: resolve_optional_root(options.dsh_home.clone(), environment.dsh_home.clone()),
+            pi_agent_dir: resolve_optional_root(
+                options.pi_agent_dir.clone(),
+                environment.pi_agent_dir.clone(),
             ),
         })
     }
@@ -919,9 +955,8 @@ impl SetupEnvironment {
     }
 
     fn pi_agent_dir(&self) -> PathBuf {
-        env::var_os("PI_CODING_AGENT_DIR")
-            .map(PathBuf::from)
-            .filter(|path| path.is_absolute())
+        self.pi_agent_dir
+            .clone()
             .unwrap_or_else(|| self.home.join(".pi").join("agent"))
     }
 

@@ -14,6 +14,9 @@ fn probe_in(directory: &Path) -> SetupOptions {
         home_dir: Some(directory.to_path_buf()),
         config_home: Some(directory.join("config")),
         app_data: Some(directory.join("appdata")),
+        dsh_home: Some(directory.join(".dsh")),
+        claude_config: Some(directory.join(".claude")),
+        pi_agent_dir: Some(directory.join(".pi").join("agent")),
         ..SetupOptions::default()
     }
 }

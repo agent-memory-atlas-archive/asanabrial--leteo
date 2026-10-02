@@ -1068,5 +1068,11 @@
     "file": ".github/workflows/release.yml",
     "old": "            type=semver,pattern={{major}}.{{minor}}\n      # No guard on the digests being there. `needs: container` is satisfied\n",
     "new": "            type=semver,pattern={{major}}.{{minor}}\n          flavor: prefix=v\n      # No guard on the digests being there. `needs: container` is satisfied\n"
+  },
+  {
+    "name": "setup: the claude config override is removed from the test options",
+    "file": "src/setup/tests.rs",
+    "old": "        claude_config: Some(temp.path().join(\".claude\")),",
+    "new": "        // the override is gone"
   }
 ]
