@@ -1074,5 +1074,11 @@
     "file": "src/setup/tests.rs",
     "old": "        claude_config: Some(temp.path().join(\".claude\")),",
     "new": "        // the override is gone"
+  },
+  {
+    "name": "mcp: the server instructions run past the client's truncation",
+    "file": "src/mcp/mod.rs",
+    "old": "summary beginning with a date is one nobody can find again.\";",
+    "new": "summary beginning with a date is one nobody can find again, and this sentence exists only to push the block past the bound a client truncates at so the guard can be watched failing before it is trusted, which is the whole point of breaking the thing a test claims to protect rather than assuming that a green run means anything at all about what it holds.\";"
   }
 ]

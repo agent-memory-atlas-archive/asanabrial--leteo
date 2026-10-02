@@ -1839,6 +1839,26 @@ fn the_server_instructions_name_real_tools_and_describe_real_behaviour() {
     );
 }
 
+/// The server instructions fit the length a client will actually deliver.
+///
+/// Claude Code cuts them at `SERVER_INSTRUCTIONS_LIMIT` and appends
+/// `… [truncated]`, so a block that runs past it reaches the agent with its
+/// last rules missing and nothing saying so: the whole SUMMARIES paragraph was
+/// lost this way. Counted in Unicode scalar values, which is what the client
+/// counts, and held against the one constant the production code defines.
+#[test]
+fn the_server_instructions_fit_the_limit_a_client_will_deliver() {
+    let instructions = super::SERVER_INSTRUCTIONS;
+    let length = instructions.chars().count();
+    assert!(
+        length <= super::SERVER_INSTRUCTIONS_LIMIT,
+        "the server instructions render to {length} characters, past the {} a \
+         client truncates at; shorten them, or move a rule into the tool \
+         description it belongs to",
+        super::SERVER_INSTRUCTIONS_LIMIT
+    );
+}
+
 #[test]
 fn saving_the_same_memory_again_asks_no_new_questions() {
     let (_temp, server) = test_server(McpOptions::default());

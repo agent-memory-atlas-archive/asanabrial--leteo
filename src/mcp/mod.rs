@@ -682,6 +682,20 @@ fn strip_numeric_formats(value: &mut serde_json::Value) {
     }
 }
 
+/// The longest the server instructions may render to before a client cuts them.
+///
+/// Claude Code truncates MCP server instructions at 2,048 characters and
+/// appends `… [truncated]`; everything past that never reaches the agent. The
+/// text rendered to 2,246, so every session lost the whole SUMMARIES paragraph
+/// and the tail of CONFLICTS without anything saying so. One constant, read by
+/// the test that holds the bound, rather than a number written in two places.
+///
+/// `cfg(test)` because nothing in production reads it: the server sends the
+/// block as it is, and the bound is the client's. The test is the enforcement,
+/// so the constant lives where the text it measures does.
+#[cfg(test)]
+const SERVER_INSTRUCTIONS_LIMIT: usize = 2048;
+
 const SERVER_INSTRUCTIONS: &str = "\
 Local-first persistent memory tools backed by the Leteo SQLite store.
 
@@ -690,38 +704,34 @@ happen. Start a session with mem_session_start and close it with \
 mem_session_summary.
 
 CONTEXT: if this session opened with a block of remembered work, you already \
-have it and mem_context repeats it — measured on a real store, the opening \
-block named fifty memories in 11 KB and mem_context answered with twenty of \
-those same fifty in 22 KB. Call it when no such block arrived, when you have \
-lost it mid-session, or for a project other than this one.
+have it and mem_context repeats it. Call mem_context when no such block \
+arrived, when you have lost it mid-session, or for a project other than this \
+one.
 
-PROJECTS: writes belong to the project detected from the working directory, or \
-to the project of an explicit session_id. An explicit project argument is \
+PROJECTS: a write belongs to the project detected from the working directory, \
+or to the project of an explicit session_id. An explicit project argument is \
 accepted only when it matches that detection or names a project the store \
-already holds; anything else fails with unknown_project. Create a genuinely new \
-project with mem_session_start.
+already holds; anything else fails with unknown_project. Create a new project \
+with mem_session_start.
 
-AMBIGUOUS DIRECTORIES: when a call returns error code ambiguous_project, the \
-directory holds several projects. Ask the user which one this belongs to, then \
-retry the same call with project=<their choice>, \
+AMBIGUOUS DIRECTORIES: when a call returns ambiguous_project, the directory \
+holds several projects. Ask the user which one it belongs to, then retry with \
+project=<choice>, \
 project_choice_reason=user_selected_after_ambiguous_project, and the \
-recovery_token from that error. mem_session_start is the exception and its \
-error says so: it takes project=<choice> on its own, because naming a project \
-is what it is for. Never guess the project yourself.
+recovery_token from the error. mem_session_start takes project=<choice> on its \
+own. Never guess the project yourself.
 
-CONFLICTS: when mem_save reports candidates, judge each one with mem_judge \
-using its own judgment_id, in that same turn, and settle every verdict \
-yourself — related, compatible, scoped, conflicts_with, supersedes, \
-not_conflict. Never put one to the user and never report it: this is Leteo's \
-bookkeeping, not work they asked for, and mem_judge replaces a verdict \
-wholesale so a wrong one is a correction rather than damage. A pair left \
+CONFLICTS: when mem_save reports candidates, judge each with mem_judge using \
+its own judgment_id, in the same turn, and settle every verdict yourself: \
+related, compatible, scoped, conflicts_with, supersedes, not_conflict. Never \
+put one to the user and never report it; mem_judge replaces a verdict \
+wholesale, so a wrong one is a correction rather than damage. A pair left \
 unjudged is not deferred, it is dropped: nothing raises it again until a \
-session opens, which is why an opening that hands you pairs is handing you \
-work to finish then.
+session opens.
 
-SUMMARIES: mem_session_summary takes the session's own title from the first \
-line of the content that is not a heading, so open with what the session was \
-for. A summary beginning with a date is one nobody can find again.";
+SUMMARIES: mem_session_summary takes the session's title from the first line \
+of the content that is not a heading, so open with what the session was for. A \
+summary beginning with a date is one nobody can find again.";
 
 pub async fn run_stdio_with_options(
     store: Arc<Mutex<Store>>,
