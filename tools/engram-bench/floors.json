@@ -1,0 +1,19 @@
+{
+  "raise_margin": 0.02,
+  "mrr": {
+    "ALL": 0.707,
+    "longnl": 0.76,
+    "multiword": 0.923,
+    "paraphrase": 0.826,
+    "partial": 0.23,
+    "short": 0.875,
+    "spanish": 0.515,
+    "typo": 0.615
+  },
+  "bytes": {
+    "context": 6600,
+    "search_latency": 10600,
+    "search_long_bodies": 12100,
+    "search_service": 10500
+  }
+}
