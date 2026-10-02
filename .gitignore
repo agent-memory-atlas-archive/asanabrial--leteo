@@ -107,3 +107,4 @@ tools/demo/loop.cast
 # Python bytecode, from the chart generator under tools/chart.
 __pycache__/
 *.pyc
+__pycache__/

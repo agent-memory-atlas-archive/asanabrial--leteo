@@ -100,9 +100,10 @@ jobs:
     # Protection therefore lists one context per leg of this matrix plus one
     # for each job that is not a matrix, and the count is part of the trap: #42
     # set it to three, #45 added `ubuntu-22.04-arm` for four, #48 brought
-    # `cloud-tests` and `container-images` in for six, and #58 added the arm64
-    # container job for seven. Whoever changes the matrix next changes the
-    # required checks with it, whether or not they touch this line.
+    # `cloud-tests` and `container-images` in for six, #58 added the arm64
+    # container job for seven, and #128 added `search-quality` for eight. Whoever changes the
+    # matrix next changes the required checks with it, whether or not they touch
+    # this line.
     name: Unit Tests (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
@@ -365,3 +366,30 @@ jobs:
           platforms: linux/arm64
           cache-from: type=gha,scope=linux/arm64
           cache-to: type=gha,mode=max,scope=linux/arm64
+
+  # `cargo test` proves a search returns what its fixtures expect; it cannot say
+  # whether the ranking got worse on a corpus it was not written around. A
+  # change to a stage, a weight or a tokenizer can leave every unit test green
+  # and lose partial-word or paraphrase queries, and the same goes for a preview
+  # or a default that quietly doubles what an agent is sent per call. This job
+  # runs the release binary over the corpus in `tools/engram-bench` and fails
+  # when a query kind's MRR falls below, or a reply grows past, the numbers in
+  # `tools/engram-bench/floors.json`.
+  #
+  # Linux only, like `cloud-tests`: ranking transfers between SQLite builds and
+  # timing does not (`openspec/specs/search.md`), so nothing here gates on time.
+  # It is printed and left alone. Stock `python3` is all it needs, and the store
+  # is created in a temporary directory the script owns.
+  search-quality:
+    name: Search Quality
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - run: cargo build --release --locked
+      - run: python3 tools/engram-bench/ratchet.py
+        env:
+          LETEO_BIN: ${{ github.workspace }}/target/release/leteo

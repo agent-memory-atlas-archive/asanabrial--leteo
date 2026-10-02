@@ -210,6 +210,17 @@ before any of it.
 - Ranking transfers between SQLite builds; timing does not, and neither does
   query *construction*. A measurement of search quality made anywhere other than
   through this binary's own query builder is a measurement of something else.
+- Search quality has a floor that CI enforces. `tools/engram-bench/ratchet.py`
+  saves a fixed synthetic corpus into a fresh store through `mem_save`, asks every
+  query it defines, in several kinds, through `mem_search`, and fails when any
+  kind's mean reciprocal rank, or the overall one, is below its entry in
+  `tools/engram-bench/floors.json`. The same file holds a byte ceiling for
+  twenty-result `mem_search` replies and for `mem_context` with its defaults,
+  because a change that keeps ranking and doubles what every call sends is a
+  regression too. A run that evaluated fewer queries than the corpus defines, or
+  could not start the binary, fails rather than passes. Time is printed and never
+  gated, for the reason in the previous item. A change that moves a number
+  deliberately edits `floors.json` in the same commit; see `tools/README.md`.
 
 ## Where it lives
 
@@ -217,6 +228,8 @@ before any of it.
 - `src/memory/normalize.rs` — `fts_query`, `topic_key`, and the narrowing folds
 - `src/store/schema.rs` — the two indexes and the triggers that feed them
 - `src/store/tests/search.rs` — the stage-by-stage tests
+- `tools/engram-bench/ratchet.py`, `floors.json` — the quality and reply-size
+  floors, run by the `search-quality` job in `.github/workflows/ci.yml`
 
 ## Related
 

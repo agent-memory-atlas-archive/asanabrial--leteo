@@ -2,8 +2,8 @@
 
 Not part of the binary. Nothing here ships.
 
-Two small crates, each its own workspace. `mutate` depends on nothing from
-`leteo` on purpose: it edits `src/` and then runs `cargo test` on it, and built
+Two small crates, each its own workspace, and one Python harness. `mutate`
+depends on nothing from `leteo` on purpose: it edits `src/` and then runs `cargo test` on it, and built
 as part of the crate it mutates it would be rebuilt *from the mutated source*
 before the suite could run. `retrieval` does depend on `leteo`, and that is
 equally deliberate — it measures the ranking statement the product issues
@@ -174,3 +174,77 @@ prompt-to-memory pairs, where rarest-six raised top-three hits from 28% to 34%
 and *lost* on precision, 20% against 23%. That is the right instrument for this
 question and this is not it. Settling it needs questions somebody actually
 asked, which is why `mem_save` now records the prompt a memory answers.
+
+## `engram-bench` — a floor under search quality, and the same data on both engines
+
+The corpus is 170 synthetic memories in two projects and 117 queries of seven
+kinds — paraphrase, short, Spanish, partial word, typo, several words, a long
+natural-language question — each with the one memory it should find. Two things
+use it.
+
+`ratchet.py` needs nothing but Leteo and stock `python3`. It saves the corpus
+into a fresh store in a temporary directory through `mem_save`, runs every query
+through `mem_search` at limit 20, and compares mean reciprocal rank per kind and
+overall, and the bytes of twenty-result searches and of `mem_context`,
+against `floors.json`. CI runs it as the `search-quality` job.
+
+```bash
+cargo build --release
+LETEO_BIN=target/release/leteo python3 tools/engram-bench/ratchet.py
+```
+
+`LETEO_BIN` has no default here, because `leteo` on `PATH` is usually an
+installed release and not the build under test.
+
+It exits 1 and names every breach with its measured value and its floor. It
+exits 2 if it could not run at all — a missing binary, a tool error, a save that
+did not insert, fewer queries evaluated than the corpus defines — because a
+suite that can pass having executed nothing guards nothing. Time is printed and
+not gated: it does not transfer between SQLite builds, ranking does.
+
+`floors.json` is the only place the numbers live. Floors are the measured MRR
+rounded down to three decimals; ceilings are the measured bytes rounded up to
+the next hundred. When a run prints `RAISE?` a kind is two points or more above
+its floor. To raise floors after an improvement, or to move them on purpose,
+run `python3 tools/engram-bench/ratchet.py --propose`, which prints a
+replacement file under those two rules, and commit it with the change that
+moved the numbers. A floor is never lowered to make a red run green without a
+sentence in the commit saying what was given up and why.
+
+A guard is checked by breaking what it protects. Disabling a relaxed search
+stage failed the ratchet on the kinds that depend on it, and raising
+`PREVIEW_BYTES` failed it on the byte ceilings; both were put back and the diff
+of the file came back empty.
+
+The second use is the comparison with Engram, on identical data: the corpus is
+saved into a fresh Engram store through Engram's own CLI, a copy of that store
+is adopted with `leteo import --from-engram`, and both engines are asked the
+same queries through their own MCP `mem_search`. Ids survive adoption, so one
+answer key serves both.
+
+```bash
+export ENGRAM_BIN=/path/to/engram LETEO_BIN=target/release/leteo
+export BENCH_STATE=$(mktemp -d)        # every store lives here, never in HOME
+python3 tools/engram-bench/load_engram.py
+sh tools/engram-bench/load_leteo.sh
+python3 tools/engram-bench/bench_search.py   # hit@1, hit@5, MRR per query kind
+ENGRAM_SRC=/path/to/engram-checkout python3 tools/engram-bench/bench_cost.py
+```
+
+`bench_cost.py` needs an Engram source checkout because Engram's
+session-start hook is a shell script in its tree, not part of its binary.
+`bench_any.py` reruns Engram with its opt-in `match_mode: "any"`, which agents
+only get if they ask for it.
+
+Measured on 2026-10-02 against Engram v3.0.0 and Leteo 3400f80: overall MRR
+0.266 for Engram against 0.707 for Leteo. Leteo leads on every query kind but
+one — partial words (`storyb`, `pgxpo`), where Engram scores 0.923 against
+Leteo's 0.231, because Engram indexes trigrams and Leteo indexes words and
+stems. That 0.231 is now a floor, not a target: the ratchet holds what is
+there and says nothing about what is missing.
+
+Two limits to keep in view before quoting any of it. The corpus and queries are
+synthetic and were written knowing how both engines search, so paraphrases
+deliberately avoid the memories' words — exactly where Leteo's relaxed stages
+help; questions real agents asked would be the stronger test. And precision is
+barely measured: there is no set of queries that should find nothing.
