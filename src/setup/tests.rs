@@ -15,6 +15,13 @@ fn options(temp: &TempDir) -> SetupOptions {
         // runs Leteo inside the harness would otherwise leak the real store
         // into the test.
         dsh_home: Some(temp.path().join(".dsh")),
+        // And the other two roots setup takes from the environment. Without
+        // these, a machine running the suite inside Claude Code with
+        // `$CLAUDE_CONFIG_DIR` set has the tests read and write the real
+        // `settings.json`; the sweep that found it is held by
+        // `setup_options_override_every_root_the_environment_could_supply`.
+        claude_config: Some(temp.path().join(".claude")),
+        pi_agent_dir: Some(temp.path().join(".pi").join("agent")),
         ..SetupOptions::default()
     }
 }
@@ -1108,6 +1115,44 @@ fn claude_paths_follow_the_config_directory_rather_than_assuming_the_profile() {
         resolve_optional_root(None, Some(PathBuf::from("relative/claude"))),
         None
     );
+}
+
+/// Every root setup can take from the process environment is overridden by
+/// `options()`, so no test resolves this machine's Claude config, harness home
+/// or Pi profile.
+///
+/// The environment is handed in rather than written to: `std::env::set_var` is
+/// `unsafe` in the 2024 edition because it races every other thread, and a test
+/// that called it would decide for the whole suite which directory setup reads.
+/// `resolve_with` is the seam that makes the same question answerable without
+/// touching it. Remove an override from `options()` and the sentinel below
+/// reaches `SetupEnvironment`, which is what this fails on.
+#[test]
+fn setup_options_override_every_root_the_environment_could_supply() {
+    let temp = TempDir::new().unwrap();
+    let sentinel = temp.path().join("environment");
+    let environment = EnvironmentRoots {
+        config_home: Some(sentinel.join("xdg")),
+        app_data: Some(sentinel.join("roaming")),
+        claude_config: Some(sentinel.join("claude")),
+        dsh_home: Some(sentinel.join("dsh")),
+        pi_agent_dir: Some(sentinel.join("pi")),
+    };
+
+    let resolved = SetupEnvironment::resolve_with(&options(&temp), &environment).unwrap();
+    for (name, root) in [
+        ("config_home", resolved.config_home.as_ref()),
+        ("app_data", resolved.app_data.as_ref()),
+        ("claude_config", resolved.claude_config.as_ref()),
+        ("dsh_home", resolved.dsh_home.as_ref()),
+        ("pi_agent_dir", resolved.pi_agent_dir.as_ref()),
+    ] {
+        let root = root.unwrap_or_else(|| panic!("options() left {name} to the environment"));
+        assert!(
+            !root.starts_with(&sentinel),
+            "options() did not override {name}, so this test read {root:?} from the environment"
+        );
+    }
 }
 
 #[test]

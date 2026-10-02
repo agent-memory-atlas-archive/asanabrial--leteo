@@ -274,10 +274,16 @@ there from any provenance, and how it says when something has gone wrong.
 - A doctor message is one sentence with no source indentation in it. A guard
   test enforces this, after five separate occurrences of a formatted Rust string
   carrying its own leading whitespace into a user-facing line.
-- **No test opens the real store.** Unit and integration tests run against a
-  temporary database they create. `tests/repository_guards.rs` walks `src/`
-  and `tests/` and fails on any absolute `.db` path, `home_dir()` join, or data
-  directory near a call that opens a store.
+- **No test opens the real store, or names the real agent configuration.** Unit
+  and integration tests run against a temporary database they create, and setup
+  tests override every root the process environment could supply —
+  `$CLAUDE_CONFIG_DIR`, `$DSH_HOME`, `$PI_CODING_AGENT_DIR`, `$XDG_CONFIG_HOME`,
+  `$APPDATA` — so a machine running the suite with them set keeps its own
+  `settings.json`. `tests/repository_guards.rs` walks `src/` and `tests/` and
+  fails on any absolute `.db` path, `home_dir()` join, or data directory near a
+  call that opens a store, and
+  `setup::tests::setup_options_override_every_root_the_environment_could_supply`
+  holds the sweep over the environment roots.
 
 ## Where it lives
 

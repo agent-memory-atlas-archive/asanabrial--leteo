@@ -283,6 +283,9 @@ fn test_app() -> App {
             home_dir: Some(std::env::temp_dir().join("leteo-tui-tests-none")),
             config_home: Some(std::env::temp_dir().join("leteo-tui-tests-none")),
             app_data: Some(std::env::temp_dir().join("leteo-tui-tests-none")),
+            dsh_home: Some(std::env::temp_dir().join("leteo-tui-tests-none")),
+            claude_config: Some(std::env::temp_dir().join("leteo-tui-tests-none")),
+            pi_agent_dir: Some(std::env::temp_dir().join("leteo-tui-tests-none")),
             ..crate::setup::SetupOptions::default()
         },
         list_height: Cell::new(ASSUMED_HEIGHT),
