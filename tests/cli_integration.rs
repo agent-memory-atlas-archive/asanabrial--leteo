@@ -1485,6 +1485,35 @@ fn the_search_command_says_which_limit_ended_the_list() {
     );
 }
 
+/// A query over the byte cap is refused before it is tokenised, and the
+/// refusal names the cap.
+///
+/// The cap is applied at the store, so `mem_search` and `leteo search` reach it
+/// through their own doors and refuse identically. The command line is where
+/// somebody pastes a log, so it is the surface that has to exit non-zero rather
+/// than print an empty array, and it has to carry the number so the next
+/// attempt can be trimmed to fit. The cap comes from the constant, not a copy.
+#[test]
+fn the_search_command_refuses_a_query_over_the_byte_cap() {
+    let cap = leteo::store::MAX_QUERY_BYTES;
+    let temp = tempfile::tempdir().expect("create CLI test directory");
+    let database = temp.path().join("leteo-query-cap.db");
+
+    let over = format!("{}b", "a ".repeat(cap / 2));
+    assert_eq!(over.len(), cap + 1);
+
+    let refusal = leteo(&database).arg("search").arg(&over).assert().failure();
+    let stderr = String::from_utf8_lossy(&refusal.get_output().stderr).to_string();
+    assert!(
+        stderr.contains(&cap.to_string()),
+        "the refusal has to name the cap of {cap} bytes: {stderr}"
+    );
+    assert!(
+        stderr.contains("over the"),
+        "and it has to read as an over-cap refusal: {stderr}"
+    );
+}
+
 #[test]
 fn a_memory_saved_from_the_terminal_records_the_question_too() {
     // Two doors into one table and only one of them attributed.

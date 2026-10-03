@@ -167,7 +167,7 @@ pub(super) struct DeleteParams {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(super) struct SearchParams {
-    /// Full-text query or an exact topic key containing a slash.
+    /// Full-text query or an exact topic key containing a slash. At most 8192 bytes of raw query; a longer one is refused with `query_too_long` before it is tokenised.
     pub(super) query: String,
     /// Restrict results to this observation category. One of: bugfix, decision, policy, architecture, discovery, pattern, config, preference. Close
     /// synonyms are folded, so `bug` finds a `bugfix`.

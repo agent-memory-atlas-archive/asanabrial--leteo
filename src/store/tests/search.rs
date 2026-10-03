@@ -273,6 +273,45 @@ fn hostile_search_queries_never_reach_the_full_text_parser() {
         .expect("scanning survives hostile titles");
 }
 
+/// A query longer than the cap is refused, and one at the cap is not.
+///
+/// The raw string had no bound, so a pasted log was tokenised whole and the
+/// strict stage built one conjunction term per distinct word. The guard reads
+/// `MAX_QUERY_BYTES` rather than a copy of the number, so it moves with the
+/// constant, and it asserts both sides of the boundary: the refusal names the
+/// cap, and the byte count exactly at it is still answered.
+#[test]
+fn a_query_over_the_byte_cap_is_refused_and_one_at_the_cap_is_not() {
+    let cap = crate::store::search::MAX_QUERY_BYTES;
+    let (_temp, store) = store();
+
+    // Exactly at the cap. `a ` repeated halves to the exact byte count, and
+    // `fts_terms` folds the repetition to one term, so this is cheap to answer
+    // as well as legal.
+    let at_the_cap = "a ".repeat(cap / 2);
+    assert_eq!(at_the_cap.len(), cap);
+    assert!(
+        store.search(&at_the_cap, SearchOptions::default()).is_ok(),
+        "a query exactly at the cap has to be answered, not refused"
+    );
+
+    // One byte past it. The whole raw query is counted, whitespace included.
+    let over = format!("{at_the_cap}b");
+    assert_eq!(over.len(), cap + 1);
+    match store.search(&over, SearchOptions::default()) {
+        Err(StoreError::QueryTooLong { bytes, cap: named }) => {
+            assert_eq!(bytes, cap + 1, "the refusal reports the size it saw");
+            assert_eq!(named, cap, "and the cap it applied");
+            let said = StoreError::QueryTooLong { bytes, cap }.to_string();
+            assert!(
+                said.contains(&cap.to_string()),
+                "the refusal has to name the cap: {said}"
+            );
+        }
+        other => panic!("an over-long query must be refused: {other:?}"),
+    }
+}
+
 #[test]
 fn doctor_reports_sqlite_fts_foreign_keys_and_journal_health() {
     let opening = std::time::Instant::now();

@@ -527,6 +527,14 @@ useful part out of a context window has failed even if every field is right.
    was walked in the check and in its test, and copied out by hand in the three
    places somebody actually reads.
 
+   And a query the store will not tokenise carries its own code rather than the
+   one an empty query gets. An over-long query answers `query_too_long` and
+   names the size it saw and the cap, where `invalid_search` is the empty query:
+   two different mistakes with different remedies — type something, or trim what
+   you typed — and an agent reading only the code has to be able to tell them
+   apart. The cap, its unit and the measurement behind it are in
+   [`search.md`](search.md) §14.
+
 11. **A description earns its bytes.** `tools/list` is what every agent reads
     before it can do anything, and it is the largest fixed cost Leteo imposes.
     Output schemas are 28,069 bytes of it and input schemas 12,780 (59% and

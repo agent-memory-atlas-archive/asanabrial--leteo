@@ -431,6 +431,18 @@ pub enum StoreError {
     ObservationNotFound(i64),
     #[error("search query cannot be empty")]
     EmptySearch,
+    /// A query longer than the store will tokenise.
+    ///
+    /// The raw query string had no bound at all, so a pasted log was tokenised
+    /// whole and the strict stage built a conjunction with one term per distinct
+    /// word. The cap and the measurement behind it are in
+    /// `search::MAX_QUERY_BYTES`; this is the refusal, and it names both numbers
+    /// because "too long" without the ceiling leaves a caller guessing at the
+    /// next attempt. Its own error code (`query_too_long`) rather than
+    /// `invalid_search`, so a refusal a caller can fix by trimming is not
+    /// confused with the empty query that is a different mistake.
+    #[error("search query is {bytes} bytes, over the {cap}-byte maximum")]
+    QueryTooLong { bytes: usize, cap: usize },
     #[error("relation not found: {0}")]
     RelationNotFound(String),
     #[error(
@@ -977,6 +989,7 @@ use wire::*;
 pub(crate) mod search;
 pub use search::Correction;
 pub(crate) use search::DEFAULT_SEARCH_LIMIT;
+pub use search::MAX_QUERY_BYTES;
 
 mod observations;
 
