@@ -679,6 +679,12 @@ pub(super) struct ProjectStatsOutput {
     pub(super) observation_count: i64,
     pub(super) session_count: i64,
     pub(super) prompt_count: i64,
+    /// The newest instant anything happened in this project, carried so the
+    /// per-project detail `mem_stats` sends an agent to can answer the same
+    /// question its bounded list does. Absent only for a project whose every row
+    /// lacks a timestamp.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) last_activity: Option<String>,
     pub(super) directories: Vec<String>,
 }
 
@@ -689,6 +695,7 @@ impl From<crate::memory::model::ProjectStats> for ProjectStatsOutput {
             observation_count: value.observation_count,
             session_count: value.session_count,
             prompt_count: value.prompt_count,
+            last_activity: value.last_activity,
             directories: value.directories,
         }
     }
@@ -1639,10 +1646,10 @@ pub(super) struct StatsOutput {
     pub(super) total_sessions: i64,
     pub(super) total_observations: i64,
     pub(super) total_prompts: i64,
-    /// Each project the store knows, most recently active first, at most the
-    /// store's list ceiling — the same one every other list here is bounded by.
-    /// `projects_omitted` says how many it left out, so a bounded list is not
-    /// read as the whole inventory.
+    /// Each project that holds at least one live memory, most recently written
+    /// first, at most the store's list ceiling — the same one every other list
+    /// here is bounded by. `projects_omitted` says how many it left out, so a
+    /// bounded list is not read as the whole inventory.
     pub(super) projects: Vec<ProjectStatOutput>,
     /// How many projects the ceiling left out. Absent when nothing was cut.
     #[serde(default, skip_serializing_if = "is_zero_usize")]

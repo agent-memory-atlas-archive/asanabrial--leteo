@@ -615,6 +615,11 @@ pub struct Stats {
     /// absent, and on a real store of nineteen that is two of them. The order
     /// is the useful part — it answers "where has anything been happening" —
     /// and `leteo projects list` is the inventory.
+    ///
+    /// `mem_stats` answers these same projects, in this same order, with their
+    /// counts and last activity, bounded by the list ceiling; it reads them from
+    /// here rather than grouping the whole table, which is the seek
+    /// `store-and-schema.md` §13 fixes.
     pub projects: Vec<String>,
 }
 

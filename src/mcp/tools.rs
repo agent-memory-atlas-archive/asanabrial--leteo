@@ -967,7 +967,7 @@ impl LeteoMcpServer {
 
     #[tool(
         name = "mem_stats",
-        description = "Get aggregate memory store statistics. Takes no arguments and counts the whole store, and lists each project's live-memory, session and prompt counts with its last activity, most recently active first. The list is bounded by the store's list ceiling and projects_omitted says how many it left out; for one project's full detail call mem_doctor with that project.",
+        description = "Get aggregate memory store statistics. Takes no arguments and counts the whole store, and lists each project that holds a memory, most recently written first, with its live-memory, session and prompt counts and its last activity. The list is bounded by the store's list ceiling and projects_omitted says how many it left out; for one project's full detail call mem_doctor with that project.",
         annotations(
             title = "Memory Stats",
             read_only_hint = true,
@@ -983,7 +983,7 @@ impl LeteoMcpServer {
         let store = self.lock_store()?;
         let stats = store.stats().map_err(store_error)?;
         let (projects, omitted) = store
-            .project_stats_bounded(store.max_context_results())
+            .project_stats_for(&stats.projects, store.max_context_results())
             .map_err(store_error)?;
         Ok(Json(StatsOutput::new(stats, projects, omitted)))
     }

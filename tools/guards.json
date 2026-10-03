@@ -1306,25 +1306,25 @@
   {
     "name": "mcp: mem_stats does not apply the project-list ceiling",
     "file": "src/store/projects.rs",
-    "old": "        projects.truncate(limit);",
-    "new": "        let _ = limit;"
+    "old": "        for name in names.iter().take(limit) {",
+    "new": "        for name in names.iter() {"
   },
   {
     "name": "mcp: mem_stats reports no omitted projects",
     "file": "src/store/projects.rs",
-    "old": "        let omitted = projects.len().saturating_sub(limit);",
+    "old": "        let omitted = names.len().saturating_sub(limit);",
     "new": "        let omitted = 0;"
   },
   {
-    "name": "store: the bounded project list loses its recency order",
+    "name": "store: a project's memory count is not read",
     "file": "src/store/projects.rs",
-    "old": "                .cmp(&left.last_activity)",
-    "new": "                .cmp(&right.last_activity)"
+    "old": "       (SELECT COUNT(*) FROM observations",
+    "new": "       (SELECT 0 FROM observations"
   },
   {
-    "name": "store: last activity never advances past the first reading",
+    "name": "store: a project's last activity is not read",
     "file": "src/store/projects.rs",
-    "old": "    if later {",
-    "new": "    if later && false {"
+    "old": "       (SELECT MAX(at) FROM (",
+    "new": "       (SELECT NULL FROM ("
   }
 ]

@@ -448,8 +448,8 @@ useful part out of a context window has failed even if every field is right.
 
    The general rule, guarded rather than remembered: a field called `count`
    carries a description saying what it counts. A list is the same question in
-   another shape — `mem_stats` answers `projects` with one entry per project the
-   store knows, most recently active first, each carrying its live-memory,
+   another shape — `mem_stats` answers `projects` with one entry per project that
+   holds a memory, most recently written first, each carrying its live-memory,
    session and prompt counts and the newest instant anything happened in it. The
    list is bounded by the store's list ceiling and `projects_omitted` counts what
    the ceiling left out, so a bounded list is not read as the whole inventory;

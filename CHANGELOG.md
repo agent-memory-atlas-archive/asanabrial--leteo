@@ -30,9 +30,10 @@ All notable changes to Leteo are documented in this file.
   which answers "which projects are there" but not "which one is real" — the question
   after an `unknown_project` or an `ambiguous_project`. Each entry now carries the
   project's live-memory, session and prompt counts and its last activity, most recently
-  active first, over every project the store knows rather than only those with a live
-  memory, and the list is bounded by the store's own list ceiling with `projects_omitted`
-  counting what it left out, so a bounded list is not read as the whole inventory (#129).
+  written first, and the list is bounded by the store's own list ceiling with
+  `projects_omitted` counting what it left out, so a bounded list is not read as the
+  whole inventory. `mem_doctor`'s per-project detail carries the same last activity, so
+  a project past the ceiling can still be asked for it (#129).
 
 ### Fixed
 

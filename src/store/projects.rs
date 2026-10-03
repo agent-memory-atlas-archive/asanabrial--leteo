@@ -369,8 +369,9 @@ impl Store {
             .map_err(StoreError::from)
     }
 
-    /// Aggregates observation, session, and prompt counts per project, plus the
-    /// distinct session directories each project has been used from.
+    /// Aggregates observation, session, and prompt counts per project, the
+    /// newest instant anything happened in it, and the distinct session
+    /// directories each project has been used from.
     pub fn list_projects_with_stats(&self) -> Result<Vec<ProjectStats>, StoreError> {
         let mut projects: BTreeMap<String, ProjectStats> = BTreeMap::new();
 
@@ -462,28 +463,45 @@ impl Store {
         Ok(projects)
     }
 
-    /// The per-project counts an agent reads through `mem_stats`: the same
-    /// aggregation as [`Self::list_projects_with_stats`], most recently active
-    /// first, cut to `limit`, with how many the cut left out.
+    /// The per-project counts an agent reads through `mem_stats`.
     ///
-    /// The order is the useful part — it answers "where has anything been
-    /// happening" — and the count of what was left out is what keeps a bounded
-    /// list from reading as the whole inventory. `mem_stats` passes the store's
-    /// own list ceiling, so this list and every other one on the surface are
-    /// bounded by the same number.
-    pub fn project_stats_bounded(
+    /// `names` is the list to answer for, already in the order the reply sends
+    /// them: `mem_stats` reads it from [`Store::stats`], which resolves each
+    /// project by seek rather than by grouping the whole table — the shape
+    /// `store-and-schema.md` §13 fixes. Each name in the head is then one query,
+    /// so the work is proportional to the ceiling and not to the store, and the
+    /// names past the ceiling are counted rather than answered.
+    ///
+    /// The `directories` [`ProjectStats`] also carries are left empty: `mem_stats`
+    /// sends no directory, and filling them here would be a second query per
+    /// project for a field nobody reads.
+    pub fn project_stats_for(
         &self,
+        names: &[String],
         limit: usize,
     ) -> Result<(Vec<ProjectStats>, usize), StoreError> {
-        let mut projects = self.list_projects_with_stats()?;
-        projects.sort_by(|left, right| {
-            right
-                .last_activity
-                .cmp(&left.last_activity)
-                .then_with(|| left.name.cmp(&right.name))
-        });
-        let omitted = projects.len().saturating_sub(limit);
-        projects.truncate(limit);
+        let omitted = names.len().saturating_sub(limit);
+        let mut statement = self.connection.prepare(PROJECT_STAT_SQL)?;
+        let mut projects = Vec::with_capacity(limit.min(names.len()));
+        for name in names.iter().take(limit) {
+            let (observation_count, session_count, prompt_count, last_activity) = statement
+                .query_row([name], |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, Option<String>>(3)?,
+                    ))
+                })?;
+            projects.push(ProjectStats {
+                name: name.clone(),
+                observation_count,
+                session_count,
+                prompt_count,
+                directories: Vec::new(),
+                last_activity,
+            });
+        }
         Ok((projects, omitted))
     }
 
@@ -810,6 +828,29 @@ impl Store {
         Ok(result)
     }
 }
+
+/// One project's counts and last activity, answered by seek rather than by
+/// grouping the whole table. `?1` is the project name; the three counts and the
+/// newest instant are indexed lookups, which is what `mem_stats` pays per
+/// project it lists and why the list's own ceiling bounds the work.
+///
+/// The newest instant unions the project's live memories, its sessions (the end
+/// when there is one, the start otherwise) and its prompts, then takes the
+/// maximum. `datetime(...)` normalises each to the one `YYYY-MM-DD HH:MM:SS`
+/// shape that compares correctly as a string.
+pub(crate) const PROJECT_STAT_SQL: &str = "SELECT
+       (SELECT COUNT(*) FROM observations
+         WHERE project = ?1 AND deleted_at IS NULL),
+       (SELECT COUNT(*) FROM sessions WHERE project = ?1),
+       (SELECT COUNT(*) FROM prompts WHERE project = ?1),
+       (SELECT MAX(at) FROM (
+            SELECT datetime(created_at) AS at FROM observations
+             WHERE project = ?1 AND deleted_at IS NULL
+            UNION ALL
+            SELECT datetime(COALESCE(ended_at, started_at)) FROM sessions
+             WHERE project = ?1
+            UNION ALL
+            SELECT datetime(created_at) FROM prompts WHERE project = ?1))";
 
 /// Keeps the later of two SQLite `datetime(...)` readings.
 ///
