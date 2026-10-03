@@ -1833,7 +1833,7 @@ fn assert_storage_cut(cut: Option<crate::mcp::output::Truncation>, bound: usize,
     assert_eq!(cut.stored_bytes, bound, "{surface} stored length");
 }
 
-/// Every write surface says when the storage bound cut what it stored.
+/// Every tool that reports the bound says when it cut what it stored.
 ///
 /// A body over the bound is kept short and the tail is not kept, and the reply
 /// said nothing: the caller saw a memory saved and believed it whole.

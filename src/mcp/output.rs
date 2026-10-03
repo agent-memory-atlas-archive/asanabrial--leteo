@@ -24,7 +24,7 @@ pub(super) struct Truncation {
 
 /// Builds the storage-cut report from the pre-cut length and what was stored.
 ///
-/// One place, so every write surface reports the cut the same way and none
+/// One place, so the tools that report a cut do it the same way and none
 /// invents its own pair of numbers.
 pub(super) fn storage_truncation(
     original: Option<usize>,
