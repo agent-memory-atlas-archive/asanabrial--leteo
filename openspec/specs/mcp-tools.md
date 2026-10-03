@@ -786,6 +786,21 @@ useful part out of a context window has failed even if every field is right.
     the same rule, so `leteo save --session` cannot file under a closed session
     either.
 
+18. **A body over the storage bound is stored cut, and the write says so.** Every
+    write surface that applies `max_observation_length` — `mem_save`,
+    `mem_update`, `mem_save_prompt`, `mem_session_end`, `mem_session_summary`
+    and `mem_judge` — answers with `storage_truncation` when the bound cut what
+    it stored: `original_bytes`, the length the bound saw, and `stored_bytes`,
+    what was kept. It is a field of its own and not the preview flag beside it,
+    because they are two different cuts: `content_truncated` and its siblings
+    describe the 400-byte reply, and a body can come back whole and still be
+    stored short — which is exactly the case where the caller has to split the
+    memory, and the case the preview flag invites reading as untruncated. The
+    length is taken after redaction, so a body whose bulk was a `<private>` span
+    is stored whole and reports nothing. The field is absent when nothing was
+    cut, and the bound it reports is the one the store applied, read from the
+    store rather than restated.
+
 ## Invariants
 
 - Titles printed into anything an agent reads are folded to a single line and

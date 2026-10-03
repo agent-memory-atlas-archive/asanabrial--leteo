@@ -1822,6 +1822,222 @@ fn a_save_naming_an_ended_session_is_refused() {
         .unwrap();
 }
 
+/// Every write surface says when the storage bound cut what it stored.
+///
+/// A body over the bound is kept short and the tail is not kept, and the reply
+/// said nothing: the caller saw a memory saved and believed it whole.
+/// `content_truncated` and its siblings describe the 400-byte preview, which is
+/// a different cut, so this needs a field of its own.
+#[test]
+fn every_write_surface_reports_the_storage_cut() {
+    let (_temp, server) = test_server(McpOptions::default());
+    let bound = server.lock_store().unwrap().max_observation_length();
+    let over = "x".repeat(bound + 1);
+    server
+        .mem_session_start(Parameters(
+            serde_json::from_value(json!({
+                "id": "s-cut",
+                "project": "leteo",
+                "directory": "H:/REPO/leteo",
+            }))
+            .unwrap(),
+        ))
+        .unwrap();
+
+    let saved = server
+        .mem_save(Parameters(
+            serde_json::from_value(json!({
+                "session_id": "s-cut",
+                "title": "Over the bound",
+                "content": over.clone(),
+            }))
+            .unwrap(),
+        ))
+        .unwrap()
+        .0;
+    let cut = saved.storage_truncation.expect("a save reports the cut");
+    assert_eq!(cut.original_bytes, bound + 1);
+    assert!(cut.stored_bytes < cut.original_bytes);
+
+    // A body under the bound is stored whole and reports nothing.
+    let short = server
+        .mem_save(Parameters(
+            serde_json::from_value(json!({
+                "session_id": "s-cut",
+                "title": "Under the bound",
+                "content": "short",
+            }))
+            .unwrap(),
+        ))
+        .unwrap()
+        .0;
+    assert!(short.storage_truncation.is_none());
+
+    let updated = server
+        .mem_update(Parameters(
+            serde_json::from_value(json!({
+                "id": saved.observation.id,
+                "expected_project": "leteo",
+                "content": over.clone(),
+            }))
+            .unwrap(),
+        ))
+        .unwrap()
+        .0;
+    assert_eq!(
+        updated
+            .storage_truncation
+            .expect("an update reports the cut")
+            .original_bytes,
+        bound + 1
+    );
+
+    let prompt = server
+        .mem_save_prompt(Parameters(
+            serde_json::from_value(json!({
+                "session_id": "s-cut",
+                "project": "leteo",
+                "content": over.clone(),
+            }))
+            .unwrap(),
+        ))
+        .unwrap()
+        .0;
+    assert_eq!(
+        prompt
+            .storage_truncation
+            .expect("a prompt save reports the cut")
+            .original_bytes,
+        bound + 1
+    );
+
+    let summary = server
+        .mem_session_summary(Parameters(
+            serde_json::from_value(json!({
+                "session_id": "s-cut",
+                "project": "leteo",
+                "content": over.clone(),
+            }))
+            .unwrap(),
+        ))
+        .unwrap()
+        .0;
+    assert_eq!(
+        summary
+            .storage_truncation
+            .expect("a session summary reports the cut")
+            .original_bytes,
+        bound + 1
+    );
+
+    // Redaction is not a storage cut. This body arrives over the bound and the
+    // bound sees it after the private span is gone, so it is stored whole, and
+    // a report here would send the caller splitting a memory it kept entire.
+    let private = format!(
+        "{}<private>{}</private>",
+        "x".repeat(bound / 2),
+        "y".repeat(bound / 2)
+    );
+    assert!(private.len() > bound);
+    let private_saved = server
+        .mem_save(Parameters(
+            serde_json::from_value(json!({
+                "session_id": "s-cut",
+                "title": "Mostly private",
+                "content": private,
+            }))
+            .unwrap(),
+        ))
+        .unwrap()
+        .0;
+    assert!(
+        private_saved.storage_truncation.is_none(),
+        "a private span the bound never saw is not a storage cut"
+    );
+
+    let ended = server
+        .mem_session_end(Parameters(
+            serde_json::from_value(json!({ "id": "s-cut", "summary": over.clone() })).unwrap(),
+        ))
+        .unwrap()
+        .0;
+    assert_eq!(
+        ended
+            .storage_truncation
+            .expect("ending a session reports the cut")
+            .original_bytes,
+        bound + 1
+    );
+}
+
+/// And so does a judgment, for both texts it stores.
+#[test]
+fn a_judgment_reports_the_storage_cut_on_both_texts() {
+    let (_temp, server) = test_server(McpOptions::default());
+    let bound = server.lock_store().unwrap().max_observation_length();
+    let over = "x".repeat(bound + 1);
+    let (first, second) = {
+        let mut store = server.lock_store().unwrap();
+        store.enroll_project("leteo").unwrap();
+        store.create_session("s1", "leteo", "C:/repo").unwrap();
+        let mut save = |title: &str| {
+            store
+                .add_observation(AddObservation {
+                    session_id: "s1".to_owned(),
+                    kind: "bugfix".to_owned(),
+                    title: title.to_owned(),
+                    content: format!("the body of {title}"),
+                    tool_name: None,
+                    project: Some("leteo".to_owned()),
+                    scope: "project".to_owned(),
+                    topic_key: None,
+                    prompt_sync_id: None,
+                })
+                .unwrap()
+                .observation
+        };
+        (save("The pool leaked"), save("The pool no longer leaks"))
+    };
+    let judgment = server
+        .mem_compare(Parameters(
+            serde_json::from_value(json!({
+                "memory_id_a": second.id, "memory_id_b": first.id, "relation": "related",
+            }))
+            .unwrap(),
+        ))
+        .unwrap()
+        .0
+        .sync_id;
+
+    let verdict = server
+        .mem_judge(Parameters(
+            serde_json::from_value(json!({
+                "judgment_id": judgment,
+                "relation": "supersedes",
+                "reason": over.clone(),
+                "evidence": over.clone(),
+            }))
+            .unwrap(),
+        ))
+        .unwrap()
+        .0
+        .relation;
+    assert_eq!(
+        verdict
+            .reason_storage_truncation
+            .expect("a judgment reports the reason cut")
+            .original_bytes,
+        bound + 1
+    );
+    assert_eq!(
+        verdict
+            .evidence_storage_truncation
+            .expect("a judgment reports the evidence cut")
+            .original_bytes,
+        bound + 1
+    );
+}
+
 #[test]
 fn mem_context_carries_the_language_memories_are_written_in() {
     let (temp, server) = test_server(McpOptions::default());

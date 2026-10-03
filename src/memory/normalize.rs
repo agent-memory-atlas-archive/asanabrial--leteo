@@ -975,6 +975,16 @@ pub fn truncate_content(mut value: String, max_bytes: usize) -> String {
     value
 }
 
+/// How long the text was that the bound cut, or `None` when it cut nothing.
+///
+/// The length is taken after redaction, because that is the value the bound
+/// sees: a body whose bulk was a `<private>` span is not cut, and reporting it
+/// as cut would send the caller splitting a memory that was stored whole.
+pub fn cut_length(raw: &str, max_bytes: usize) -> Option<usize> {
+    let stripped = strip_private(raw);
+    (stripped.len() > max_bytes).then_some(stripped.len())
+}
+
 /// How much of a title the index and the caveats show.
 ///
 /// The index is what an agent chooses from: a line per memory, saying what it
