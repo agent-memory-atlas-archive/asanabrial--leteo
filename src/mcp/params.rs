@@ -73,6 +73,10 @@ pub(super) struct UpdateParams {
     /// Numeric observation identifier. Also accepted as `observation_id`.
     #[serde(alias = "observation_id")]
     pub(super) id: i64,
+    /// The project this memory is expected to belong to before the update. A
+    /// memory filed under a different one is refused with `project_mismatch`
+    /// and left untouched.
+    pub(super) expected_project: String,
     /// New observation category. One of: bugfix, decision, policy, architecture, discovery, pattern, config, preference.
     #[serde(rename = "type")]
     pub(super) kind: Option<String>,
@@ -80,7 +84,8 @@ pub(super) struct UpdateParams {
     pub(super) title: Option<String>,
     /// New content.
     pub(super) content: Option<String>,
-    /// New project.
+    /// Project to move this memory into. `expected_project` names where it is
+    /// now, and this names where it goes.
     pub(super) project: Option<String>,
     /// New scope: project, personal, or global.
     pub(super) scope: Option<String>,
@@ -151,6 +156,9 @@ pub(super) struct DeleteParams {
     /// Numeric observation identifier. Also accepted as `observation_id`.
     #[serde(alias = "observation_id")]
     pub(super) id: i64,
+    /// The project this memory is expected to belong to. A memory filed under
+    /// a different one is refused with `project_mismatch` and left untouched.
+    pub(super) expected_project: String,
     /// Permanently remove the row instead of soft-deleting it.
     #[serde(default)]
     pub(super) hard_delete: bool,
@@ -272,6 +280,9 @@ pub(super) struct PinParams {
     /// Numeric observation identifier. Also accepted as `observation_id`.
     #[serde(alias = "observation_id")]
     pub(super) id: i64,
+    /// The project this memory is expected to belong to. A memory filed under
+    /// a different one is refused with `project_mismatch` and left untouched.
+    pub(super) expected_project: String,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]

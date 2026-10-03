@@ -663,7 +663,7 @@ mod tests {
             );
         }
         let pinned = ids[0];
-        store.pin_observation(pinned).unwrap();
+        store.pin_observation(pinned, None).unwrap();
 
         let (context, listed) = assemble_counted(&store, Some("leteo"), None, 20).unwrap();
 
@@ -809,7 +809,7 @@ mod tests {
                 .observation;
             ids.push(saved.id);
         }
-        store.pin_observation(ids[0]).unwrap();
+        store.pin_observation(ids[0], None).unwrap();
 
         let context = assemble(&store, Some("leteo"), None, 20).unwrap();
 
@@ -1023,7 +1023,7 @@ And the tests could not see it, because a small store scores near zero."
         }
         // One of the two pinned, so the same assembly renders a `### Pinned`
         // line and a `### Recent Observations` line and both are checked.
-        store.pin_observation(1).unwrap();
+        store.pin_observation(1, None).unwrap();
 
         let context = assemble(&store, Some("leteo"), None, 10).unwrap();
         let previewed: Vec<&str> = context

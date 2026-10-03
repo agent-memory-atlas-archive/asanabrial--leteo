@@ -122,7 +122,7 @@ fn a_session_reads_oldest_first_and_leaves_out_deleted_rows() {
                 .id,
         );
     }
-    store.delete_observation(ids[1], false).unwrap();
+    store.delete_observation(ids[1], None, false).unwrap();
 
     let entries = store.paged_session_observations("s1", 0, 10).unwrap().rows;
     assert_eq!(

@@ -947,7 +947,7 @@ fn a_memory_deleted_since_still_leaves_a_pair_worth_closing() {
     let judgment = propose(&mut store, &kept.sync_id, &removed.sync_id);
     // Soft, which is the ordinary one: the row stays and the listing's own
     // `deleted_at IS NULL` is what hides it.
-    store.delete_observation(removed.id, false).unwrap();
+    store.delete_observation(removed.id, None, false).unwrap();
 
     let context = run(&mut store, HookEvent::SessionStart, &payload)
         .unwrap()
@@ -1773,7 +1773,7 @@ fn the_hint_does_not_hand_the_same_conversation_the_same_memory_twice() {
     let mut settled = payload.clone();
     settled.prompt = String::new();
     run(&mut store, HookEvent::PostCompaction, &settled).unwrap();
-    store.delete_observation(newer.id, true).unwrap();
+    store.delete_observation(newer.id, None, true).unwrap();
 
     let after = run(&mut store, HookEvent::UserPromptSubmit, &prompt)
         .unwrap()

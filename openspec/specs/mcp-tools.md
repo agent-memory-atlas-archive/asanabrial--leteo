@@ -708,6 +708,26 @@ useful part out of a context window has failed even if every field is right.
     is the one constant the test counts against, so lengthening the text past
     the bound fails rather than truncating again.
 
+16. **A mutating tool takes the project it is acting on, and refuses when the
+    memory is elsewhere.** `mem_update`, `mem_delete`, `mem_pin` and `mem_unpin`
+    all take `expected_project`, required by the schema. The store compares it
+    to the memory's stored project inside the same write transaction as the
+    change, and answers `project_mismatch` when they differ — naming both,
+    because either the id was wrong or the memory is filed somewhere unexpected,
+    and only the caller can tell which. A refusal changes nothing: no revision
+    count, no tombstone, no sync mutation.
+
+    Ids are not private to a project. `mem_search` with `all_projects` and the
+    elsewhere-count retry both hand out ids from other projects, so an agent
+    working in one repository can hold another repository's id and revise, pin
+    or hard-delete it by mistake — and `mem_delete` with `hard_delete` made that
+    irreversible. The check follows Engram v3.0.0, which made the same parameter
+    mandatory.
+
+    `mem_update`'s `project` is still the move target, so moving a memory takes
+    both ends: `expected_project` says where it is now and `project` says where
+    it goes. A memory that stays put needs only the one.
+
 ## Invariants
 
 - Titles printed into anything an agent reads are folded to a single line and

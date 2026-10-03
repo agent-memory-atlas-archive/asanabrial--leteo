@@ -758,7 +758,7 @@ fn a_pin_survives_an_export_and_stays_off_the_wire() {
         .add_observation(observation("s1", "Una memoria que se ancla", "Cuerpo."))
         .unwrap()
         .observation;
-    store.pin_observation(saved.id).unwrap();
+    store.pin_observation(saved.id, None).unwrap();
     // Edited *after* pinning, which is the only way a payload could carry the
     // pin: pinning itself queues nothing, so without this the wire half of
     // this test passes however the wire behaves — checked by letting the pin
@@ -766,6 +766,7 @@ fn a_pin_survives_an_export_and_stays_off_the_wire() {
     store
         .update_observation(
             saved.id,
+            None,
             UpdateObservation {
                 content: Some("Cuerpo cambiado después de anclarla.".to_owned()),
                 ..Default::default()
@@ -1194,7 +1195,7 @@ fn a_memory_crossing_the_wire_arrives_whole_except_what_stays_home() {
     input.prompt_sync_id = Some(asked.clone());
     let saved = source.add_observation(input.clone()).unwrap().observation;
     source.add_observation(input).unwrap();
-    source.pin_observation(saved.id).unwrap();
+    source.pin_observation(saved.id, None).unwrap();
     // Something for the session to lose on the way, or comparing two empty
     // summaries proves nothing.
     source
@@ -1644,6 +1645,7 @@ fn a_memory_that_leaves_a_replicated_project_is_deleted_at_the_peer() {
     store
         .update_observation(
             saved.id,
+            None,
             crate::memory::model::UpdateObservation {
                 project: Some("otro".to_owned()),
                 ..Default::default()
@@ -1661,6 +1663,7 @@ fn a_memory_that_leaves_a_replicated_project_is_deleted_at_the_peer() {
     store
         .update_observation(
             saved.id,
+            None,
             crate::memory::model::UpdateObservation {
                 title: Some("Editada estando fuera".to_owned()),
                 ..Default::default()
@@ -1679,6 +1682,7 @@ fn a_memory_that_leaves_a_replicated_project_is_deleted_at_the_peer() {
     store
         .update_observation(
             saved.id,
+            None,
             crate::memory::model::UpdateObservation {
                 project: Some("leteo".to_owned()),
                 ..Default::default()
@@ -1727,6 +1731,7 @@ fn the_tombstone_a_move_queues_is_one_a_peer_can_apply() {
     origen
         .update_observation(
             saved.id,
+            None,
             crate::memory::model::UpdateObservation {
                 project: Some("otro".to_owned()),
                 ..Default::default()

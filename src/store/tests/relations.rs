@@ -79,7 +79,7 @@ fn soft_and_hard_delete_are_journaled_and_orphan_relations() {
         )
         .unwrap();
 
-    store.delete_observation(first.id, false).unwrap();
+    store.delete_observation(first.id, None, false).unwrap();
     assert!(
         store
             .get_observation(first.id)
@@ -107,7 +107,7 @@ fn soft_and_hard_delete_are_journaled_and_orphan_relations() {
         false
     );
 
-    store.delete_observation(first.id, true).unwrap();
+    store.delete_observation(first.id, None, true).unwrap();
     assert!(matches!(
         store.get_observation(first.id),
         Err(StoreError::ObservationNotFound(_))
@@ -587,7 +587,7 @@ fn a_deleted_counterpart_stops_being_a_reason_for_care() {
         "The new way",
         "The old way",
     );
-    store.delete_observation(newer.id, false).unwrap();
+    store.delete_observation(newer.id, None, false).unwrap();
 
     assert!(
         store.caveats_for(&[older.sync_id]).unwrap().is_empty(),
@@ -835,7 +835,7 @@ fn a_memory_that_was_deleted_stops_overturning_the_one_it_replaced() {
     );
 
     // Soft delete, which is what the TUI and `mem_delete` do by default.
-    store.delete_observation(newer.id, false).unwrap();
+    store.delete_observation(newer.id, None, false).unwrap();
     assert!(
         store
             .caveats_for(std::slice::from_ref(&older.sync_id))
@@ -1407,7 +1407,7 @@ fn a_verdict_needs_both_of_the_memories_it_is_about() {
     let judged = verdict(&mut store, &kept.sync_id, &doomed.sync_id).unwrap();
     assert!(!judged.is_empty());
 
-    store.delete_observation(doomed.id, true).unwrap();
+    store.delete_observation(doomed.id, None, true).unwrap();
     let relation = store.get_relation(&judged).unwrap();
     assert_eq!(relation.judgment_status, "orphaned", "{relation:?}");
 
@@ -1449,7 +1449,7 @@ fn a_verdict_needs_both_of_the_memories_it_is_about() {
         .add_observation(observation("s1", "La que se oculta", "cuerpo tres"))
         .unwrap()
         .observation;
-    store.delete_observation(soft.id, false).unwrap();
+    store.delete_observation(soft.id, None, false).unwrap();
     assert!(verdict(&mut store, &kept.sync_id, &soft.sync_id).is_ok());
 }
 
@@ -1649,6 +1649,7 @@ fn moving_a_memory_out_of_a_project_retires_only_the_pending_proposals() {
         store
             .update_observation(
                 id,
+                None,
                 crate::memory::model::UpdateObservation {
                     project: Some("otro".to_owned()),
                     ..Default::default()
