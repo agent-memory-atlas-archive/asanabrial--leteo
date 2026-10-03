@@ -1030,7 +1030,7 @@ impl From<crate::memory::model::Caveat> for CaveatOutput {
 pub(super) struct ContextOutput {
     #[serde(flatten)]
     pub(super) project_context: ProjectEnvelope,
-    /// How many memories this answer carries, across both lists.
+    /// How many memories this answer found, across both lists.
     ///
     /// Not the length of `observations`: the newest few come with their bodies
     /// and the rest arrive in `also_remembered` as titles. Asking for fifty
@@ -1085,6 +1085,22 @@ pub(super) struct ContextOutput {
     pub(super) pinned_omitted: usize,
     pub(super) sessions: Vec<SessionSummaryOutput>,
     pub(super) prompts: Vec<PromptLineOutput>,
+    /// How many of the two memory lists the byte budget left out.
+    ///
+    /// The count ceiling and the byte budget are different bounds, and a store
+    /// whose titles or bodies are long can outgrow the byte budget while every
+    /// list is still inside its count. The answer says how many it dropped
+    /// rather than growing without a ceiling, the same way `pinned_omitted`
+    /// does. `count` stays the number found, so carried = `count` minus this
+    /// and `pinned_omitted`.
+    #[serde(default, skip_serializing_if = "is_zero_usize")]
+    pub(super) memories_omitted: usize,
+    /// How many prompts the byte budget left out.
+    #[serde(default, skip_serializing_if = "is_zero_usize")]
+    pub(super) prompts_omitted: usize,
+    /// How many sessions the byte budget left out.
+    #[serde(default, skip_serializing_if = "is_zero_usize")]
+    pub(super) sessions_omitted: usize,
 }
 
 /// A memory named rather than quoted: what it is, and how to fetch it.
@@ -1219,6 +1235,47 @@ impl ContextOutput {
                 .collect(),
             sessions: sessions.into_iter().map(Into::into).collect(),
             prompts: prompts.into_iter().map(Into::into).collect(),
+            memories_omitted: 0,
+            prompts_omitted: 0,
+            sessions_omitted: 0,
+        }
+    }
+
+    /// Drops the least important entries until the serialized answer fits
+    /// `budget_bytes`, and counts what it dropped.
+    ///
+    /// The budget is on the bytes the agent receives, so it is measured on the
+    /// serialized answer rather than on the number of entries: a count ceiling
+    /// is not a size bound, which is the defect this answers. Dropping from the
+    /// oldest end and the least informative list first keeps the newest work
+    /// and the pinned memories longest — the same order the markdown block uses,
+    /// so the two surfaces agree about what a budget costs.
+    pub(super) fn within(mut self, budget_bytes: usize) -> Self {
+        loop {
+            if serde_json::to_string(&self)
+                .map(|json| json.len())
+                .unwrap_or(0)
+                <= budget_bytes
+            {
+                return self;
+            }
+            if self.also_remembered.pop().is_some() {
+                self.memories_omitted += 1;
+                continue;
+            }
+            if self.observations.pop().is_some() {
+                self.memories_omitted += 1;
+                continue;
+            }
+            if self.prompts.pop().is_some() {
+                self.prompts_omitted += 1;
+                continue;
+            }
+            if self.sessions.pop().is_some() {
+                self.sessions_omitted += 1;
+                continue;
+            }
+            return self;
         }
     }
 }

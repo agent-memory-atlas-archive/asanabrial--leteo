@@ -78,6 +78,18 @@
     "new": "The memory comes back as a 400-character preview marked `content_truncated`; read one in full with mem_get_observation."
   },
   {
+    "name": "context: the opening block ignores its byte budget",
+    "file": "src/recall.rs",
+    "old": "        if rendered.len() <= budget_bytes || !shown.drop_one() {",
+    "new": "        if true || !shown.drop_one() {"
+  },
+  {
+    "name": "context: mem_context ignores its byte budget",
+    "file": "src/mcp/output.rs",
+    "old": "                .unwrap_or(0)\n                <= budget_bytes",
+    "new": "                .unwrap_or(0)\n                <= usize::MAX"
+  },
+  {
     "name": "mcp: clamp notice suppressed",
     "file": "src/mcp/tools.rs",
     "old": "let clamped = params.limit.is_some_and(|asked| asked > cap) && results.len() >= cap;",

@@ -409,6 +409,25 @@ impl ContextSize {
         }
     }
 
+    /// The most a rendered context may carry, in bytes.
+    ///
+    /// A memory count and per-line lengths are not a size bound: a store with
+    /// long titles and long sessions grows the block without a ceiling, and the
+    /// block is paid on every session and after every compaction. These are the
+    /// measured sizes of the three blocks — 14.8, 31.4 and 48.0 KB on a real
+    /// store, recorded in `openspec/specs/mcp-tools.md` §3 — rounded up to the
+    /// next thousand, so the ceiling sits just above where the three sizes
+    /// already are and only a store that outgrows them is cut. Derived from this
+    /// project's own measurements rather than copied from Engram's single 16 KiB
+    /// default, which is one number where this project has three.
+    pub fn bytes(self) -> usize {
+        match self {
+            Self::Slim => 15_000,
+            Self::Full => 32_000,
+            Self::Deep => 49_000,
+        }
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Slim => "slim",
@@ -487,6 +506,10 @@ pub struct Settings {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub voice_language: Option<Interface>,
     /// How many memories a session opens with. See [`ContextSize`].
+    ///
+    /// The same size also sets the block's byte budget, so a store whose rows
+    /// are long is bounded even when every list is inside its count; see
+    /// [`ContextSize::bytes`].
     ///
     /// `None` means [`ContextSize::Full`], and stays distinguishable from
     /// having chosen `full` for the same reason the languages do: a default

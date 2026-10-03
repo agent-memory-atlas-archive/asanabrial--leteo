@@ -77,8 +77,9 @@ pub fn assemble(
     project: Option<&str>,
     scope: Option<&str>,
     memories: usize,
+    budget_bytes: usize,
 ) -> Result<String, crate::StoreError> {
-    assemble_counted(store, project, scope, memories).map(|(context, _)| context)
+    assemble_counted(store, project, scope, memories, budget_bytes).map(|(context, _)| context)
 }
 
 /// [`assemble`], plus how many memories the context it built actually lists.
@@ -93,6 +94,7 @@ pub fn assemble_counted(
     project: Option<&str>,
     scope: Option<&str>,
     memories: usize,
+    budget_bytes: usize,
 ) -> Result<(String, usize), crate::StoreError> {
     let mut sessions = store.recent_sessions(project, Some(RECENT_SESSIONS))?;
     // With a ceiling of its own, the same one the recent budget takes. See
@@ -161,6 +163,7 @@ pub fn assemble_counted(
             pinned_omitted,
             &observations,
             &caveats,
+            budget_bytes,
         ),
         listed,
     ))
@@ -182,6 +185,17 @@ pub fn default_memories(store: &crate::store::Store) -> usize {
     crate::settings::load_beside(store.database_path())
         .context_size()
         .memories()
+}
+
+/// The byte budget a context carries when the caller does not say.
+///
+/// The same setting that decides the memory count decides the size, so a
+/// caller that names neither gets a block whose count and whose ceiling belong
+/// to the same [`crate::settings::ContextSize`].
+pub fn default_bytes(store: &crate::store::Store) -> usize {
+    crate::settings::load_beside(store.database_path())
+        .context_size()
+        .bytes()
 }
 
 pub const RECENT_SESSIONS: usize = 5;
@@ -255,15 +269,109 @@ pub fn format_context(
     pinned_omitted: usize,
     observations: &[Observation],
     caveats: &BTreeMap<String, Vec<Caveat>>,
+    budget_bytes: usize,
 ) -> String {
     if sessions.is_empty() && prompts.is_empty() && pinned.is_empty() && observations.is_empty() {
         return String::new();
     }
 
+    let detailed = DETAILED.min(observations.len());
+    let mut shown = Shown {
+        sessions: sessions.len(),
+        prompts: prompts.len(),
+        pinned: pinned.len(),
+        detailed: (0..detailed).collect(),
+        listed: (detailed..observations.len()).collect(),
+    };
+    let sections = Sections {
+        sessions,
+        prompts,
+        pinned,
+        pinned_omitted,
+        observations,
+        caveats,
+    };
+    // Render, and when the block is over budget drop the least important thing
+    // still in it and render again. Dropping one item at a time rather than
+    // cutting the finished string is what keeps the cut on a line boundary and
+    // what lets the count of what was left out be exact.
+    loop {
+        let rendered = render_context(&sections, &shown, budget_bytes);
+        if rendered.len() <= budget_bytes || !shown.drop_one() {
+            return rendered;
+        }
+    }
+}
+
+/// How much of each section a budgeted block still carries.
+///
+/// The newest memories are the ones the work is likely continuing from, so a
+/// block that has to lose something loses it from the oldest end and from the
+/// least informative section first: the title-only entries behind the detailed
+/// window go before the detailed previews, those before the prompts, those
+/// before the sessions, and the pinned memories last — a pin is a deliberate
+/// act, and dropping one in silence is the failure `pinned_omitted` exists to
+/// prevent.
+#[derive(Default)]
+struct Shown {
+    sessions: usize,
+    prompts: usize,
+    pinned: usize,
+    /// Indices into `observations`, newest first, shown with their content.
+    detailed: Vec<usize>,
+    /// Indices into `observations`, newest first, shown as a title only.
+    listed: Vec<usize>,
+}
+
+impl Shown {
+    /// Drops one item, the least important the block still carries.
+    fn drop_one(&mut self) -> bool {
+        if self.listed.pop().is_some() {
+            return true;
+        }
+        if self.detailed.pop().is_some() {
+            return true;
+        }
+        if self.prompts > 0 {
+            self.prompts -= 1;
+            return true;
+        }
+        if self.sessions > 0 {
+            self.sessions -= 1;
+            return true;
+        }
+        if self.pinned > 0 {
+            self.pinned -= 1;
+            return true;
+        }
+        false
+    }
+}
+
+/// The sections a context is rendered from.
+struct Sections<'a> {
+    sessions: &'a [SessionSummary],
+    prompts: &'a [Prompt],
+    pinned: &'a [Observation],
+    pinned_omitted: usize,
+    observations: &'a [Observation],
+    caveats: &'a BTreeMap<String, Vec<Caveat>>,
+}
+
+/// Renders the block the current [`Shown`] allows, and says what it left out.
+fn render_context(sections: &Sections, shown: &Shown, budget_bytes: usize) -> String {
+    let Sections {
+        sessions,
+        prompts,
+        pinned,
+        pinned_omitted,
+        observations,
+        caveats,
+    } = *sections;
     let mut context = String::from("## Memory from Previous Sessions\n\n");
-    if !sessions.is_empty() {
+    if shown.sessions > 0 {
         context.push_str("### Recent Sessions\n");
-        for session in sessions {
+        for session in &sessions[..shown.sessions] {
             let summary = session
                 .summary
                 .as_deref()
@@ -289,9 +397,9 @@ pub fn format_context(
         }
         context.push('\n');
     }
-    if !prompts.is_empty() {
+    if shown.prompts > 0 {
         context.push_str("### Recent User Prompts\n");
-        for prompt in prompts {
+        for prompt in &prompts[..shown.prompts] {
             context.push_str(&format!(
                 "- {}: {}\n",
                 prompt.created_at,
@@ -300,9 +408,9 @@ pub fn format_context(
         }
         context.push('\n');
     }
-    if !pinned.is_empty() {
+    if shown.pinned > 0 || pinned_omitted > 0 {
         context.push_str("### Pinned\n");
-        for observation in pinned {
+        for observation in &pinned[..shown.pinned] {
             context.push_str(&format!(
                 "- #{} [{}] **{}**: {}\n",
                 observation.id,
@@ -314,7 +422,8 @@ pub fn format_context(
         }
         // Said rather than swallowed: a pin is the most deliberate thing in the
         // store, and dropping one in silence is worse than the bytes it would
-        // have cost. See `pinned_observations`.
+        // have cost. See `pinned_observations`. Pins the byte budget itself
+        // drops are counted in the budget line below, not here.
         if pinned_omitted > 0 {
             context.push_str(&format!(
                 "- ({pinned_omitted} more pinned, not shown - ask for them with mem_search)\n"
@@ -322,7 +431,7 @@ pub fn format_context(
         }
         context.push('\n');
     }
-    if !observations.is_empty() {
+    if !shown.detailed.is_empty() {
         // The newest few in full, everything behind them as an index.
         //
         // Three hundred characters per memory is the shape this was inherited
@@ -336,8 +445,7 @@ pub fn format_context(
         // work is likely continuing from — and the rest become one line each.
         // That buys far more memories for far fewer tokens, which is the whole
         // point: an index of fifty beats a recital of twenty.
-        let split = DETAILED.min(observations.len());
-        let (detailed, listed) = observations.split_at(split);
+        //
         // The heading says these are previews, because they do not look like
         // previews. Measured over 2417 memories of this store: 92% of the
         // names, paths, numbers and error strings — the part the skill asks to
@@ -347,7 +455,8 @@ pub fn format_context(
         context.push_str(
             "### Recent Observations — previews; read one in full with mem_get_observation\n",
         );
-        for observation in detailed {
+        for &index in &shown.detailed {
+            let observation = &observations[index];
             context.push_str(&format!(
                 "- #{} [{}] **{}**: {}\n",
                 observation.id,
@@ -358,19 +467,43 @@ pub fn format_context(
             push_caveats(&mut context, caveats, &observation.sync_id);
         }
         context.push('\n');
-        if !listed.is_empty() {
-            context.push_str("### Also remembered — fetch with mem_get_observation\n");
-            for observation in listed {
-                context.push_str(&format!(
-                    "- #{} [{}] {}\n",
-                    observation.id,
-                    observation.kind,
-                    truncate(&observation.title, TITLE_CHARS)
-                ));
-                push_caveats(&mut context, caveats, &observation.sync_id);
-            }
-            context.push('\n');
+    }
+    if !shown.listed.is_empty() {
+        context.push_str("### Also remembered — fetch with mem_get_observation\n");
+        for &index in &shown.listed {
+            let observation = &observations[index];
+            context.push_str(&format!(
+                "- #{} [{}] {}\n",
+                observation.id,
+                observation.kind,
+                truncate(&observation.title, TITLE_CHARS)
+            ));
+            push_caveats(&mut context, caveats, &observation.sync_id);
         }
+        context.push('\n');
+    }
+    let omitted_memories = observations.len() - shown.detailed.len() - shown.listed.len();
+    let omitted_pinned = pinned.len() - shown.pinned;
+    let omitted_prompts = prompts.len() - shown.prompts;
+    let omitted_sessions = sessions.len() - shown.sessions;
+    if omitted_memories + omitted_pinned + omitted_prompts + omitted_sessions > 0 {
+        let mut parts: Vec<String> = Vec::new();
+        if omitted_memories > 0 {
+            parts.push(format!("{omitted_memories} memories"));
+        }
+        if omitted_pinned > 0 {
+            parts.push(format!("{omitted_pinned} pinned"));
+        }
+        if omitted_prompts > 0 {
+            parts.push(format!("{omitted_prompts} prompts"));
+        }
+        if omitted_sessions > 0 {
+            parts.push(format!("{omitted_sessions} sessions"));
+        }
+        context.push_str(&format!(
+            "- (cut to {budget_bytes} bytes; {} not shown - ask for memories with mem_search)\n",
+            parts.join(", ")
+        ));
     }
     context
 }
@@ -463,7 +596,7 @@ mod tests {
             );
         }
 
-        let context = assemble(&store, Some("leteo"), None, 5).unwrap();
+        let context = assemble(&store, Some("leteo"), None, 5, usize::MAX).unwrap();
         for n in 0..3 {
             assert!(
                 context.contains(&format!("A real memory {n}")),
@@ -557,7 +690,15 @@ mod tests {
             "a session that already had a summary keeps it"
         );
 
-        let context = format_context(&sessions, &[], &[], 0, &memories, &BTreeMap::new());
+        let context = format_context(
+            &sessions,
+            &[],
+            &[],
+            0,
+            &memories,
+            &BTreeMap::new(),
+            usize::MAX,
+        );
         assert!(context.contains("Ship the pagination work"), "{context}");
         assert!(!context.contains("## Goal"), "{context}");
         assert!(
@@ -583,6 +724,7 @@ mod tests {
             0,
             &[],
             &BTreeMap::new(),
+            usize::MAX,
         );
 
         assert!(
@@ -665,7 +807,8 @@ mod tests {
         let pinned = ids[0];
         store.pin_observation(pinned, None).unwrap();
 
-        let (context, listed) = assemble_counted(&store, Some("leteo"), None, 20).unwrap();
+        let (context, listed) =
+            assemble_counted(&store, Some("leteo"), None, 20, usize::MAX).unwrap();
 
         assert_eq!(
             context.matches(&format!("#{pinned} ")).count(),
@@ -684,7 +827,15 @@ mod tests {
         let observations: Vec<Observation> = (1..=50)
             .map(|n| observation(n, &format!("Memory {n:02}")))
             .collect();
-        let context = format_context(&[], &[], &[], 0, &observations, &BTreeMap::new());
+        let context = format_context(
+            &[],
+            &[],
+            &[],
+            0,
+            &observations,
+            &BTreeMap::new(),
+            usize::MAX,
+        );
 
         assert_eq!(
             context.matches("[decision] **").count(),
@@ -742,7 +893,7 @@ mod tests {
         let older = save(&mut store, "We indent with tabs");
         let newer = save(&mut store, "We indent with spaces now");
 
-        let before = assemble(&store, Some("leteo"), None, 20).unwrap();
+        let before = assemble(&store, Some("leteo"), None, 20, usize::MAX).unwrap();
         assert!(!before.contains("superseded by"), "{before}");
 
         let relation = store
@@ -762,7 +913,7 @@ mod tests {
             })
             .unwrap();
 
-        let after = assemble(&store, Some("leteo"), None, 20).unwrap();
+        let after = assemble(&store, Some("leteo"), None, 20, usize::MAX).unwrap();
 
         assert!(
             after.contains(&format!(
@@ -811,7 +962,7 @@ mod tests {
         }
         store.pin_observation(ids[0], None).unwrap();
 
-        let context = assemble(&store, Some("leteo"), None, 20).unwrap();
+        let context = assemble(&store, Some("leteo"), None, 20, usize::MAX).unwrap();
 
         for id in &ids {
             assert!(
@@ -889,8 +1040,9 @@ mod tests {
             .unwrap();
 
         for asked in [usize::MAX, usize::MAX / 2, usize::MAX / 4 + 1] {
-            let (context, listed) = assemble_counted(&store, Some("leteo"), None, asked)
-                .expect("a large limit is a small answer, not a crash");
+            let (context, listed) =
+                assemble_counted(&store, Some("leteo"), None, asked, usize::MAX)
+                    .expect("a large limit is a small answer, not a crash");
             assert!(
                 context.contains("Memory from Previous Sessions"),
                 "{asked} produced no context at all"
@@ -940,7 +1092,7 @@ And the tests could not see it, because a small store scores near zero."
             })
             .unwrap();
 
-        let context = assemble(&store, Some("leteo"), None, 10).unwrap();
+        let context = assemble(&store, Some("leteo"), None, 10, usize::MAX).unwrap();
         let entry = context
             .lines()
             .find(|line| line.starts_with("- #1 "))
@@ -1025,7 +1177,7 @@ And the tests could not see it, because a small store scores near zero."
         // line and a `### Recent Observations` line and both are checked.
         store.pin_observation(1, None).unwrap();
 
-        let context = assemble(&store, Some("leteo"), None, 10).unwrap();
+        let context = assemble(&store, Some("leteo"), None, 10, usize::MAX).unwrap();
         let previewed: Vec<&str> = context
             .lines()
             .filter(|line| line.starts_with("- #") && line.contains("**"))
@@ -1046,5 +1198,60 @@ And the tests could not see it, because a small store scores near zero."
                 title.chars().count()
             );
         }
+    }
+
+    /// A block is never larger than the budget, and says what it left out.
+    ///
+    /// The count ceiling and the byte budget are different bounds: thirty
+    /// memories inside the count can still be more bytes than the block is
+    /// allowed, and the block is paid on every session and after every
+    /// compaction. The fixture is oversized on purpose — a store whose rows are
+    /// small enough to fit would pass this without watching anything.
+    #[test]
+    fn a_block_is_never_larger_than_the_budget_and_says_what_it_dropped() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut store =
+            crate::store::Store::open(crate::store::StoreConfig::new(temp.path().join("b.db")))
+                .unwrap();
+        store.create_session("s1", "leteo", "C:/repo").unwrap();
+        for index in 0..30 {
+            store
+                .add_observation(crate::memory::model::AddObservation {
+                    session_id: "s1".to_owned(),
+                    kind: "decision".to_owned(),
+                    title: format!("Memory number {index} with a title long enough to cost bytes"),
+                    content: "cuerpo ".repeat(200),
+                    tool_name: None,
+                    project: Some("leteo".to_owned()),
+                    scope: "project".to_owned(),
+                    topic_key: None,
+                    prompt_sync_id: None,
+                })
+                .unwrap();
+        }
+
+        let budget = 2_000;
+        let (context, _) = assemble_counted(&store, Some("leteo"), None, 30, budget).unwrap();
+        assert!(
+            context.len() <= budget,
+            "the block is {} bytes against a {budget}-byte budget: {context}",
+            context.len()
+        );
+        assert!(
+            context.contains(&format!("cut to {budget} bytes")),
+            "the cut has to be counted: {context}"
+        );
+        assert!(
+            context.contains("not shown"),
+            "the cut has to name what is missing: {context}"
+        );
+        assert!(
+            context.contains("Memory number 29"),
+            "the newest memory is the one the block keeps: {context}"
+        );
+        assert!(
+            !context.contains("Memory number 0 "),
+            "the oldest memory is the one the budget drops first: {context}"
+        );
     }
 }

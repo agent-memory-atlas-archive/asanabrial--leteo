@@ -534,19 +534,22 @@ impl LeteoMcpServer {
                 .map(|held| (project.to_owned(), held as usize)),
             _ => None,
         };
-        Ok(Json(ContextOutput::new(
-            observations,
-            pinned,
-            pinned_omitted,
-            sessions,
-            prompts,
-            crate::mcp::output::ContextEnvelope {
-                project: envelope,
-                memory_language: language,
-                elsewhere,
-            },
-            &caveats,
-        )))
+        Ok(Json(
+            ContextOutput::new(
+                observations,
+                pinned,
+                pinned_omitted,
+                sessions,
+                prompts,
+                crate::mcp::output::ContextEnvelope {
+                    project: envelope,
+                    memory_language: language,
+                    elsewhere,
+                },
+                &caveats,
+            )
+            .within(settings.context_size().bytes()),
+        ))
     }
 
     #[tool(

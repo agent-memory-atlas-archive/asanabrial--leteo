@@ -5854,6 +5854,65 @@ fn the_context_tool_bounds_its_pinned_half_by_what_was_asked_for() {
     }
 }
 
+/// The context tool never answers with more bytes than the size allows.
+///
+/// The count ceiling bounds how many memories, not how large the answer is, and
+/// a store of long rows outgrows the byte budget with every list still inside
+/// its count. The fixture is sized to exceed the default `Full` budget on
+/// purpose: a store that fits would pass this without watching anything.
+#[test]
+fn a_context_answer_is_never_larger_than_the_size_byte_budget() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut store = Store::open(crate::store::StoreConfig::new(
+        temp.path().join("budget.db"),
+    ))
+    .unwrap();
+    store.create_session("s1", "leteo", "C:/repo").unwrap();
+    for index in 0..80 {
+        store
+            .add_observation(crate::memory::model::AddObservation {
+                session_id: "s1".to_owned(),
+                kind: "discovery".to_owned(),
+                title: format!("Memoria {index} {}", "漢".repeat(140)),
+                content: "漢".repeat(400),
+                tool_name: None,
+                project: Some("leteo".to_owned()),
+                scope: "project".to_owned(),
+                topic_key: None,
+                prompt_sync_id: None,
+            })
+            .unwrap();
+    }
+    let server = LeteoMcpServer::with_options(Arc::new(Mutex::new(store)), McpOptions::default());
+
+    let Json(answer) = server
+        .mem_context(Parameters(crate::mcp::params::ContextParams {
+            project: Some("leteo".to_owned()),
+            all_projects: false,
+            scope: None,
+            limit: Some(80),
+            session_limit: 5,
+            prompt_limit: 10,
+        }))
+        .expect("the context answers");
+    let budget = crate::settings::ContextSize::Full.bytes();
+    let serialized = serde_json::to_string(&answer).expect("the answer serializes");
+    assert!(
+        serialized.len() <= budget,
+        "the answer is {} bytes against the {budget}-byte budget",
+        serialized.len()
+    );
+    assert!(
+        answer.memories_omitted > 0,
+        "the oversized fixture has to make the budget drop something"
+    );
+    assert_eq!(
+        answer.count,
+        answer.observations.len() + answer.also_remembered.len() + answer.memories_omitted,
+        "what is carried plus what was omitted has to be what was found"
+    );
+}
+
 #[test]
 fn a_scope_leteo_does_not_know_is_refiled_and_the_reply_says_so() {
     let temp = tempfile::tempdir().unwrap();

@@ -33,7 +33,10 @@ deadline, so every promise here is a promise about time as much as content.
    last activity, recent prompts, and the memories most worth having in front of
    you, sized by the configured context size (`slim`, `full`, `deep`) — the
    same size every other surface that opens a context uses, which `leteo
-   context` did not ([`cli.md`](cli.md) §13). A project
+   context` did not ([`cli.md`](cli.md) §13). The block is bounded in bytes as
+   well as in entries: the size's budget from `ContextSize::bytes()` is applied
+   at an entry boundary, and the block says how many memories, prompts and
+   sessions it left out ([`mcp-tools.md`](mcp-tools.md) §3). A project
    with nothing in it returns one line saying so — and only when some other
    project holds something, because a store that is genuinely empty has nothing
    to explain. It is the same sentence the two tools use
