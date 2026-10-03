@@ -1280,10 +1280,14 @@ fn doctor_repairs_a_full_text_index_that_has_gone_empty() {
 
     let broken = run_json(leteo(&database).arg("doctor"));
     assert_eq!(broken["healthy"], json!(false), "{broken}");
+    // A word only the index carries. The title-fragment stage reads titles
+    // directly, so a title word would still find the memory with both indexes
+    // wiped — right for that stage, wrong as a probe of the index. `returned`
+    // is in the body, where only the index can reach it.
     let empty = run_json(
         leteo(&database)
             .arg("search")
-            .arg("connection pool")
+            .arg("returned")
             .arg("--project")
             .arg("alpha"),
     );

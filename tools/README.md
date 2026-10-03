@@ -237,11 +237,11 @@ session-start hook is a shell script in its tree, not part of its binary.
 only get if they ask for it.
 
 Measured on 2026-10-02 against Engram v3.0.0 and Leteo 3400f80: overall MRR
-0.266 for Engram against 0.707 for Leteo. Leteo leads on every query kind but
-one — partial words (`storyb`, `pgxpo`), where Engram scores 0.923 against
+0.266 for Engram against 0.707 for Leteo. Leteo led on every query kind but
+one — partial words (`storyb`, `pgxpo`), where Engram scored 0.923 against
 Leteo's 0.231, because Engram indexes trigrams and Leteo indexes words and
-stems. That 0.231 is now a floor, not a target: the ratchet holds what is
-there and says nothing about what is missing.
+stems. That gap is closed: a prefix stage and a title-substring stage now score
+0.923 on the same set, and `floors.json` holds it there.
 
 Two limits to keep in view before quoting any of it. The corpus and queries are
 synthetic and were written knowing how both engines search, so paraphrases

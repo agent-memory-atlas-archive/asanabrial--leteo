@@ -1,11 +1,11 @@
 {
   "raise_margin": 0.02,
   "mrr": {
-    "ALL": 0.707,
+    "ALL": 0.783,
     "longnl": 0.76,
     "multiword": 0.923,
     "paraphrase": 0.826,
-    "partial": 0.23,
+    "partial": 0.923,
     "short": 0.875,
     "spanish": 0.515,
     "typo": 0.615

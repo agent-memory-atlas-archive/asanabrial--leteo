@@ -428,12 +428,18 @@ fn an_older_database_gets_its_index_restemmed_without_losing_a_memory() {
                      PRAGMA user_version = 0;",
             )
             .unwrap();
+        // Before the migration the index has no stemmer, so `evaluation` is not
+        // a whole word the index holds — it is a fragment of `evaluations`.
+        // The relaxed prefix stage still reaches it, which is what that stage
+        // is for, so what the migration buys is not "found at all" but the
+        // exact answer: matched as the stemmed word and not marked `partial`.
+        let before = store
+            .search("evaluation", SearchOptions::default())
+            .unwrap();
+        assert_eq!(before.len(), 5, "{before:?}");
         assert!(
-            store
-                .search("evaluation", SearchOptions::default())
-                .unwrap()
-                .is_empty(),
-            "before the migration the singular finds nothing"
+            before.iter().all(|hit| hit.partial),
+            "before the migration the singular is a fragment, not a word: {before:?}"
         );
     }
 
@@ -443,6 +449,10 @@ fn an_older_database_gets_its_index_restemmed_without_losing_a_memory() {
         .search("evaluation", SearchOptions::default())
         .unwrap();
     assert_eq!(hits.len(), 5);
+    assert!(
+        hits.iter().all(|hit| !hit.partial),
+        "the restemmed index answers the singular as a word, not a fragment: {hits:?}"
+    );
     let mut found: Vec<i64> = hits.iter().map(|hit| hit.observation.id).collect();
     found.sort_unstable();
     assert_eq!(found, ids);

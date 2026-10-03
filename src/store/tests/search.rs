@@ -1492,3 +1492,111 @@ fn the_fetch_keeps_the_ranking_and_brings_the_whole_row() {
     assert!(!mejor.sync_id.is_empty());
     assert!(!mejor.created_at.is_empty());
 }
+
+/// A word somebody half-remembers is found by the part they do remember.
+///
+/// The strict pass wants the whole token, so `pgboun` fails it exactly the way
+/// a word the store has never seen does. The prefix stage opens every word at
+/// its end — the smaller claim than the widening's dropping one — and the
+/// benchmark's partial-word set is what it is for: over those thirteen queries
+/// the two fragment stages take MRR from 0.231 to 0.923.
+///
+/// The fragment is taken from the *body* on purpose. The substring stage below
+/// reads titles only, so a fragment that happened to sit in a title would be
+/// answered by that stage too and this test would pass with the prefix stage
+/// gone. Here the title does not contain it, and with one memory in the store
+/// the last-resort stage has nothing to sample either, so the prefix stage is
+/// the only one that can answer.
+#[test]
+fn a_word_somebody_half_remembers_is_found_by_its_prefix() {
+    let (_temp, mut store) = store();
+    store.create_session("s1", "leteo", "C:/repo").unwrap();
+    store
+        .add_observation(observation(
+            "s1",
+            "Connection notes",
+            "pgbouncer pools connections in transaction mode",
+        ))
+        .unwrap();
+
+    let found = store.search("pgboun", SearchOptions::default()).unwrap();
+    assert_eq!(
+        found.len(),
+        1,
+        "a half-remembered word has to find the memory: {found:?}"
+    );
+    assert_eq!(found[0].observation.title, "Connection notes");
+    assert!(
+        found[0].partial,
+        "a fragment matched less than the whole word, and has to say so"
+    );
+}
+
+/// A fragment from inside a word is found in the title that holds it.
+///
+/// `telemetr` is not the beginning of `OpenTelemetry`, so no prefix query
+/// reaches it, and dropping the word leaves nothing to search on. The substring
+/// stage asks whether the title *contains* the fragment, which is the only
+/// question that answers an identifier somebody half-remembers from the middle
+/// out.
+#[test]
+fn a_fragment_from_inside_a_word_is_found_in_the_title() {
+    let (_temp, mut store) = store();
+    store.create_session("s1", "leteo", "C:/repo").unwrap();
+    store
+        .add_observation(observation(
+            "s1",
+            "OpenTelemetry collector setup",
+            "the exporter sends spans to the collector",
+        ))
+        .unwrap();
+
+    let found = store.search("telemetr", SearchOptions::default()).unwrap();
+    assert_eq!(
+        found.len(),
+        1,
+        "a fragment from inside a word has to find the memory: {found:?}"
+    );
+    assert_eq!(found[0].observation.title, "OpenTelemetry collector setup");
+    assert!(
+        found[0].partial,
+        "a fragment matched less than the whole word, and has to say so"
+    );
+}
+
+/// The title fragment stage wants every word inside the title, never any of
+/// them.
+///
+/// A disjunction here would answer a question the widened retry is about to
+/// answer properly with whichever title shares one common word — the noise the
+/// widened stage's own note is about — and it would run before that retry, so
+/// the wrong answer would arrive first. `telemetr` is inside both titles;
+/// `kubernetes` is inside neither, and requiring both terms returns nothing
+/// because no title holds both.
+#[test]
+fn the_title_fragment_stage_demands_every_word() {
+    let (_temp, mut store) = store();
+    store.create_session("s1", "leteo", "C:/repo").unwrap();
+    store
+        .add_observation(observation(
+            "s1",
+            "OpenTelemetry collector setup",
+            "the exporter sends spans to the collector",
+        ))
+        .unwrap();
+    store
+        .add_observation(observation(
+            "s1",
+            "Telemetry and the dashboard",
+            "a different memory",
+        ))
+        .unwrap();
+
+    let found = store
+        .search("telemetr kubernetes", SearchOptions::default())
+        .unwrap();
+    assert!(
+        found.is_empty(),
+        "the fragment stage has to demand every word, not any: {found:?}"
+    );
+}

@@ -21,10 +21,13 @@ before any of it.
    are merged by reciprocal rank fusion — a memory is worth `1 / (60 + place)`
    in each list it appears in, and the sum orders the answer.
 
-3. **Three stages, in order, stopping at the first that answers.**
+3. **Five stages, in order, stopping at the first that answers.**
    1. every word must match;
-   2. failing that, all but one of them;
-   3. failing that, any of them, kept only above a floor relative to the median
+   2. failing that, every word as a prefix — a word somebody half-remembers;
+   3. failing that, every word as a substring of the title — a fragment from
+      the middle of a word no prefix can reach;
+   4. failing that, all but one of them;
+   5. failing that, any of them, kept only above a floor relative to the median
       rank of what came back.
    Requiring every word is the right first answer, but it fails completely
    rather than partially: one word the store has never seen takes the whole
@@ -33,7 +36,30 @@ before any of it.
    long ones, and the widened retry found the memory every time, at rank one
    every time.
 
-   **The third stage's floor is dimensionless, and that is not a defect to be
+   **The two stages between the strict pass and the widening are for a word
+   somebody only half-remembers.** `pgxpo` for `pgxpool` is a prefix the strict
+   pass cannot match, because it wants the whole token; the second stage opens
+   every word at its end, a smaller claim than the widening's dropping one.
+   `telemetr` for `OpenTelemetry` is not the beginning of the word, so the
+   third stage asks whether the title *contains* each word, and only the title:
+   a title is where an identifier lives and a fraction of a memory's size, while
+   over bodies the scan would read everything the store holds on every question
+   that reached this far. Both mark their results `partial`, the way the
+   widening does, because both matched a fragment rather than the whole word.
+
+   The indexed way to ask the same question is a trigram index, and it was
+   built and measured before the title scan was written: `tokenize = 'trigram'`
+   over title and content added 18.5 MB to a 9.3 MB corpus — twice the text —
+   for a stage that runs only once every indexed stage has already found
+   nothing. A scan of the titles costs no bytes and no write time; measured on
+   a 5,243-memory real store it adds about 3 ms to the query, against 0 ms for
+   the strict pass, which is why no new index is added and no save latency
+   changes. Over the benchmark's partial-word set the two stages take MRR from
+   0.231 to 0.923 — twelve of thirteen at rank one, against Engram's 0.923 —
+   and the one left is a query whose target memory never contains the word
+   asked for.
+
+   **The final stage's floor is dimensionless, and that is not a defect to be
    tuned away.** It knows what an ordinary match looks like for this query; it
    does not know whether the project holds an answer. Asked questions belonging
    to another project, it still speaks 90.2% of the time, against 89.2% for
@@ -51,9 +77,10 @@ before any of it.
    nothing lexical is priced within reach, and the answers say `partial` because
    that is the honest thing to put on them.
 
-4. **A widened answer says it is widened, and an empty one says why it is
-   empty.** Results that matched only some of the words carry `partial: true`,
-   and the answer carries a hint saying so. An empty answer has two possible
+4. **A relaxed answer says it is relaxed, and an empty one says why it is
+   empty.** Results from any stage below the strict pass — one that matched less
+   than every word whole — carry `partial: true`, and the answer carries a hint
+   saying so. An empty answer has two possible
    reasons that call for opposite actions — the store has never heard of this,
    or it is filed in another project — and names the right one: where the
    project was inferred from the directory, the same question is asked once
@@ -112,15 +139,16 @@ before any of it.
    [`memory-model.md`](memory-model.md) §8.
 
 10. **A disjunction is bounded; a conjunction is not.** Any stage that joins a
-   query's words with `OR` — stage 3 above, `mode: any` from the tool and the
-   command line, and the per-prompt hint — takes at most the first thirty-two,
-   from one constant that all of them read. A conjunction stays unbounded,
+   query's words with `OR` — the final stage above, `mode: any` from the tool
+   and the command line, and the per-prompt hint — takes at most the first
+   thirty-two, from one constant that all of them read. A conjunction stays
+   unbounded,
    because two hundred terms joined by `AND` match almost nothing and cost
    almost nothing to find out, while cutting them would answer a different
    question from the one somebody quoted.
 
-   The bound was the hint's alone. Stage 3 documents itself as running the
-   hint's own rule and then built its terms with the unbounded helper, so a
+   The bound was the hint's alone. The final stage documents itself as running
+   the hint's own rule and then built its terms with the unbounded helper, so a
    pasted paragraph became one `OR` per word. Over 200 real prompts of one
    project on a 4,016-memory store, in-process through this crate's own search:
 

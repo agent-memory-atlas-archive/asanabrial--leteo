@@ -344,7 +344,11 @@ fn an_empty_full_text_index_is_reported_as_unhealthy() {
     let (_temp, mut store) = store();
     store.create_session("s1", "Leteo", "C:/repo").unwrap();
     store
-        .add_observation(observation("s1", "Chose Postgres", "body"))
+        .add_observation(observation(
+            "s1",
+            "Chose Postgres",
+            "the migration ran twice",
+        ))
         .unwrap();
     assert!(store.doctor().unwrap().healthy);
 
@@ -363,9 +367,13 @@ fn an_empty_full_text_index_is_reported_as_unhealthy() {
              INSERT INTO observations_exact(observations_exact) VALUES('delete-all');",
         )
         .unwrap();
+    // A word only the index carries. The title-fragment stage reads titles
+    // directly, so a title word would still find the memory with both indexes
+    // wiped — right for that stage, and wrong as a probe of the index. This one
+    // is in the body, where only the index can reach it.
     assert!(
         store
-            .search("Postgres", SearchOptions::default())
+            .search("migration", SearchOptions::default())
             .unwrap()
             .is_empty(),
         "the index really is empty"
