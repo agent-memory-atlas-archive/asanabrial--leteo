@@ -536,6 +536,42 @@ impl LeteoMcpServer {
 /// turn a re-listing client spends.
 const TOOLS_LIST_TTL_MS: u64 = 5 * 60 * 1000;
 
+/// The protocol revision that introduced structured tool output.
+///
+/// From this revision a client may read `structuredContent`; below it the text
+/// block is the whole answer. The server keys the short text on this rather
+/// than on a per-call flag, so a client that reads only text still gets the
+/// complete JSON — it is the client's own `initialize` that says which it is,
+/// and a revision this server does not know falls back to its ceiling rather
+/// than to a guess about the client.
+const STRUCTURED_OUTPUT_REVISION: &str = "2025-06-18";
+
+/// The text a structured-output session gets instead of the JSON a second time.
+///
+/// One sentence, because the answer itself is in `structuredContent` and this
+/// block exists only so the reply is well-formed for a reader that looks at
+/// text first. It is the same for every tool and every outcome: what differs
+/// between a success and a refusal is in the structured half, which is where
+/// `error.code` and the recovery fields already live. A tool-level refusal is
+/// shortened exactly as a success is, and a protocol-layer refusal — text, no
+/// `structured_content` — is left whole.
+pub(crate) const STRUCTURED_OUTPUT_TEXT: &str = "Result in structuredContent.";
+
+/// The reply a session receives, keyed on the revision it negotiated.
+///
+/// `structured_output` is true from `STRUCTURED_OUTPUT_REVISION` on. A result
+/// with no `structured_content` is untouched either way, because its text is
+/// not a duplicate of anything.
+pub(crate) fn reply_for_session(
+    mut result: CallToolResult,
+    structured_output: bool,
+) -> CallToolResult {
+    if structured_output && result.structured_content.is_some() {
+        result.content = vec![rmcp::model::ContentBlock::text(STRUCTURED_OUTPUT_TEXT)];
+    }
+    result
+}
+
 impl ServerHandler for LeteoMcpServer {
     fn get_info(&self) -> rmcp::model::ServerInfo {
         rmcp::model::ServerInfo::new(
@@ -596,8 +632,22 @@ impl ServerHandler for LeteoMcpServer {
         request: rmcp::model::CallToolRequestParams,
         context: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> Result<rmcp::model::CallToolResponse, rmcp::ErrorData> {
+        // Read before the context moves into the call context, which is the
+        // only other place this revision lives.
+        let structured_output = context
+            .protocol_version()
+            .is_some_and(|version| version.as_str() >= STRUCTURED_OUTPUT_REVISION);
         let tcc = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
-        self.router.call(tcc).await
+        let response = self.router.call(tcc).await?;
+        Ok(match response {
+            rmcp::model::CallToolResponse::Complete(result) => {
+                rmcp::model::CallToolResponse::Complete(reply_for_session(
+                    result,
+                    structured_output,
+                ))
+            }
+            other => other,
+        })
     }
 
     fn get_tool(&self, name: &str) -> Option<rmcp::model::Tool> {

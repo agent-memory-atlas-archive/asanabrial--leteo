@@ -96,21 +96,41 @@ useful part out of a context window has failed even if every field is right.
    the rule — one names them and one gives every surface twenty thousand bytes
    and requires a small answer, which is what found the ninth.
 
-   That second guard measures what an agent receives, which is the answer
-   twice. A reply carrying `structuredContent` also carries the same JSON
+   That second guard measures what an agent receives. It used to be the answer
+   twice: a reply carrying `structuredContent` also carried the same JSON
    serialised into a text block, because the protocol asks for one so that a
    client predating structured output still gets an answer — so a 20-result
-   `mem_search` on a real store is 16,428 bytes of structured content and
-   16,957 of the same thing as text, 33,385 in all. The guard used to weigh the
-   struct alone, which held every surface to half the number it costs. The bar
-   has not moved; what changed is that the largest surface now sits at 5,858
-   bytes of the 8,000 allowed where it used to sit at half that.
+   `mem_search` on a real store was 16,428 bytes of structured content and
+   16,957 of the same thing as text, 33,385 in all, and the guard weighed both.
+   The text half is now sent only to a client that cannot read the structured
+   one, so the guard weighs the answer once.
 
-   Whether to stop sending the text half to clients that negotiate a protocol
-   version which has structured output is open, and deliberately not decided
-   here: it would halve every reply, the protocol says SHOULD rather than MUST,
-   and Leteo configures fifteen clients whose behaviour without it has not been
-   measured.
+   **The text half goes to the client that needs it and to no other.** From
+   protocol revision `2025-06-18` — the revision that introduced
+   `structuredContent` — a session receives one sentence, `Result in
+   structuredContent.`, and the whole answer in `structuredContent`; a session
+   on an older revision, and one whose `initialize` named a version this server
+   does not know, receives the full JSON as text exactly as before. The
+   revision is the server's only signal, and it is the client's own declaration
+   that it reads structured output: nothing is opt-in per call, and a client
+   that reads only text negotiates a revision below the one that introduced the
+   field, so it keeps the complete answer. The protocol says SHOULD rather than
+   MUST, which is why the fallback is the old shape rather than the new one.
+   What the server cannot observe is whether a client that negotiated the field
+   feeds it to its model; the fifteen clients `setup` configures are not
+   inspected, because the revision each negotiates is already the declaration
+   this decision needs.
+
+   Measured over the wire against a real store, a 20-result `mem_search` is
+   15,917 bytes received at `2025-06-18` against 32,097 at `2024-11-05` — the
+   15,805-byte structured copy is the whole of it, where the older revision
+   carries the same JSON again as text, escaped, 15,327 bytes more. The saving
+   is 16,180 bytes, about half. Every revision rmcp knows is exercised in
+   `tests/mcp_protocol.rs`: the sentence at `2025-06-18`, `2025-11-25` and
+   `2026-07-28`, the full JSON at `2025-03-26` and `2024-11-05`, with
+   `structuredContent` present at every one. The guard's bar has not moved; the
+   largest surface now sits at 2,931 bytes of the 8,000 allowed where it used
+   to sit at 5,858.
 
    And so are the lists, at both ends. Every budget a tool takes has a ceiling
    and publishes it in its own schema, so a caller can plan against it: a

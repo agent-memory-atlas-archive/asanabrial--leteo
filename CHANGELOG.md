@@ -4,6 +4,17 @@ All notable changes to Leteo are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **Every tool reply carried its JSON twice; it now carries it once.** A reply with
+  `structuredContent` also repeated the same JSON as text so that a client predating
+  structured output still got an answer — half of every reply, paid in an agent's context.
+  From protocol revision `2025-06-18`, which introduced the field, the text block is one
+  sentence and the answer is in `structuredContent`; an older revision, and a version the
+  server does not know, gets the full JSON as text exactly as before. Measured over the
+  wire against a real store, a 20-result `mem_search` is 15,917 bytes received against
+  32,097 — about half (#112).
+
 ### Fixed
 
 - **Two tools described their `relation` argument as a "Verdict", and an agent read the
