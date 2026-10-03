@@ -46,9 +46,26 @@ duties about what an answer explains.
    single check could cost a tenth of that, and does not, and this is the note
    somebody should read before changing it.
 
+   `doctor` also reports a configured command whose executable is gone. Every
+   supported agent's MCP configuration and hooks file is read for the Leteo
+   command, and an absolute path that no longer exists is named with the file
+   that holds it — in `missing_binaries`, and in `issues`, which makes the report
+   unhealthy. A wrapper like `npx` is resolved through `PATH` and is not judged.
+   This is the failure the hooks themselves cannot report: a hook that fails
+   says nothing by design.
+
 5. **`leteo setup` installs into an agent, and can uninstall.** It writes only
    what it owns: another tool's hooks in the same configuration file are left
    alone. `--language` alone is a complete command, and so is `--context`.
+
+   **The path written is the stable one where a package manager keeps one.**
+   `current_exe()` resolves through `<prefix>/bin/leteo` into
+   `<prefix>/Cellar/leteo/<version>/bin/leteo`, and `brew upgrade` removes that
+   versioned directory — after which every hook and the MCP server fail, and a
+   hook that fails says nothing by design. So the canonical path is put back to
+   the stable link when it sits under a versioned package directory — Homebrew's
+   `Cellar/<formula>/<version>`, or mise's and asdf's `installs/<tool>/<version>`
+   — and that link exists. An ordinary install keeps its canonical path.
 
    Uninstalling removes what it wrote and nothing else, and both halves are
    driven over the whole registry. Eleven agents keep their instructions in a file

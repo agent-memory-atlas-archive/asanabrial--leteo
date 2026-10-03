@@ -546,6 +546,181 @@ fn hook_commands_quote_an_executable_path_containing_spaces() {
 }
 
 #[test]
+fn setup_prefers_the_stable_link_a_package_manager_keeps() {
+    let temp = TempDir::new().unwrap();
+    // The canonical form of the temp directory, because canonicalization is
+    // what turns the stable link into the Cellar path in the first place, and
+    // on macOS `/var` is itself a symlink to `/private/var`. `setup` strips the
+    // `\\?\` prefix Windows canonicalization adds, because agent launchers
+    // reject verbatim paths, so the expected link is built from that same
+    // stripped form rather than from the raw canonical path.
+    let base =
+        crate::project::remove_windows_verbatim_prefix(fs::canonicalize(temp.path()).unwrap());
+    let versioned = base
+        .join("Cellar")
+        .join("leteo")
+        .join("1.2.3")
+        .join("bin")
+        .join("leteo");
+    fs::create_dir_all(versioned.parent().unwrap()).unwrap();
+    fs::write(&versioned, b"binary").unwrap();
+    let link = base.join("bin").join("leteo");
+    fs::create_dir_all(link.parent().unwrap()).unwrap();
+    fs::write(&link, b"binary").unwrap();
+
+    let setup_options = SetupOptions {
+        install_hooks: true,
+        executable: Some(versioned.clone()),
+        ..options(&temp)
+    };
+    setup("claude-code", &setup_options).unwrap();
+
+    let paths = resolve_agent_paths("claude-code", &setup_options).unwrap();
+    let config = read_json(&paths.mcp_config);
+    assert_eq!(
+        config["mcpServers"]["leteo"]["command"].as_str(),
+        Some(link.to_str().unwrap()),
+        "`brew upgrade` removes the Cellar directory; the `bin` link survives it"
+    );
+    let hooks = read_json(&paths.hooks.unwrap());
+    let command = hooks["hooks"]["SessionStart"][0]["hooks"][0]["command"]
+        .as_str()
+        .expect("session start hook command");
+    assert!(
+        command.starts_with(&format!("\"{}\"", link.display())),
+        "the hooks name the stable link too: {command}"
+    );
+}
+
+#[test]
+fn a_non_package_install_keeps_its_canonical_path() {
+    let temp = TempDir::new().unwrap();
+    let executable = temp.path().join("bin").join("leteo");
+    fs::create_dir_all(executable.parent().unwrap()).unwrap();
+    fs::write(&executable, b"binary").unwrap();
+    let setup_options = SetupOptions {
+        executable: Some(executable.clone()),
+        ..options(&temp)
+    };
+    setup("claude-code", &setup_options).unwrap();
+
+    let config = read_json(
+        &resolve_agent_paths("claude-code", &setup_options)
+            .unwrap()
+            .mcp_config,
+    );
+    assert_eq!(
+        config["mcpServers"]["leteo"]["command"].as_str(),
+        crate::project::remove_windows_verbatim_prefix(executable.canonicalize().unwrap()).to_str(),
+        "nothing about an ordinary install is rewritten"
+    );
+}
+
+#[test]
+fn doctor_reports_a_configured_command_whose_binary_is_gone() {
+    let temp = TempDir::new().unwrap();
+    let setup_options = options(&temp);
+    let missing = temp
+        .path()
+        .join("Cellar")
+        .join("leteo")
+        .join("1.0.0")
+        .join("bin")
+        .join("leteo");
+    let hooks = resolve_agent_paths("claude-code", &setup_options)
+        .unwrap()
+        .hooks
+        .expect("Claude Code has a hooks file");
+    // Built through `serde_json` rather than a format string: a Windows path's
+    // backslashes are not valid JSON escapes, so a hand-written fixture holding
+    // `missing.display()` is unparseable exactly where the check must see it.
+    let fixture = serde_json::json!({
+        "hooks": {
+            "SessionStart": [
+                {
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": format!("\"{}\" hook session-start", missing.display())
+                        }
+                    ]
+                }
+            ]
+        }
+    })
+    .to_string();
+    write_fixture(&hooks, &fixture);
+
+    let found = missing_binaries(&setup_options);
+    let claude = found
+        .iter()
+        .find(|item| item.agent == "claude-code")
+        .unwrap_or_else(|| panic!("Claude Code's missing binary is not reported: {found:?}"));
+    assert_eq!(claude.command, missing, "{claude:?}");
+    assert_eq!(
+        claude.config, hooks,
+        "the report names the file: {claude:?}"
+    );
+
+    // A binary that is there is not a finding, so the check is about absence
+    // rather than about a config having been read at all.
+    fs::create_dir_all(missing.parent().unwrap()).unwrap();
+    fs::write(&missing, b"binary").unwrap();
+    assert!(
+        missing_binaries(&setup_options)
+            .iter()
+            .all(|item| item.agent != "claude-code"),
+        "a present executable is not reported"
+    );
+}
+
+#[test]
+fn doctor_reads_the_array_command_opencode_writes() {
+    let temp = TempDir::new().unwrap();
+    let setup_options = options(&temp);
+    // OpenCode and Kilo Code write `command` as an argv array, and OpenCode's
+    // file may be a `.jsonc`. A reader that accepted only a string, or that fed
+    // the commented file straight to `serde_json`, saw neither — and `doctor`
+    // called a missing binary healthy for those two agents.
+    let config = setup_options
+        .config_home
+        .as_ref()
+        .unwrap()
+        .join("opencode")
+        .join("opencode.jsonc");
+    let missing = temp
+        .path()
+        .join("Cellar")
+        .join("leteo")
+        .join("1.0.0")
+        .join("bin")
+        .join("leteo");
+    let fixture = serde_json::json!({
+        "mcp": {
+            SERVER_NAME: {
+                "type": "local",
+                "command": [missing.to_string_lossy(), "mcp", "--tools=agent"],
+                "enabled": true
+            }
+        }
+    })
+    .to_string()
+        + "\n// OpenCode permits JSONC.\n";
+    write_fixture(&config, &fixture);
+
+    let found = missing_binaries(&setup_options);
+    let opencode = found
+        .iter()
+        .find(|item| item.agent == "opencode")
+        .unwrap_or_else(|| panic!("OpenCode's array command is not read: {found:?}"));
+    assert_eq!(opencode.command, missing, "{opencode:?}");
+    assert_eq!(
+        opencode.config, config,
+        "the report names the file: {opencode:?}"
+    );
+}
+
+#[test]
 fn hooks_are_not_touched_unless_requested() {
     let temp = TempDir::new().unwrap();
     let setup_options = options(&temp);

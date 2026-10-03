@@ -1086,5 +1086,29 @@
     "file": "src/store/observations.rs",
     "old": "    if expected == actual {\n        return Ok(());\n    }",
     "new": "    if true {\n        return Ok(());\n    }"
+  },
+  {
+    "name": "setup: the stable link is not preferred over the Cellar path",
+    "file": "src/setup/mod.rs",
+    "old": "    candidate.exists().then_some(candidate)",
+    "new": "    None"
+  },
+  {
+    "name": "setup: doctor accepts a configured binary that is gone",
+    "file": "src/setup/mod.rs",
+    "old": ".filter(|command| command.is_absolute() && !command.exists())",
+    "new": ".filter(|command| command.is_absolute() && false)"
+  },
+  {
+    "name": "setup: doctor skips an agent whose command is an array",
+    "file": "src/setup/mod.rs",
+    "old": "        Value::Array(parts) => parts.first().and_then(Value::as_str),",
+    "new": "        Value::Array(_) => None,"
+  },
+  {
+    "name": "setup: doctor feeds a commented jsonc straight to serde_json",
+    "file": "src/setup/mod.rs",
+    "old": "    let stripped = strip_jsonc(text.as_bytes());\n    let Ok(config) = serde_json::from_slice::<Value>(&stripped) else {",
+    "new": "    let stripped = text.as_bytes().to_vec();\n    let Ok(config) = serde_json::from_slice::<Value>(&stripped) else {"
   }
 ]
