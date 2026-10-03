@@ -27,6 +27,20 @@ All notable changes to Leteo are documented in this file.
 
 ### Fixed
 
+- **A body over the storage bound was cut without saying so.** `mem_save` and
+  `mem_update` stored at most `max_observation_length` bytes — 50,000 — and the
+  tail was gone, while the reply said nothing: `content_truncated` describes the
+  400-byte preview, so a body that came back whole but was stored short read as
+  untruncated, and an agent that needed the whole thing had no way to know it
+  had to split it. The same bound governs prompts, session summaries and a
+  judgment's reason and evidence, and those tools report it too:
+  `storage_truncation` on a save, update, prompt or session, and
+  `reason_storage_truncation` and `evidence_storage_truncation` on a judgment,
+  each carrying `original_bytes` and `stored_bytes`, a field of its own rather
+  than the preview flag beside it, and absent when nothing was cut. The length is
+  taken after redaction, so a body whose bulk was a `<private>` span is stored
+  whole and reports nothing (#122).
+
 - **Ending a session wiped a summary it had already been given.** The
   `SessionStop` hook closes every session with no summary, and `end_session`
   assigned it — so a summary written with `mem_session_end` was gone the moment

@@ -91,6 +91,8 @@ impl LeteoMcpServer {
                 })
         });
         let prompt_sync_id = prompt_sync_id.flatten();
+        let content_cut =
+            crate::memory::normalize::cut_length(&content, store.max_observation_length());
         let outcome = store
             .add_observation(AddObservation {
                 session_id: context.id,
@@ -126,7 +128,10 @@ impl LeteoMcpServer {
         let refiled = asked_scope
             .filter(|asked| !crate::memory::normalize::SCOPES.contains(&asked.as_str()))
             .map(|asked| crate::mcp::output::refiled_scope_hint(&asked));
+        let stored_bytes = outcome.observation.content.len();
         let mut saved = SaveOutput::new(outcome, candidates, context.envelope);
+        saved.storage_truncation =
+            crate::mcp::output::storage_truncation(content_cut, stored_bytes);
         saved.hint = match (unfiled.then(|| UNFILED_KIND_HINT.to_owned()), refiled) {
             (Some(kind), Some(scope)) => Some(format!("{kind} {scope}")),
             (kind, scope) => kind.or(scope),
@@ -168,6 +173,9 @@ impl LeteoMcpServer {
             ),
             None => None,
         };
+        let content_cut = params.content.as_deref().and_then(|content| {
+            crate::memory::normalize::cut_length(content, store.max_observation_length())
+        });
         let observation = store
             .update_observation(
                 params.id,
@@ -189,9 +197,13 @@ impl LeteoMcpServer {
             .unwrap_or_default();
         drop(store);
 
+        let stored_bytes = observation.content.len();
         let mut observation = ObservationOutput::from(observation).preview();
         observation.caveats = caveats.into_iter().map(Into::into).collect();
-        Ok(Json(ObservationResultOutput { observation }))
+        Ok(Json(ObservationResultOutput {
+            observation,
+            storage_truncation: crate::mcp::output::storage_truncation(content_cut, stored_bytes),
+        }))
     }
 
     #[tool(
@@ -431,7 +443,10 @@ impl LeteoMcpServer {
 
         let mut observation = ObservationOutput::from(observation);
         observation.caveats = caveats.into_iter().map(Into::into).collect();
-        Ok(Json(ObservationResultOutput { observation }))
+        Ok(Json(ObservationResultOutput {
+            observation,
+            storage_truncation: None,
+        }))
     }
 
     #[tool(
@@ -577,6 +592,8 @@ impl LeteoMcpServer {
                 recovery_token: params.recovery_token,
             },
         )?;
+        let content_cut =
+            crate::memory::normalize::cut_length(&params.content, store.max_observation_length());
         let prompt = store
             .add_prompt(AddPrompt {
                 session_id: context.id.clone(),
@@ -593,9 +610,11 @@ impl LeteoMcpServer {
             });
         }
 
+        let stored_bytes = prompt.content.len();
         Ok(Json(PromptResultOutput {
             project_context: context.envelope,
             prompt: prompt.into(),
+            storage_truncation: crate::mcp::output::storage_truncation(content_cut, stored_bytes),
         }))
     }
 
@@ -630,6 +649,7 @@ impl LeteoMcpServer {
 
         Ok(Json(SessionResultOutput {
             session: session.into(),
+            storage_truncation: None,
         }))
     }
 
@@ -648,13 +668,18 @@ impl LeteoMcpServer {
         &self,
         Parameters(params): Parameters<SessionEndParams>,
     ) -> Result<Json<SessionResultOutput>, CallToolResult> {
-        let session = self
-            .lock_store()?
+        let mut store = self.lock_store()?;
+        let summary_cut = params.summary.as_deref().and_then(|summary| {
+            crate::memory::normalize::cut_length(summary, store.max_observation_length())
+        });
+        let session = store
             .end_session(&params.id, params.summary.as_deref())
             .map_err(store_error)?;
 
+        let stored_bytes = session.summary.as_deref().map_or(0, str::len);
         Ok(Json(SessionResultOutput {
             session: session.into(),
+            storage_truncation: crate::mcp::output::storage_truncation(summary_cut, stored_bytes),
         }))
     }
 
@@ -778,6 +803,8 @@ impl LeteoMcpServer {
             &params.content,
             crate::store::SUMMARY_HEADLINE_CHARS,
         );
+        let content_cut =
+            crate::memory::normalize::cut_length(&params.content, store.max_observation_length());
         let outcome = store
             .add_observation(AddObservation {
                 session_id: context.id,
@@ -793,7 +820,10 @@ impl LeteoMcpServer {
                 prompt_sync_id: None,
             })
             .map_err(store_error)?;
+        let stored_bytes = outcome.observation.content.len();
         let mut saved = SaveOutput::new(outcome, Vec::new(), context.envelope);
+        saved.storage_truncation =
+            crate::mcp::output::storage_truncation(content_cut, stored_bytes);
         if headline.is_none() {
             saved.hint = Some(UNNAMED_SUMMARY_HINT.to_owned());
         }
@@ -981,8 +1011,17 @@ impl LeteoMcpServer {
                 "relation is required",
             ));
         }
-        let relation = self
-            .lock_store()?
+        let mut store = self.lock_store()?;
+        let max_bytes = store.max_observation_length();
+        let reason_cut = params
+            .reason
+            .as_deref()
+            .and_then(|reason| crate::memory::normalize::cut_length(reason, max_bytes));
+        let evidence_cut = params
+            .evidence
+            .as_deref()
+            .and_then(|evidence| crate::memory::normalize::cut_length(evidence, max_bytes));
+        let relation = store
             .judge_relation(JudgeRelationParams {
                 judgment_id: params.judgment_id,
                 relation: params.relation,
@@ -995,9 +1034,14 @@ impl LeteoMcpServer {
                 session_id: nonempty(params.session_id),
             })
             .map_err(store_error)?;
-        Ok(Json(JudgeOutput {
-            relation: relation.into(),
-        }))
+        let reason_stored = relation.reason.as_deref().map_or(0, str::len);
+        let evidence_stored = relation.evidence.as_deref().map_or(0, str::len);
+        let mut output = RelationOutput::from(relation);
+        output.reason_storage_truncation =
+            crate::mcp::output::storage_truncation(reason_cut, reason_stored);
+        output.evidence_storage_truncation =
+            crate::mcp::output::storage_truncation(evidence_cut, evidence_stored);
+        Ok(Json(JudgeOutput { relation: output }))
     }
 
     #[tool(

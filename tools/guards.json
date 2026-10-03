@@ -1248,5 +1248,59 @@
     "file": "src/mcp/mod.rs",
     "old": "            if session.ended_at.is_some() {",
     "new": "            if false && session.ended_at.is_some() {"
+  },
+  {
+    "name": "truncation: a save stops reporting the storage cut",
+    "file": "src/mcp/tools.rs",
+    "old": "        let mut saved = SaveOutput::new(outcome, candidates, context.envelope);\n        saved.storage_truncation =\n            crate::mcp::output::storage_truncation(content_cut, stored_bytes);",
+    "new": "        let mut saved = SaveOutput::new(outcome, candidates, context.envelope);\n        saved.storage_truncation = None;"
+  },
+  {
+    "name": "truncation: an update stops reporting the storage cut",
+    "file": "src/mcp/tools.rs",
+    "old": "        Ok(Json(ObservationResultOutput {\n            observation,\n            storage_truncation: crate::mcp::output::storage_truncation(content_cut, stored_bytes),\n        }))",
+    "new": "        Ok(Json(ObservationResultOutput {\n            observation,\n            storage_truncation: None,\n        }))"
+  },
+  {
+    "name": "truncation: a prompt save stops reporting the storage cut",
+    "file": "src/mcp/tools.rs",
+    "old": "            prompt: prompt.into(),\n            storage_truncation: crate::mcp::output::storage_truncation(content_cut, stored_bytes),",
+    "new": "            prompt: prompt.into(),\n            storage_truncation: None,"
+  },
+  {
+    "name": "truncation: a session summary stops reporting the storage cut",
+    "file": "src/mcp/tools.rs",
+    "old": "        let mut saved = SaveOutput::new(outcome, Vec::new(), context.envelope);\n        saved.storage_truncation =\n            crate::mcp::output::storage_truncation(content_cut, stored_bytes);",
+    "new": "        let mut saved = SaveOutput::new(outcome, Vec::new(), context.envelope);\n        saved.storage_truncation = None;"
+  },
+  {
+    "name": "truncation: ending a session stops reporting the storage cut",
+    "file": "src/mcp/tools.rs",
+    "old": "        Ok(Json(SessionResultOutput {\n            session: session.into(),\n            storage_truncation: crate::mcp::output::storage_truncation(summary_cut, stored_bytes),\n        }))",
+    "new": "        Ok(Json(SessionResultOutput {\n            session: session.into(),\n            storage_truncation: None,\n        }))"
+  },
+  {
+    "name": "truncation: a judgment stops reporting the reason cut",
+    "file": "src/mcp/tools.rs",
+    "old": "        output.reason_storage_truncation =\n            crate::mcp::output::storage_truncation(reason_cut, reason_stored);",
+    "new": "        output.reason_storage_truncation = None;"
+  },
+  {
+    "name": "truncation: redaction is reported as a storage cut",
+    "file": "src/memory/normalize.rs",
+    "old": "    let stripped = strip_private(raw);",
+    "new": "    let stripped = raw.to_owned();"
+  },
+  {
+    "name": "truncation: a judgment stops reporting the evidence cut",
+    "file": "src/mcp/tools.rs",
+    "old": "        output.evidence_storage_truncation =\n            crate::mcp::output::storage_truncation(evidence_cut, evidence_stored);",
+    "new": "        output.evidence_storage_truncation = None;"
+  },
+  {
+    "name": "truncation: the kept length is reported as zero",
+    "file": "src/mcp/output.rs",
+    "old": "    original.map(|original_bytes| Truncation {\n        original_bytes,\n        stored_bytes,\n    })",
+    "new": "    original.map(|original_bytes| Truncation {\n        original_bytes,\n        stored_bytes: 0,\n    })"
   }
 ]

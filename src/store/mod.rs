@@ -582,6 +582,14 @@ impl Store {
         self.config.max_context_results
     }
 
+    /// The byte bound every stored body, summary, prompt and judgment text is
+    /// held to. Exposed so a write surface can say how much the bound cut: the
+    /// bound itself lives in one place, and a caller reporting it must not keep
+    /// a second copy of the number.
+    pub fn max_observation_length(&self) -> usize {
+        self.config.max_observation_length
+    }
+
     pub fn open(config: StoreConfig) -> Result<Self, StoreError> {
         if !config.database_path.is_absolute() {
             return Err(StoreError::RelativeDatabasePath(config.database_path));

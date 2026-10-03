@@ -15,6 +15,28 @@ fn preview_of(content: String) -> (String, bool) {
 }
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]
+pub(super) struct Truncation {
+    /// The length of the text the bound saw, after any private span was removed.
+    pub(super) original_bytes: usize,
+    /// The length of what was actually stored.
+    pub(super) stored_bytes: usize,
+}
+
+/// Builds the storage-cut report from the pre-cut length and what was stored.
+///
+/// One place, so the tools that report a cut do it the same way and none
+/// invents its own pair of numbers.
+pub(super) fn storage_truncation(
+    original: Option<usize>,
+    stored_bytes: usize,
+) -> Option<Truncation> {
+    original.map(|original_bytes| Truncation {
+        original_bytes,
+        stored_bytes,
+    })
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(super) struct SaveOutput {
     pub(super) status: String,
     /// Said when a summary was saved without a name anybody could find it by.
@@ -41,6 +63,12 @@ pub(super) struct SaveOutput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) judgment_id: Option<String>,
     pub(super) candidates: Vec<CandidateOutput>,
+    /// Set when the storage bound cut the body: what was stored is shorter than
+    /// what was written and the tail was not kept, so the caller has to split
+    /// the memory to keep it all. A different cut from `content_truncated`,
+    /// which describes the reply's 400-byte preview.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) storage_truncation: Option<Truncation>,
 }
 
 impl SaveOutput {
@@ -67,6 +95,7 @@ impl SaveOutput {
                 .then(|| crate::store::JUDGMENT_STATUS_PENDING.to_owned()),
             judgment_id,
             candidates: candidates.into_iter().map(Into::into).collect(),
+            storage_truncation: None,
         }
     }
 }
@@ -129,6 +158,13 @@ pub(super) struct RelationOutput {
     /// Whether `evidence` was cut. Absent when it was not.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub(super) evidence_truncated: bool,
+    /// Set when the storage bound cut the reason: what was stored is shorter
+    /// than what was written.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) reason_storage_truncation: Option<Truncation>,
+    /// The same, for the evidence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) evidence_storage_truncation: Option<Truncation>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) confidence: Option<f64>,
     pub(super) judgment_status: String,
@@ -164,6 +200,8 @@ impl From<Relation> for RelationOutput {
             reason_truncated: reason.is_some_and(|(_, cut)| cut),
             evidence: evidence.clone().map(|(text, _)| text),
             evidence_truncated: evidence.is_some_and(|(_, cut)| cut),
+            reason_storage_truncation: None,
+            evidence_storage_truncation: None,
             confidence: value.confidence,
             judgment_status: value.judgment_status,
             marked_by_actor: value.marked_by_actor,
@@ -1001,6 +1039,10 @@ pub(super) struct ObservationResultOutput {
     ///
     /// One path now: the caveats are on the memory, wherever the memory is.
     pub(super) observation: ObservationOutput,
+    /// Set when the storage bound cut the new body: what was stored is shorter
+    /// than what was written.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) storage_truncation: Option<Truncation>,
 }
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]
@@ -1492,6 +1534,9 @@ pub(super) struct PromptResultOutput {
     #[serde(flatten)]
     pub(super) project_context: ProjectEnvelope,
     pub(super) prompt: PromptOutput,
+    /// Set when the storage bound cut the prompt's content.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) storage_truncation: Option<Truncation>,
 }
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]
@@ -1546,6 +1591,9 @@ impl From<Prompt> for PromptOutput {
 #[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(super) struct SessionResultOutput {
     pub(super) session: SessionOutput,
+    /// Set when the storage bound cut the summary.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) storage_truncation: Option<Truncation>,
 }
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]
