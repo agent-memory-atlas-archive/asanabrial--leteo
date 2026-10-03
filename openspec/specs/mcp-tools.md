@@ -786,20 +786,26 @@ useful part out of a context window has failed even if every field is right.
     the same rule, so `leteo save --session` cannot file under a closed session
     either.
 
-18. **A body over the storage bound is stored cut, and the write says so.** Every
-    write surface that applies `max_observation_length` — `mem_save`,
-    `mem_update`, `mem_save_prompt`, `mem_session_end`, `mem_session_summary`
-    and `mem_judge` — answers with `storage_truncation` when the bound cut what
-    it stored: `original_bytes`, the length the bound saw, and `stored_bytes`,
-    what was kept. It is a field of its own and not the preview flag beside it,
-    because they are two different cuts: `content_truncated` and its siblings
-    describe the 400-byte reply, and a body can come back whole and still be
-    stored short — which is exactly the case where the caller has to split the
-    memory, and the case the preview flag invites reading as untruncated. The
-    length is taken after redaction, so a body whose bulk was a `<private>` span
-    is stored whole and reports nothing. The field is absent when nothing was
-    cut, and the bound it reports is the one the store applied, read from the
-    store rather than restated.
+18. **A body over the storage bound is stored cut, and the tool says so.** Six
+    write tools report it: `mem_save`, `mem_update`, `mem_save_prompt`,
+    `mem_session_end`, `mem_session_summary` and `mem_judge`, each answering with
+    a storage-cut report when `max_observation_length` cut what it stored. The
+    report is `original_bytes`, the length the bound saw, and `stored_bytes`,
+    what was kept — named `storage_truncation` on the save, update, prompt and
+    session tools, and `reason_storage_truncation` and
+    `evidence_storage_truncation` on a judgment, which stores two texts. It is a
+    field of its own and not the preview flag beside it, because they are two
+    different cuts: `content_truncated` and its siblings describe the 400-byte
+    reply, and a body can come back whole and still be stored short — which is
+    exactly the case where the caller has to split the memory, and the case the
+    preview flag invites reading as untruncated. The length is taken after
+    redaction, so a body whose bulk was a `<private>` span is stored whole and
+    reports nothing. `stored_bytes` counts the marker `truncate_content`
+    appends, so the caller's own bytes dropped are the difference plus that
+    marker. The field is absent when nothing was cut, and the bound it reports is
+    the one the store applied, read from the store rather than restated. The
+    same bound governs `mem_capture_passive`, which stores each extracted
+    learning through the same path, and the CLI write doors; neither reports it.
 
 ## Invariants
 

@@ -1290,5 +1290,17 @@
     "file": "src/memory/normalize.rs",
     "old": "    let stripped = strip_private(raw);",
     "new": "    let stripped = raw.to_owned();"
+  },
+  {
+    "name": "truncation: a judgment stops reporting the evidence cut",
+    "file": "src/mcp/tools.rs",
+    "old": "        output.evidence_storage_truncation =\n            crate::mcp::output::storage_truncation(evidence_cut, evidence_stored);",
+    "new": "        output.evidence_storage_truncation = None;"
+  },
+  {
+    "name": "truncation: the kept length is reported as zero",
+    "file": "src/mcp/output.rs",
+    "old": "    original.map(|original_bytes| Truncation {\n        original_bytes,\n        stored_bytes,\n    })",
+    "new": "    original.map(|original_bytes| Truncation {\n        original_bytes,\n        stored_bytes: 0,\n    })"
   }
 ]

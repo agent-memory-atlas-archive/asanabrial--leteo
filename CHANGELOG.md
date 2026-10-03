@@ -33,11 +33,13 @@ All notable changes to Leteo are documented in this file.
   400-byte preview, so a body that came back whole but was stored short read as
   untruncated, and an agent that needed the whole thing had no way to know it
   had to split it. The same bound governs prompts, session summaries and a
-  judgment's reason and evidence, so every write surface reports it at once:
-  `storage_truncation` carries `original_bytes` and `stored_bytes`, is a field of
-  its own rather than the preview flag beside it, and is absent when nothing was
-  cut. The length is taken after redaction, so a body whose bulk was a
-  `<private>` span is stored whole and reports nothing (#122).
+  judgment's reason and evidence, and those tools report it too:
+  `storage_truncation` on a save, update, prompt or session, and
+  `reason_storage_truncation` and `evidence_storage_truncation` on a judgment,
+  each carrying `original_bytes` and `stored_bytes`, a field of its own rather
+  than the preview flag beside it, and absent when nothing was cut. The length is
+  taken after redaction, so a body whose bulk was a `<private>` span is stored
+  whole and reports nothing (#122).
 
 - **Ending a session wiped a summary it had already been given.** The
   `SessionStop` hook closes every session with no summary, and `end_session`

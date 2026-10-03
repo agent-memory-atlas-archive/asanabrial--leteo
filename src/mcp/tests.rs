@@ -1822,6 +1822,17 @@ fn a_save_naming_an_ended_session_is_refused() {
         .unwrap();
 }
 
+/// Asserts a storage-cut report names the bound and the length kept.
+///
+/// The kept length is pinned rather than bounded: `stored_bytes < original_bytes`
+/// passes for any wrong value below the original, which is how a regression in
+/// "by how much" survives a suite that only ever asserts the original.
+fn assert_storage_cut(cut: Option<crate::mcp::output::Truncation>, bound: usize, surface: &str) {
+    let cut = cut.unwrap_or_else(|| panic!("{surface} reports the cut"));
+    assert_eq!(cut.original_bytes, bound + 1, "{surface} original length");
+    assert_eq!(cut.stored_bytes, bound, "{surface} stored length");
+}
+
 /// Every write surface says when the storage bound cut what it stored.
 ///
 /// A body over the bound is kept short and the tail is not kept, and the reply
@@ -1855,9 +1866,7 @@ fn every_write_surface_reports_the_storage_cut() {
         ))
         .unwrap()
         .0;
-    let cut = saved.storage_truncation.expect("a save reports the cut");
-    assert_eq!(cut.original_bytes, bound + 1);
-    assert!(cut.stored_bytes < cut.original_bytes);
+    assert_storage_cut(saved.storage_truncation, bound, "save");
 
     // A body under the bound is stored whole and reports nothing.
     let short = server
@@ -1884,13 +1893,7 @@ fn every_write_surface_reports_the_storage_cut() {
         ))
         .unwrap()
         .0;
-    assert_eq!(
-        updated
-            .storage_truncation
-            .expect("an update reports the cut")
-            .original_bytes,
-        bound + 1
-    );
+    assert_storage_cut(updated.storage_truncation, bound, "update");
 
     let prompt = server
         .mem_save_prompt(Parameters(
@@ -1903,13 +1906,7 @@ fn every_write_surface_reports_the_storage_cut() {
         ))
         .unwrap()
         .0;
-    assert_eq!(
-        prompt
-            .storage_truncation
-            .expect("a prompt save reports the cut")
-            .original_bytes,
-        bound + 1
-    );
+    assert_storage_cut(prompt.storage_truncation, bound, "prompt save");
 
     let summary = server
         .mem_session_summary(Parameters(
@@ -1922,13 +1919,7 @@ fn every_write_surface_reports_the_storage_cut() {
         ))
         .unwrap()
         .0;
-    assert_eq!(
-        summary
-            .storage_truncation
-            .expect("a session summary reports the cut")
-            .original_bytes,
-        bound + 1
-    );
+    assert_storage_cut(summary.storage_truncation, bound, "session summary");
 
     // Redaction is not a storage cut. This body arrives over the bound and the
     // bound sees it after the private span is gone, so it is stored whole, and
@@ -1961,13 +1952,7 @@ fn every_write_surface_reports_the_storage_cut() {
         ))
         .unwrap()
         .0;
-    assert_eq!(
-        ended
-            .storage_truncation
-            .expect("ending a session reports the cut")
-            .original_bytes,
-        bound + 1
-    );
+    assert_storage_cut(ended.storage_truncation, bound, "session end");
 }
 
 /// And so does a judgment, for both texts it stores.
@@ -2022,19 +2007,11 @@ fn a_judgment_reports_the_storage_cut_on_both_texts() {
         .unwrap()
         .0
         .relation;
-    assert_eq!(
-        verdict
-            .reason_storage_truncation
-            .expect("a judgment reports the reason cut")
-            .original_bytes,
-        bound + 1
-    );
-    assert_eq!(
-        verdict
-            .evidence_storage_truncation
-            .expect("a judgment reports the evidence cut")
-            .original_bytes,
-        bound + 1
+    assert_storage_cut(verdict.reason_storage_truncation, bound, "judgment reason");
+    assert_storage_cut(
+        verdict.evidence_storage_truncation,
+        bound,
+        "judgment evidence",
     );
 }
 
