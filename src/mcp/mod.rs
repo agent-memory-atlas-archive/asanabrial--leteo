@@ -1072,6 +1072,7 @@ fn store_error(error: StoreError) -> CallToolResult {
         StoreError::ProjectMismatch { .. } => error_code::PROJECT_MISMATCH,
         StoreError::SessionHasObservations(_, _) => "session_has_observations",
         StoreError::EmptySearch => "invalid_search",
+        StoreError::QueryTooLong { .. } => error_code::QUERY_TOO_LONG,
         StoreError::RelativeDatabasePath(_) => "invalid_database_path",
         StoreError::PromptNotFound(_) => "prompt_not_found",
         StoreError::SchemaTooNew { .. } => "schema_too_new",
@@ -1096,6 +1097,7 @@ mod error_code {
     pub const UNKNOWN_PROJECT: &str = "unknown_project";
     pub const AMBIGUOUS_PROJECT: &str = "ambiguous_project";
     pub const STORE_UNAVAILABLE: &str = "store_unavailable";
+    pub const QUERY_TOO_LONG: &str = "query_too_long";
 }
 
 fn structured_error(code: &str, message: impl Into<String>) -> CallToolResult {

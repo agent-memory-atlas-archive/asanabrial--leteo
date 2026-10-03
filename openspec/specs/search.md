@@ -165,14 +165,14 @@ before any of it.
 9. **Deleted memories are never returned.** See
    [`memory-model.md`](memory-model.md) §8.
 
-10. **A disjunction is bounded; a conjunction is not.** Any stage that joins a
-   query's words with `OR` — the final stage above, `mode: any` from the tool
-   and the command line, and the per-prompt hint — takes at most the first
-   thirty-two, from one constant that all of them read. A conjunction stays
-   unbounded,
-   because two hundred terms joined by `AND` match almost nothing and cost
-   almost nothing to find out, while cutting them would answer a different
-   question from the one somebody quoted.
+10. **A disjunction is bounded; a conjunction is not, in terms.** Any stage that
+    joins a query's words with `OR` — the final stage above, `mode: any` from the
+    tool and the command line, and the per-prompt hint — takes at most the first
+    thirty-two, from one constant that all of them read. A conjunction is not cut
+    by term count: two hundred terms joined by `AND` match almost nothing and
+    cost almost nothing to find out, while cutting them would answer a different
+    question from the one somebody quoted. What is bounded is the raw query they
+    are built from, by bytes, before tokenising — see §14.
 
    The bound was the hint's alone. The final stage documents itself as running
    the hint's own rule and then built its terms with the unbounded helper, so a
@@ -287,6 +287,38 @@ before any of it.
     note. It is not a per-prompt cost: the strict pass answers almost every
     prompt, and this stage is reached only when the strict pass and the two
     fragment stages above it all came back empty.
+
+14. **A query longer than the byte cap is refused, at one choke point, before it
+    is tokenised.** The raw query string had no bound, so a pasted log was
+    tokenised whole and the strict stage built one conjunction term per distinct
+    word — the cost of the input, paid before any stage could answer. A query of
+    more than 8192 bytes is refused with `query_too_long`, which names the size
+    it saw and the cap. It is not `invalid_search`: an empty query and an
+    over-long one are different mistakes with different remedies, and a caller
+    reading only the code has to be able to tell them apart. The unit is bytes of
+    the raw query, whitespace included. The cap is applied at one point in the
+    store that both `mem_search` and `leteo search` pass through, so the two
+    surfaces refuse identically; it lives in `MAX_QUERY_BYTES`.
+
+    The number is measured rather than chosen. Through this crate's own store on
+    a synthetic 4,000-memory corpus, `All` mode, mostly-distinct tokens, best of
+    five runs:
+
+    ```text
+      query bytes   terms   strict pass
+          257        31       3.8 ms
+        1,031       119       7.0 ms
+        8,195       882      18.5 ms
+       32,778     3,304      61.5 ms
+       65,542     6,530     132.5 ms
+    ```
+
+    The cost is close to linear in the terms, so the cap is what bounds it: at
+    8 KiB the strict pass is under 20 ms on this corpus, and the same query in
+    `Any` mode — bounded at thirty-two terms by §10 — is 3.2 ms at every size. A
+    sentence or short paragraph is well under 1 KiB, so 8 KiB leaves an order of
+    magnitude of margin above any legitimate question and refuses the pasted log
+    that motivated the cap.
 
 ## Invariants
 

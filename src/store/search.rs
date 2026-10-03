@@ -82,6 +82,41 @@ const FUSION_CONSTANT: f64 = 60.0;
 /// says "there is more" about a list that ended on its own.
 pub(crate) const DEFAULT_SEARCH_LIMIT: usize = 10;
 
+/// The most bytes of raw query the store will tokenise.
+///
+/// The query string had no bound before this, so a pasted log was tokenised
+/// whole and the strict stage built one conjunction term per distinct word:
+/// 64 KiB of log is thousands of terms joined by `AND`, and the work is paid
+/// before any stage can answer. The cap is on the raw bytes, not on the terms,
+/// because that is the input a caller controls and the quantity that decides
+/// the tokenisation and the size of the built query.
+///
+/// Measured through this binary's own store on a synthetic 4,000-memory corpus,
+/// `All` mode, mostly-distinct tokens, best of five runs. The probe was a
+/// temporary `examples/` file, deleted once the number was chosen:
+///
+/// ```text
+///   query bytes   terms   strict pass
+///       257        31       3.8 ms
+///     1,031       119       7.0 ms
+///     8,195       882      18.5 ms
+///    32,778     3,304      61.5 ms
+///    65,542     6,530     132.5 ms
+/// ```
+///
+/// The cost is close to linear in the terms, so the cap is what bounds it: at
+/// 8 KiB the strict pass is under 20 ms on this corpus, while the same query in
+/// `Any` mode — bounded at thirty-two terms by `MAX_ANY_TERMS` — costs 3.2 ms at
+/// every size. A sentence or short paragraph is well under 1 KiB, so 8 KiB
+/// leaves an order of magnitude of margin above any legitimate question and
+/// refuses the pasted log that motivated the cap.
+///
+/// `pub` because the command line's integration test is a separate crate and
+/// has to refuse at the same number the store applies rather than a copy of it,
+/// the way the store's own test reads the constant. The schema description and
+/// `search.md` still state the number literally, because neither can read it.
+pub const MAX_QUERY_BYTES: usize = 8192;
+
 /// The statement [`Store::matching_observations`] runs, built in one place.
 ///
 /// Named rather than inlined so a test can assert on the plan of *this* query.
@@ -327,6 +362,12 @@ impl Store {
     ) -> Result<SearchOutcome, StoreError> {
         if query.trim().is_empty() {
             return Err(StoreError::EmptySearch);
+        }
+        if query.len() > MAX_QUERY_BYTES {
+            return Err(StoreError::QueryTooLong {
+                bytes: query.len(),
+                cap: MAX_QUERY_BYTES,
+            });
         }
         options.project = options.project.as_deref().map(normalize::project);
         // A blank filter is no filter, the way a blank project already is.
