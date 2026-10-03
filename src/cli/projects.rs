@@ -279,6 +279,12 @@ pub(super) fn resolve_write_session(
 ) -> Result<WriteSession> {
     if let Some(id) = session_id.filter(|id| !id.trim().is_empty()) {
         let session = store.get_session(&id)?;
+        // The same refusal the MCP write path makes: a write naming an ended
+        // session is a misattribution, and the two doors must not disagree
+        // about which sessions accept content.
+        if session.ended_at.is_some() {
+            anyhow::bail!("session {id:?} has ended; omit --session or start a new one");
+        }
         let session_project = crate::memory::normalize::project(&session.project);
         if let Some(project) = explicit_project {
             let project = crate::memory::normalize::project(&project);

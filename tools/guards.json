@@ -1236,5 +1236,17 @@
     "file": "src/setup/mod.rs",
     "old": "    let stripped = strip_jsonc(text.as_bytes());\n    let Ok(config) = serde_json::from_slice::<Value>(&stripped) else {",
     "new": "    let stripped = text.as_bytes().to_vec();\n    let Ok(config) = serde_json::from_slice::<Value>(&stripped) else {"
+  },
+  {
+    "name": "sessions: ending without a summary wipes the one already written",
+    "file": "src/store/sessions.rs",
+    "old": "summary = COALESCE(?1, summary) WHERE id = ?2",
+    "new": "summary = ?1 WHERE id = ?2"
+  },
+  {
+    "name": "sessions: a write naming an ended session is accepted again",
+    "file": "src/mcp/mod.rs",
+    "old": "            if session.ended_at.is_some() {",
+    "new": "            if false && session.ended_at.is_some() {"
   }
 ]

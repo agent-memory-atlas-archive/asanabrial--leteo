@@ -191,6 +191,16 @@ impl LeteoMcpServer {
     ) -> Result<WriteSession, CallToolResult> {
         if let Some(id) = session_id.filter(|id| !id.trim().is_empty()) {
             let session = store.get_session(&id).map_err(store_error)?;
+            // A write that names an ended session is a misattribution: the agent
+            // that ended it has gone, and the memory would be filed under a
+            // conversation that has closed. Engram answers `session_already_ended`
+            // for the same case; the caller starts a new session or omits the id.
+            if session.ended_at.is_some() {
+                return Err(structured_error(
+                    error_code::SESSION_ALREADY_ENDED,
+                    format!("session {id:?} has ended; omit session_id or start a new session"),
+                ));
+            }
             let session_project = normalize::project(&session.project);
             if let Some(project) = project {
                 let project = normalize::project(&project);
@@ -956,6 +966,7 @@ mod error_code {
     pub const INVALID_RECOVERY_TOKEN: &str = "invalid_recovery_token";
     pub const RECOVERY_TOKEN_REQUIRED: &str = "recovery_token_required";
     pub const SESSION_PROJECT_MISMATCH: &str = "session_project_mismatch";
+    pub const SESSION_ALREADY_ENDED: &str = "session_already_ended";
     pub const PROJECT_MISMATCH: &str = "project_mismatch";
     pub const UNKNOWN_PROJECT: &str = "unknown_project";
     pub const AMBIGUOUS_PROJECT: &str = "ambiguous_project";
