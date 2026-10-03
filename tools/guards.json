@@ -18,6 +18,36 @@
     "new": "let topic_key = Some(query.to_owned());"
   },
   {
+    "name": "search: the prefix stage stops opening words",
+    "file": "src/memory/normalize.rs",
+    "old": "    fts_terms(query)\n        .into_iter()\n        .map(|term| format!(\"{term}*\"))\n        .collect::<Vec<_>>()\n        .join(\" \")",
+    "new": "    fts_terms(query).join(\" \")"
+  },
+  {
+    "name": "search: the prefix stage forgets to mark its results",
+    "file": "src/store/search.rs",
+    "old": "let mut matched = self.matching_observations(FTS_STEMMED, &terms, options, limit, true)?;",
+    "new": "let mut matched = self.matching_observations(FTS_STEMMED, &terms, options, limit, false)?;"
+  },
+  {
+    "name": "search: the title-substring stage is removed",
+    "file": "src/store/search.rs",
+    "old": "            matched = self.substring_observations(query, &options, limit)?;",
+    "new": "            matched = Vec::new();"
+  },
+  {
+    "name": "search: the title-substring stage matches any word, not every",
+    "file": "src/store/search.rs",
+    "old": "conditions.push_str(&format!(\" AND instr(lower(title), ?{}) > 0\", index + 4));",
+    "new": "conditions.push_str(&format!(\" OR instr(lower(title), ?{}) > 0\", index + 4));"
+  },
+  {
+    "name": "search: a fragment stage forgets to mark its results",
+    "file": "src/store/search.rs",
+    "old": "                rank: 0.0,\n                partial: true,\n            })",
+    "new": "                rank: 0.0,\n                partial: false,\n            })"
+  },
+  {
     "name": "mcp: partial-match hint suppressed",
     "file": "src/mcp/output.rs",
     "old": "} else if widened {",

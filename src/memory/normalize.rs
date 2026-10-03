@@ -1130,6 +1130,23 @@ pub fn fts_prefix_query(query: &str) -> String {
     terms.join(" ")
 }
 
+/// Every word left open at the end, for a fragment anywhere in the question.
+///
+/// [`fts_prefix_query`] opens only the last word because it runs while somebody
+/// is still typing, and a space there is them saying a word is finished. This
+/// one is the staged search's retry after the strict conjunction found nothing,
+/// where the fragment can be any word: `storyb` for `storybook`, and
+/// `append-onl` for `append-only`. The terms are [`fts_terms`]'s, so the
+/// quoting, the escaping and the one-word-once rule are shared with the query
+/// this retries rather than written a second time beside it.
+pub fn fts_prefix_terms(query: &str) -> String {
+    fts_terms(query)
+        .into_iter()
+        .map(|term| format!("{term}*"))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// What two prompts have to share to count as the same question asked twice.
 ///
 /// A listing of recent prompts deduplicates so that one question does not spend

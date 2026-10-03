@@ -225,6 +225,28 @@ impl Store {
         let any = options.mode == SearchMode::Any;
         let mut matched =
             self.fused_observations(&normalize::fts_query(query, any), &options, limit)?;
+        // And a word somebody half-remembers, before the question is loosened.
+        //
+        // The strict pass needs every word whole, so a fragment fails it
+        // exactly the way a word the store has never seen does, and the widened
+        // retry that follows answers it by dropping the fragment entirely —
+        // which finds the memory only if what is left is enough on its own.
+        // Opening the words to prefixes is a far smaller claim than dropping
+        // one: it says the fragment is the beginning of a word that is there,
+        // which is what an agent typing `pgxpo` or `append-onl` means. It runs
+        // before the widening for that reason, and its results carry `partial`
+        // like every other relaxed stage.
+        if matched.is_empty() && results.is_empty() && !any {
+            matched = self.prefix_observations(query, &options, limit)?;
+        }
+        // And a fragment from inside a word, which no prefix can reach.
+        //
+        // `telemetr` is not the beginning of `OpenTelemetry`, so the prefix
+        // stage above cannot match it, and dropping the word leaves nothing to
+        // search on. `substring_observations` says what it reads and why.
+        if matched.is_empty() && results.is_empty() && !any {
+            matched = self.substring_observations(query, &options, limit)?;
+        }
         // Every word, and then any of them rather than nothing at all.
         //
         // Requiring all of them is the right first answer — it is what makes
@@ -396,6 +418,119 @@ impl Store {
         candidates.retain(|candidate| candidate.rank <= median * RECALL_MARGIN_UNSEEN);
         candidates.truncate(limit);
         Ok(candidates)
+    }
+
+    /// Every word as a prefix, for a fragment the strict pass cannot match.
+    ///
+    /// The one relaxed stage that adds no word and drops no word: it asks
+    /// whether each word as typed begins a word the index holds. That is the
+    /// question behind a half-remembered identifier — `storyb` for `storybook`,
+    /// `append-onl` for `append-only` — and it is why it runs before the widened
+    /// retry rather than after it: dropping a word is a much larger claim about
+    /// what somebody meant than opening one is.
+    ///
+    /// The stemmed index alone, like the widened and nearest stages. A prefix is
+    /// matched against the tokens the index actually holds, and the stemmed
+    /// index is where a fragment meets the stem of the word it belongs to —
+    /// `throttl` against the `throttling` Porter reduced to `throttl`. The
+    /// unstemmed index is not read here: it is what the strict pass fuses in to
+    /// prefer an exact word, and this stage's question is only whether a
+    /// fragment begins a word at all.
+    ///
+    /// Session summaries are left out, the rule the widened and nearest stages
+    /// keep: a summary is long and touches everything, so it is the best
+    /// fragment match for a loosened question and the right answer to almost
+    /// none. A question whose words genuinely name what a session did is
+    /// answered by the strict pass, which keeps them.
+    fn prefix_observations(
+        &self,
+        query: &str,
+        options: &SearchOptions,
+        limit: usize,
+    ) -> Result<Vec<Candidate>, StoreError> {
+        let terms = normalize::fts_prefix_terms(query);
+        if terms.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut matched = self.matching_observations(FTS_STEMMED, &terms, options, limit, true)?;
+        matched.retain(|result| result.kind != crate::memory::model::SESSION_SUMMARY);
+        matched.sort_by(|left, right| left.rank.total_cmp(&right.rank));
+        matched.truncate(limit);
+        Ok(matched)
+    }
+
+    /// A fragment from inside a word, which no prefix query can reach.
+    ///
+    /// `telemetr` is not the beginning of `OpenTelemetry`, so the prefix stage
+    /// cannot match it, and dropping the word leaves nothing to search on. This
+    /// is the one stage that asks whether a title *contains* a word's fragment,
+    /// which is the question behind an identifier somebody half-remembers.
+    ///
+    /// Over titles, and only titles. A title is where an identifier or a name
+    /// lives and it is a fraction of a memory's size, so the scan this needs
+    /// stays bounded — over bodies it would read everything the store holds on
+    /// every question that reached this far. A trigram index is the indexed way
+    /// to ask the same thing, and it was built and measured before this was
+    /// written: `tokenize = 'trigram'` over title and content added 18.5 MB to a
+    /// 9.3 MB corpus, twice the text, for a stage that runs only once every
+    /// indexed stage has already found nothing. See `search.md` for the
+    /// measurement.
+    ///
+    /// Every term has to be inside the title, never any of them. A disjunction
+    /// here would answer a question the widened retry is about to answer
+    /// properly with whichever title shares one common word — the noise the
+    /// widened stage's own note is about.
+    fn substring_observations(
+        &self,
+        query: &str,
+        options: &SearchOptions,
+        limit: usize,
+    ) -> Result<Vec<Candidate>, StoreError> {
+        // The same words the hint searches on: the alphanumeric ones, lowercased
+        // and deduplicated, with fragments under three characters dropped. A
+        // one- or two-character fragment is inside almost every title and would
+        // turn this into a scan that always answers.
+        let terms = normalize::prompt_terms(query);
+        if terms.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut conditions = String::new();
+        for index in 0..terms.len() {
+            conditions.push_str(&format!(" AND instr(lower(title), ?{}) > 0", index + 4));
+        }
+        let sql = format!(
+            "SELECT id, type FROM observations
+              WHERE deleted_at IS NULL
+                AND (?1 IS NULL OR type = ?1)
+                AND (?2 IS NULL OR LOWER(project) = ?2)
+                AND (?3 IS NULL OR scope = ?3){conditions}
+              ORDER BY datetime(created_at) DESC, id DESC LIMIT ?{}",
+            terms.len() + 4
+        );
+        let mut values: Vec<rusqlite::types::Value> = vec![
+            options.kind.clone().into(),
+            options.project.clone().into(),
+            options.scope.clone().into(),
+        ];
+        for term in &terms {
+            values.push(term.clone().into());
+        }
+        values.push((limit as i64).into());
+        let mut statement = self.connection.prepare(&sql)?;
+        let rows = statement.query_map(rusqlite::params_from_iter(values), |row| {
+            Ok(Candidate {
+                id: row.get("id")?,
+                kind: row.get("type")?,
+                rank: 0.0,
+                partial: true,
+            })
+        })?;
+        let mut matched = rows
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(StoreError::from)?;
+        matched.retain(|result| result.kind != crate::memory::model::SESSION_SUMMARY);
+        matched.truncate(limit);
+        Ok(matched)
     }
 
     /// The widened retry: every word but one, not any word at all.
