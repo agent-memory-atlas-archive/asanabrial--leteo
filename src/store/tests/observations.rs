@@ -83,6 +83,7 @@ fn an_update_cannot_reintroduce_a_synonym_or_blank_a_title() {
     let updated = store
         .update_observation(
             id,
+            None,
             UpdateObservation {
                 kind: Some("bug".to_owned()),
                 ..UpdateObservation::default()
@@ -94,6 +95,7 @@ fn an_update_cannot_reintroduce_a_synonym_or_blank_a_title() {
     // And the title cannot be taken away after the fact.
     let error = store.update_observation(
         id,
+        None,
         UpdateObservation {
             title: Some("   ".to_owned()),
             ..UpdateObservation::default()
@@ -532,6 +534,7 @@ fn updates_pins_and_reviews_observations() {
     let updated = store
         .update_observation(
             saved.id,
+            None,
             UpdateObservation {
                 kind: Some("architecture".to_owned()),
                 title: Some("Safe <private>title</private>".to_owned()),
@@ -561,7 +564,7 @@ fn updates_pins_and_reviews_observations() {
         saved.id
     );
 
-    store.pin_observation(saved.id).unwrap();
+    store.pin_observation(saved.id, None).unwrap();
     assert!(store.get_observation(saved.id).unwrap().pinned);
     assert_eq!(
         store
@@ -571,7 +574,7 @@ fn updates_pins_and_reviews_observations() {
             .len(),
         1
     );
-    store.unpin_observation(saved.id).unwrap();
+    store.unpin_observation(saved.id, None).unwrap();
     assert!(!store.get_observation(saved.id).unwrap().pinned);
 
     store.mark_reviewed(saved.id).unwrap();
@@ -590,7 +593,7 @@ fn updates_pins_and_reviews_observations() {
         .unwrap();
     assert_eq!(update_mutations, 2);
     assert!(matches!(
-        store.update_observation(999, UpdateObservation::default()),
+        store.update_observation(999, None, UpdateObservation::default()),
         Err(StoreError::ObservationNotFound(999))
     ));
 }
@@ -646,7 +649,7 @@ fn pruning_refuses_a_project_whose_observations_were_only_soft_deleted() {
         .add_observation(observation("s1", "Soft deleted", "body"))
         .unwrap()
         .observation;
-    store.delete_observation(saved.id, false).unwrap();
+    store.delete_observation(saved.id, None, false).unwrap();
 
     // The rows are still there and still reference the session, so pruning
     // it would break the foreign key. Refusing is the honest answer.
@@ -727,7 +730,7 @@ fn deleting_a_session_requires_it_to_hold_no_observations() {
         store.delete_session("s1"),
         Err(StoreError::SessionHasObservations(_, 1))
     ));
-    store.delete_observation(saved.id, true).unwrap();
+    store.delete_observation(saved.id, None, true).unwrap();
     store.delete_session("s1").unwrap();
     assert!(store.get_session("s1").is_err());
     assert!(
@@ -795,7 +798,7 @@ fn project_existence_covers_sessions_observations_and_prompts() {
         .add_observation(observation("s1", "Existing", "body"))
         .unwrap()
         .observation;
-    store.delete_observation(saved.id, true).unwrap();
+    store.delete_observation(saved.id, None, true).unwrap();
     assert!(store.project_exists("leteo").unwrap());
 }
 
@@ -917,7 +920,7 @@ fn a_deleted_memory_is_not_revived_by_saving_under_its_topic_key() {
     first.topic_key = Some("style/indentation".to_owned());
     let original = store.add_observation(first).unwrap().observation;
 
-    store.delete_observation(original.id, false).unwrap();
+    store.delete_observation(original.id, None, false).unwrap();
 
     let mut second = observation("s1", "We indent with spaces", "the new decision");
     second.topic_key = Some("style/indentation".to_owned());
@@ -998,7 +1001,7 @@ fn a_deleted_memory_does_not_call_itself_active() {
         .observation;
     assert_eq!(store.get_observation(saved.id).unwrap().state(), "active");
 
-    store.delete_observation(saved.id, false).unwrap();
+    store.delete_observation(saved.id, None, false).unwrap();
     let deleted = store.get_observation(saved.id).unwrap();
     assert!(
         deleted.deleted_at.is_some(),
@@ -1068,7 +1071,7 @@ fn a_pinned_memory_does_not_also_take_a_place_among_the_recent_ones() {
         .add_observation(observation("s1", "Read this first", "the convention"))
         .unwrap()
         .observation;
-    store.pin_observation(pinned.id).unwrap();
+    store.pin_observation(pinned.id, None).unwrap();
     store
         .add_observation(observation("s1", "An ordinary memory", "body"))
         .unwrap();
@@ -1106,6 +1109,7 @@ fn a_memory_that_becomes_a_decision_becomes_due_for_review() {
     let updated = store
         .update_observation(
             saved.id,
+            None,
             UpdateObservation {
                 kind: Some("decision".to_owned()),
                 ..UpdateObservation::default()
@@ -1140,6 +1144,7 @@ fn a_memory_that_becomes_a_decision_becomes_due_for_review() {
     let decision = store
         .update_observation(
             saved.id,
+            None,
             UpdateObservation {
                 title: Some("Which store to use, decided".to_owned()),
                 ..UpdateObservation::default()
@@ -1307,6 +1312,7 @@ fn every_route_to_a_review_date_agrees_with_the_others() {
     store
         .update_observation(
             old.id,
+            None,
             UpdateObservation {
                 kind: Some("decision".to_owned()),
                 ..UpdateObservation::default()
@@ -1450,7 +1456,7 @@ fn a_timeline_counts_each_side_rather_than_the_whole_session() {
 
     // A deleted memory is counted by neither, the same as it is listed by
     // neither.
-    store.delete_observation(ids[1], false).unwrap();
+    store.delete_observation(ids[1], None, false).unwrap();
     let middle = store.timeline(ids[4], Some(9), Some(9)).unwrap();
     assert_eq!(middle.before_total, 3);
     assert_eq!(middle.before.len(), 3);
@@ -1565,6 +1571,7 @@ fn one_order_of_operations(seed: u64, exhaustive: bool) {
                 let index = (next() as usize) % live.len();
                 let _ = store.update_observation(
                     live[index],
+                    None,
                     UpdateObservation {
                         kind: Some(kinds[(next() % kinds.len() as u64) as usize].to_owned()),
                         content: Some(format!("cuerpo revisado en el paso {step}")),
@@ -1578,13 +1585,13 @@ fn one_order_of_operations(seed: u64, exhaustive: bool) {
             }
             70..=79 if !live.is_empty() => {
                 let index = (next() as usize) % live.len();
-                let _ = store.pin_observation(live[index]);
+                let _ = store.pin_observation(live[index], None);
             }
             // Deleting, soft and hard, which is what leaves dangling ends.
             80..=89 if !live.is_empty() => {
                 let index = (next() as usize) % live.len();
                 let id = live.remove(index);
-                let _ = store.delete_observation(id, roll % 2 == 0);
+                let _ = store.delete_observation(id, None, roll % 2 == 0);
             }
             // Merging two project names into one, which rewrites rows under
             // relations that were already judged.
@@ -1821,7 +1828,7 @@ fn a_deleted_memory_is_told_apart_from_one_that_was_never_there() {
         .unwrap()
         .observation
         .id;
-    store.delete_observation(id, false).unwrap();
+    store.delete_observation(id, None, false).unwrap();
     let missing = id + 9_999;
 
     // Every door that refuses one, as a closure so a new one cannot be added
@@ -1843,6 +1850,7 @@ fn a_deleted_memory_is_told_apart_from_one_that_was_never_there() {
                 store
                     .update_observation(
                         id,
+                        None,
                         UpdateObservation {
                             title: Some("something else".to_owned()),
                             ..UpdateObservation::default()
@@ -1853,15 +1861,15 @@ fn a_deleted_memory_is_told_apart_from_one_that_was_never_there() {
         ),
         (
             "pin",
-            Box::new(|store: &mut Store, id| store.pin_observation(id)),
+            Box::new(|store: &mut Store, id| store.pin_observation(id, None)),
         ),
         (
             "unpin",
-            Box::new(|store: &mut Store, id| store.unpin_observation(id)),
+            Box::new(|store: &mut Store, id| store.unpin_observation(id, None)),
         ),
         (
             "delete",
-            Box::new(|store: &mut Store, id| store.delete_observation(id, false)),
+            Box::new(|store: &mut Store, id| store.delete_observation(id, None, false)),
         ),
         (
             "mark_reviewed",
@@ -1888,7 +1896,7 @@ fn a_deleted_memory_is_told_apart_from_one_that_was_never_there() {
 
     // The sentence says when, and what the way back is — a date somebody can act
     // on rather than a bare refusal.
-    let said = match store.pin_observation(id) {
+    let said = match store.pin_observation(id, None) {
         Err(error) => error.to_string(),
         Ok(()) => panic!("pinning a deleted memory is not a thing that works"),
     };
@@ -1969,6 +1977,7 @@ fn nothing_a_caller_sends_is_stored_past_the_bound() {
     store
         .update_observation(
             first.id,
+            None,
             UpdateObservation {
                 // With a newline in it, which the saving door folds and the
                 // updating one did not.
@@ -2126,7 +2135,7 @@ fn the_pinned_list_has_a_ceiling_and_says_what_it_left_out() {
         ids.push(saved.observation.id);
     }
     for id in &ids {
-        store.pin_observation(*id).unwrap();
+        store.pin_observation(*id, None).unwrap();
     }
 
     let (todas, fuera) = store
@@ -2306,7 +2315,7 @@ fn the_size_somebody_chose_governs_the_pinned_memories_too() {
             .add_observation(observation("s1", &format!("Pinned {index}"), "a body"))
             .unwrap()
             .observation;
-        store.pin_observation(saved.id).unwrap();
+        store.pin_observation(saved.id, None).unwrap();
     }
 
     for size in [
@@ -2382,7 +2391,7 @@ fn the_pinned_memories_of_a_project_are_sought_not_walked_to() {
             .unwrap()
             .observation;
         if index % 100 == 0 {
-            store.pin_observation(saved.id).unwrap();
+            store.pin_observation(saved.id, None).unwrap();
         }
     }
 

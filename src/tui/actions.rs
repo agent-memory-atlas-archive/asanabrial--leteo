@@ -152,7 +152,7 @@ pub(super) fn apply_action(app: &mut App, store: &mut Store, action: Action) -> 
         }
         Action::Delete { what, hard } => {
             let done = match &what {
-                Target::Observation(id) => store.delete_observation(*id, hard).map(|()| {
+                Target::Observation(id) => store.delete_observation(*id, None, hard).map(|()| {
                     fill(
                         &fill(say.deleted_memory, "id", id),
                         "gone",

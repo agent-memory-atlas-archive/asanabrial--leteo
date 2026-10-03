@@ -122,6 +122,7 @@ fn the_full_text_triggers_follow_every_write() {
     store
         .update_observation(
             id,
+            None,
             UpdateObservation {
                 title: Some("Bittern".to_owned()),
                 ..UpdateObservation::default()
@@ -144,7 +145,7 @@ fn the_full_text_triggers_follow_every_write() {
         "the update trigger left the old title in the index"
     );
 
-    store.delete_observation(id, true).unwrap();
+    store.delete_observation(id, None, true).unwrap();
     assert!(
         store
             .search("Bittern", SearchOptions::default())
@@ -1400,7 +1401,7 @@ fn a_blank_narrowing_narrows_nothing() {
     assert_eq!(recent(Some("")), recent(None), "recent takes it too");
     assert!(recent(Some("personal")) < recent(None), "and still narrows");
 
-    store.pin_observation(2).unwrap();
+    store.pin_observation(2, None).unwrap();
     let pinned = |scope: Option<&str>| {
         store
             .pinned_observations(Some("leteo"), scope, usize::MAX)

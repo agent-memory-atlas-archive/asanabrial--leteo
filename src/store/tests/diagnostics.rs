@@ -467,6 +467,7 @@ fn a_full_text_trigger_that_went_missing_is_named_and_put_back() {
     store
         .update_observation(
             saved.id,
+            None,
             crate::memory::model::UpdateObservation {
                 content: Some("garrapinada posterior".to_owned()),
                 ..Default::default()
@@ -740,7 +741,7 @@ fn two_memories_under_one_key_is_reported_and_the_second_becomes_unreachable() {
         })
         .unwrap();
     let buried = live_under_key(&store, "buried/key")[0].0;
-    store.delete_observation(buried, false).unwrap();
+    store.delete_observation(buried, None, false).unwrap();
     store
         .add_observation(AddObservation {
             session_id: "s-uno".to_owned(),
@@ -1167,14 +1168,14 @@ fn the_project_list_is_newest_first_and_leaves_out_the_ones_with_nothing_left() 
     write(&mut store, "zebra", "Tied", "2025-06-01 00:00:00");
     write(&mut store, "aardvark", "Tied too", "2025-06-01 00:00:00");
     let doomed = write(&mut store, "emptied", "Deleted", "2029-01-01 00:00:00");
-    store.delete_observation(doomed, false).unwrap();
+    store.delete_observation(doomed, None, false).unwrap();
     // One that is still here, whose newest memory was deleted: it belongs where
     // its newest *live* memory puts it, which is last. Counting the deleted one
     // would put it second, and without this pair the clause that excludes it
     // from the maximum could be dropped with every test still green.
     write(&mut store, "pruned", "What is left", "2019-01-01 00:00:00");
     let recent = write(&mut store, "pruned", "Deleted since", "2029-06-01 00:00:00");
-    store.delete_observation(recent, false).unwrap();
+    store.delete_observation(recent, None, false).unwrap();
 
     assert_eq!(
         store.stats().unwrap().projects,

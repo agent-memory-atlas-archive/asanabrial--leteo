@@ -446,6 +446,23 @@ pub enum StoreError {
     },
     #[error("project not found: {0}")]
     ProjectNotFound(String),
+    /// A mutating call asserted a project and the memory is filed elsewhere.
+    ///
+    /// Ids travel across projects — `mem_search` with `all_projects`, the
+    /// elsewhere-count retry — so an agent in one repository can hold another
+    /// repository's id and revise, pin or delete it by mistake. The four
+    /// mutating tools take an `expected_project` for that reason and this is
+    /// the refusal when it does not match. Both projects are named because
+    /// either the id was wrong or the memory is filed somewhere unexpected, and
+    /// only the caller can tell which.
+    #[error(
+        "observation {id} belongs to {actual}, and expected_project says {expected}; nothing was changed"
+    )]
+    ProjectMismatch {
+        id: i64,
+        expected: String,
+        actual: String,
+    },
     #[error("session {0} still has {1} observation(s)")]
     SessionHasObservations(String, i64),
     #[error("prompt not found: {0}")]

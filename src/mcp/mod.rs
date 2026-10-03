@@ -499,12 +499,21 @@ impl RecoveryTokens {
 }
 
 impl LeteoMcpServer {
-    fn set_pin(&self, id: i64, pinned: bool) -> Result<Json<PinOutput>, CallToolResult> {
+    fn set_pin(
+        &self,
+        id: i64,
+        expected_project: Option<&str>,
+        pinned: bool,
+    ) -> Result<Json<PinOutput>, CallToolResult> {
         let mut store = self.lock_store()?;
         if pinned {
-            store.pin_observation(id).map_err(store_error)?;
+            store
+                .pin_observation(id, expected_project)
+                .map_err(store_error)?;
         } else {
-            store.unpin_observation(id).map_err(store_error)?;
+            store
+                .unpin_observation(id, expected_project)
+                .map_err(store_error)?;
         }
         let observation = store.get_observation(id).map_err(store_error)?;
         Ok(Json(PinOutput {
@@ -866,6 +875,7 @@ fn store_error(error: StoreError) -> CallToolResult {
         StoreError::InvalidRelationVerb { .. } => "invalid_relation",
         StoreError::CrossProjectRelation { .. } => "cross_project_relation",
         StoreError::ProjectNotFound(_) => "project_not_found",
+        StoreError::ProjectMismatch { .. } => error_code::PROJECT_MISMATCH,
         StoreError::SessionHasObservations(_, _) => "session_has_observations",
         StoreError::EmptySearch => "invalid_search",
         StoreError::RelativeDatabasePath(_) => "invalid_database_path",

@@ -357,7 +357,8 @@ fn applies_tool_defaults() {
     .unwrap();
     let search: SearchParams = serde_json::from_value(json!({ "query": "sqlite" })).unwrap();
     let review: ReviewParams = serde_json::from_value(json!({ "action": "list" })).unwrap();
-    let delete: DeleteParams = serde_json::from_value(json!({ "id": 1 })).unwrap();
+    let delete: DeleteParams =
+        serde_json::from_value(json!({ "id": 1, "expected_project": "leteo" })).unwrap();
     let timeline: TimelineParams = serde_json::from_value(json!({ "observation_id": 1 })).unwrap();
     let capture: CapturePassiveParams = serde_json::from_value(json!({
         "content": "## Key Learnings:\n- Prefer transactions"
@@ -1255,7 +1256,7 @@ fn a_project_with_as_many_pins_as_the_budget_still_hears_about_recent_work() {
                 .add_observation(memory(&format!("Pinned {index}")))
                 .unwrap()
                 .observation;
-            store.pin_observation(saved.id).unwrap();
+            store.pin_observation(saved.id, None).unwrap();
         }
         for index in 0..20 {
             store
@@ -1559,7 +1560,9 @@ fn a_search_says_when_its_own_maximum_is_what_ended_the_list() {
             .into_iter()
             .take(5)
         {
-            store.delete_observation(row.observation.id, true).unwrap();
+            store
+                .delete_observation(row.observation.id, None, true)
+                .unwrap();
         }
     }
     let exactly = search(json!({ "query": "migration", "limit": cap + 30 }));
@@ -2281,12 +2284,16 @@ fn the_other_tools_spelling_of_an_identifier_is_accepted() {
         serde_json::from_value(json!({"observation_id": 7})).expect("mem_get_observation");
     assert_eq!(fetched.id, 7);
     let deleted: DeleteParams =
-        serde_json::from_value(json!({"observation_id": 7})).expect("mem_delete");
+        serde_json::from_value(json!({"observation_id": 7, "expected_project": "leteo"}))
+            .expect("mem_delete");
     assert_eq!(deleted.id, 7);
-    let pinned: PinParams = serde_json::from_value(json!({"observation_id": 7})).expect("mem_pin");
+    let pinned: PinParams =
+        serde_json::from_value(json!({"observation_id": 7, "expected_project": "leteo"}))
+            .expect("mem_pin");
     assert_eq!(pinned.id, 7);
     let updated: UpdateParams =
-        serde_json::from_value(json!({"observation_id": 7})).expect("mem_update");
+        serde_json::from_value(json!({"observation_id": 7, "expected_project": "leteo"}))
+            .expect("mem_update");
     assert_eq!(updated.id, 7);
 
     let timeline: TimelineParams = serde_json::from_value(json!({"id": 7})).unwrap();
@@ -2610,7 +2617,9 @@ fn a_memory_cannot_be_moved_into_a_project_that_does_not_exist() {
         server.mem_update(Parameters(serde_json::from_value(value).unwrap()))
     };
 
-    let Err(error) = update(json!({ "id": id, "project": "a-project-that-is-not-here" })) else {
+    let Err(error) = update(
+        json!({ "id": id, "expected_project": "leteo", "project": "a-project-that-is-not-here" }),
+    ) else {
         panic!("a memory cannot be moved somewhere that does not exist");
     };
     let payload = error_payload(&error);
@@ -2620,9 +2629,13 @@ fn a_memory_cannot_be_moved_into_a_project_that_does_not_exist() {
         "and the refusal says where it is, the way a save's does"
     );
 
-    let renamed = update(json!({ "id": id, "title": "A memory of leteo, retitled" }))
-        .expect("an ordinary edit is not a move")
-        .0;
+    let renamed = update(json!({
+        "id": id,
+        "expected_project": "leteo",
+        "title": "A memory of leteo, retitled",
+    }))
+    .expect("an ordinary edit is not a move")
+    .0;
     assert_eq!(renamed.observation.project.as_deref(), Some("leteo"));
 
     server
@@ -2630,10 +2643,208 @@ fn a_memory_cannot_be_moved_into_a_project_that_does_not_exist() {
             serde_json::from_value(json!({ "id": "s2", "project": "somewhere-real" })).unwrap(),
         ))
         .unwrap();
-    let moved = update(json!({ "id": id, "project": "somewhere-real" }))
-        .expect("a project the store knows is a place a memory can move to")
-        .0;
+    let moved =
+        update(json!({ "id": id, "expected_project": "leteo", "project": "somewhere-real" }))
+            .expect("a project the store knows is a place a memory can move to")
+            .0;
     assert_eq!(moved.observation.project.as_deref(), Some("somewhere-real"));
+}
+
+/// A server holding one enrolled memory in `alpha`, for the ownership refusals.
+///
+/// The project is enrolled so a permitted write would queue a sync mutation:
+/// with nothing in the queue, "the queue is untouched" would hold whether the
+/// check ran or not.
+fn ownership_fixture() -> (tempfile::TempDir, LeteoMcpServer, i64, String) {
+    let (temp, server) = test_server(McpOptions::default());
+    let saved = {
+        let mut store = server.lock_store().unwrap();
+        store.enroll_project("alpha").unwrap();
+        store.create_session("s1", "alpha", "C:/alpha").unwrap();
+        store
+            .add_observation(AddObservation {
+                session_id: "s1".to_owned(),
+                kind: "decision".to_owned(),
+                title: "A memory of alpha".to_owned(),
+                content: "the body only alpha may change".to_owned(),
+                tool_name: None,
+                project: Some("alpha".to_owned()),
+                scope: "project".to_owned(),
+                topic_key: None,
+                prompt_sync_id: None,
+            })
+            .unwrap()
+            .observation
+    };
+    (temp, server, saved.id, saved.sync_id)
+}
+
+fn pending_mutations(server: &LeteoMcpServer, sync_id: &str) -> i64 {
+    server
+        .lock_store()
+        .unwrap()
+        .connection()
+        .query_row(
+            "SELECT COUNT(*) FROM sync_mutations WHERE entity_key = ?1",
+            [sync_id],
+            |row| row.get(0),
+        )
+        .unwrap()
+}
+
+#[test]
+fn mem_update_refuses_a_memory_filed_under_another_project() {
+    let (_temp, server, id, sync_id) = ownership_fixture();
+    let before = server.lock_store().unwrap().get_observation(id).unwrap();
+    let queued = pending_mutations(&server, &sync_id);
+
+    let Err(error) = server.mem_update(Parameters(
+        serde_json::from_value(json!({
+            "id": id,
+            "expected_project": "beta",
+            "title": "rewritten by the wrong project",
+        }))
+        .unwrap(),
+    )) else {
+        panic!("a memory of alpha must not be revised as a memory of beta");
+    };
+    assert_eq!(error_payload(&error)["error"]["code"], "project_mismatch");
+
+    let after = server.lock_store().unwrap().get_observation(id).unwrap();
+    assert_eq!(after.title, before.title, "the body was rewritten anyway");
+    assert_eq!(
+        after.revision_count, before.revision_count,
+        "a refused update still counted as a revision"
+    );
+    assert_eq!(
+        pending_mutations(&server, &sync_id),
+        queued,
+        "a refused update still queued a sync mutation"
+    );
+}
+
+#[test]
+fn mem_delete_refuses_a_memory_filed_under_another_project() {
+    let (_temp, server, id, sync_id) = ownership_fixture();
+    let before = server.lock_store().unwrap().get_observation(id).unwrap();
+    let queued = pending_mutations(&server, &sync_id);
+
+    let Err(error) = server.mem_delete(Parameters(DeleteParams {
+        id,
+        expected_project: "beta".to_owned(),
+        hard_delete: true,
+    })) else {
+        panic!("a memory of alpha must not be hard-deleted as a memory of beta");
+    };
+    assert_eq!(error_payload(&error)["error"]["code"], "project_mismatch");
+
+    let after = server.lock_store().unwrap().get_observation(id).unwrap();
+    assert_eq!(after.state(), "active", "the memory was deleted anyway");
+    assert_eq!(after.revision_count, before.revision_count);
+    assert_eq!(
+        pending_mutations(&server, &sync_id),
+        queued,
+        "a refused delete still queued a sync mutation"
+    );
+}
+
+#[test]
+fn mem_pin_refuses_a_memory_filed_under_another_project() {
+    let (_temp, server, id, sync_id) = ownership_fixture();
+    let queued = pending_mutations(&server, &sync_id);
+
+    let Err(error) = server.mem_pin(Parameters(PinParams {
+        id,
+        expected_project: "beta".to_owned(),
+    })) else {
+        panic!("a memory of alpha must not be pinned as a memory of beta");
+    };
+    assert_eq!(error_payload(&error)["error"]["code"], "project_mismatch");
+    assert!(
+        !server
+            .lock_store()
+            .unwrap()
+            .get_observation(id)
+            .unwrap()
+            .pinned,
+        "the memory was pinned anyway"
+    );
+    assert_eq!(pending_mutations(&server, &sync_id), queued);
+}
+
+#[test]
+fn mem_unpin_refuses_a_memory_filed_under_another_project() {
+    let (_temp, server, id, sync_id) = ownership_fixture();
+    server
+        .lock_store()
+        .unwrap()
+        .pin_observation(id, None)
+        .unwrap();
+    let queued = pending_mutations(&server, &sync_id);
+
+    let Err(error) = server.mem_unpin(Parameters(PinParams {
+        id,
+        expected_project: "beta".to_owned(),
+    })) else {
+        panic!("a memory of alpha must not be unpinned as a memory of beta");
+    };
+    assert_eq!(error_payload(&error)["error"]["code"], "project_mismatch");
+    assert!(
+        server
+            .lock_store()
+            .unwrap()
+            .get_observation(id)
+            .unwrap()
+            .pinned,
+        "the memory was unpinned anyway"
+    );
+    assert_eq!(pending_mutations(&server, &sync_id), queued);
+}
+
+#[test]
+fn the_mutating_tools_refuse_a_missing_expected_project() {
+    for (tool, error) in [
+        (
+            "mem_update",
+            serde_json::from_value::<UpdateParams>(json!({ "id": 1 })).err(),
+        ),
+        (
+            "mem_delete",
+            serde_json::from_value::<DeleteParams>(json!({ "id": 1 })).err(),
+        ),
+        (
+            "mem_pin",
+            serde_json::from_value::<PinParams>(json!({ "id": 1 })).err(),
+        ),
+        (
+            "mem_unpin",
+            serde_json::from_value::<PinParams>(json!({ "id": 1 })).err(),
+        ),
+    ] {
+        let error = error.unwrap_or_else(|| panic!("{tool} parsed without expected_project"));
+        assert!(
+            error.to_string().contains("expected_project"),
+            "{tool} refused without naming the missing field: {error}"
+        );
+    }
+}
+
+#[test]
+fn the_four_mutating_tools_publish_expected_project_as_required() {
+    for name in ["mem_update", "mem_delete", "mem_pin", "mem_unpin"] {
+        let tool = LeteoMcpServer::router()
+            .list_all()
+            .into_iter()
+            .find(|tool| tool.name == name)
+            .unwrap_or_else(|| panic!("{name} is exposed"));
+        let required = tool.input_schema["required"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{name} publishes no required list"));
+        assert!(
+            required.iter().any(|field| field == "expected_project"),
+            "{name} does not require expected_project: {required:?}"
+        );
+    }
 }
 
 #[test]
@@ -2724,6 +2935,7 @@ fn judging_a_pair_replaces_the_verdict_and_refuses_what_the_graph_cannot_read() 
         store
             .update_observation(
                 first.id,
+                None,
                 UpdateObservation {
                     project: Some("somewhere-else".to_owned()),
                     ..UpdateObservation::default()
@@ -3272,7 +3484,12 @@ fn the_warning_against_a_memory_is_in_the_same_place_everywhere() {
 
     let updated = server
         .mem_update(Parameters(
-            serde_json::from_value(json!({ "id": older.id, "content": "revised body" })).unwrap(),
+            serde_json::from_value(json!({
+                "id": older.id,
+                "expected_project": "leteo",
+                "content": "revised body",
+            }))
+            .unwrap(),
         ))
         .unwrap()
         .0;
@@ -3470,15 +3687,34 @@ fn the_seven_tools_that_had_no_test_of_their_own_answer_what_they_promise() {
         },
     );
 
-    let Json(pinned) = server.mem_pin(Parameters(PinParams { id: first })).unwrap();
+    let owned = || "leteo".to_owned();
+    let Json(pinned) = server
+        .mem_pin(Parameters(PinParams {
+            id: first,
+            expected_project: owned(),
+        }))
+        .unwrap();
     assert!(pinned.pinned, "{pinned:?}");
-    server.mem_pin(Parameters(PinParams { id: first })).unwrap();
+    server
+        .mem_pin(Parameters(PinParams {
+            id: first,
+            expected_project: owned(),
+        }))
+        .unwrap();
     let Json(unpinned) = server
-        .mem_unpin(Parameters(PinParams { id: first }))
+        .mem_unpin(Parameters(PinParams {
+            id: first,
+            expected_project: owned(),
+        }))
         .unwrap();
     assert!(!unpinned.pinned, "{unpinned:?}");
     assert!(
-        server.mem_pin(Parameters(PinParams { id: 9_999 })).is_err(),
+        server
+            .mem_pin(Parameters(PinParams {
+                id: 9_999,
+                expected_project: owned(),
+            }))
+            .is_err(),
         "pinning a memory that does not exist has to fail"
     );
 
@@ -3530,6 +3766,7 @@ fn the_seven_tools_that_had_no_test_of_their_own_answer_what_they_promise() {
     let Json(soft) = server
         .mem_delete(Parameters(DeleteParams {
             id: second,
+            expected_project: owned(),
             hard_delete: false,
         }))
         .unwrap();
@@ -3546,6 +3783,7 @@ fn the_seven_tools_that_had_no_test_of_their_own_answer_what_they_promise() {
         server
             .mem_delete(Parameters(DeleteParams {
                 id: second,
+                expected_project: owned(),
                 hard_delete: false,
             }))
             .is_err()
@@ -3553,6 +3791,7 @@ fn the_seven_tools_that_had_no_test_of_their_own_answer_what_they_promise() {
     let Json(hard) = server
         .mem_delete(Parameters(DeleteParams {
             id: second,
+            expected_project: owned(),
             hard_delete: true,
         }))
         .unwrap();
@@ -3856,7 +4095,12 @@ fn no_tool_answers_with_the_whole_of_what_it_was_given() {
         serde_json::to_value(
             server
                 .mem_update(Parameters(
-                    serde_json::from_value(json!({ "id": saved, "title": "nuevo" })).unwrap(),
+                    serde_json::from_value(json!({
+                        "id": saved,
+                        "expected_project": "leteo",
+                        "title": "nuevo",
+                    }))
+                    .unwrap(),
                 ))
                 .unwrap()
                 .0,
@@ -3997,6 +4241,7 @@ fn no_write_door_lets_a_private_marker_reach_the_database() {
         .mem_update(Parameters(
             serde_json::from_value(json!({
                 "id": first.observation.id,
+                "expected_project": "leteo",
                 "title": hidden("revisado"),
                 "content": hidden("cuerpo revisado"),
             }))
@@ -4588,6 +4833,7 @@ fn no_tool_that_replaces_stored_text_calls_itself_additive() {
         .mem_update(Parameters(
             serde_json::from_value(json!({
                 "observation_id": saved.observation.id,
+                "expected_project": "leteo",
                 "content": "something else entirely",
             }))
             .unwrap(),
@@ -5517,7 +5763,7 @@ fn the_context_tool_bounds_its_pinned_half_by_what_was_asked_for() {
             })
             .unwrap()
             .observation;
-        store.pin_observation(saved.id).unwrap();
+        store.pin_observation(saved.id, None).unwrap();
     }
     let server = LeteoMcpServer::with_options(Arc::new(Mutex::new(store)), McpOptions::default());
 

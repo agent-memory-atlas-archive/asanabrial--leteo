@@ -810,6 +810,7 @@ fn a_relation_whose_other_half_left_the_project_is_not_queued_with_it() {
     store
         .update_observation(
             second.id,
+            None,
             UpdateObservation {
                 project: Some("proyecto-b".to_owned()),
                 ..UpdateObservation::default()
@@ -886,7 +887,7 @@ fn a_round_trip_brings_back_every_field_a_memory_carries() {
     // pinned and reviewed so `pinned` and `review_after` are set.
     source.add_observation(input.clone()).unwrap();
     source.add_observation(input).unwrap();
-    source.pin_observation(saved.id).unwrap();
+    source.pin_observation(saved.id, None).unwrap();
     source.mark_reviewed(saved.id).unwrap();
     // And one deleted memory, because an export carries those too and a backup
     // that forgets a deletion resurrects it on the next import.
@@ -894,7 +895,7 @@ fn a_round_trip_brings_back_every_field_a_memory_carries() {
         .add_observation(observation("s1", "Borrada", "y exportada igual"))
         .unwrap()
         .observation;
-    source.delete_observation(removed.id, false).unwrap();
+    source.delete_observation(removed.id, None, false).unwrap();
 
     let json = source.export_json(None).unwrap();
     let (_destination_temp, mut destination) = store();

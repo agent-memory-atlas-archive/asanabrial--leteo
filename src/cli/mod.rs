@@ -563,7 +563,7 @@ pub async fn run(cli: Cli) -> Result<()> {
         }
         Command::Delete { command } => match command {
             DeleteCommand::Observation { id, hard } => {
-                store.delete_observation(id, hard)?;
+                store.delete_observation(id, None, hard)?;
                 print_json(&serde_json::json!({
                     "id": id,
                     "deleted": true,

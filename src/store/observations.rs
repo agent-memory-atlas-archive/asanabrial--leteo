@@ -33,6 +33,42 @@ pub(crate) fn pinned_sql(clauses: &str) -> String {
     )
 }
 
+/// Refuses a write whose caller asserted a project the memory is not in.
+///
+/// The four mutating tools take an `expected_project`; this is the one place
+/// that compares it to the row's stored project. It runs inside the same write
+/// transaction as the change it guards, so a refusal leaves the row, its
+/// revision count and the sync queue exactly as they were. `None` means the
+/// caller makes no assertion — the CLI and the TUI act on an id a person chose,
+/// not on an id an agent copied out of a cross-project search.
+fn assert_expected_project(
+    id: i64,
+    actual: Option<&str>,
+    expected: Option<&str>,
+) -> Result<(), StoreError> {
+    let Some(expected) = expected else {
+        return Ok(());
+    };
+    let expected = normalize::project(expected);
+    let actual = normalize::project(actual.unwrap_or_default());
+    if expected == actual {
+        return Ok(());
+    }
+    Err(StoreError::ProjectMismatch {
+        id,
+        expected: project_label(&expected),
+        actual: project_label(&actual),
+    })
+}
+
+fn project_label(project: &str) -> String {
+    if project.is_empty() {
+        "no project".to_owned()
+    } else {
+        format!("{project:?}")
+    }
+}
+
 /// Sets, moves or clears a memory's review date to match the type it now has.
 ///
 /// Only three types are ever due for review — `decision`, `policy`,
@@ -328,11 +364,13 @@ impl Store {
     pub fn update_observation(
         &mut self,
         id: i64,
+        expected_project: Option<&str>,
         input: UpdateObservation,
     ) -> Result<Observation, StoreError> {
         let max_length = self.config.max_observation_length;
         let tx = self.write_transaction()?;
         let current = get_active_observation(&tx, id)?;
+        assert_expected_project(id, current.project.as_deref(), expected_project)?;
 
         // Every field normalises what the caller supplied and leaves what it
         // did not. `kind` was the exception: an update could write back the
@@ -806,23 +844,39 @@ impl Store {
         Ok((rows, omitted))
     }
 
-    pub fn pin_observation(&mut self, id: i64) -> Result<(), StoreError> {
-        self.set_observation_pinned(id, true)
+    pub fn pin_observation(
+        &mut self,
+        id: i64,
+        expected_project: Option<&str>,
+    ) -> Result<(), StoreError> {
+        self.set_observation_pinned(id, expected_project, true)
     }
 
-    pub fn unpin_observation(&mut self, id: i64) -> Result<(), StoreError> {
-        self.set_observation_pinned(id, false)
+    pub fn unpin_observation(
+        &mut self,
+        id: i64,
+        expected_project: Option<&str>,
+    ) -> Result<(), StoreError> {
+        self.set_observation_pinned(id, expected_project, false)
     }
 
-    fn set_observation_pinned(&mut self, id: i64, pinned: bool) -> Result<(), StoreError> {
+    fn set_observation_pinned(
+        &mut self,
+        id: i64,
+        expected_project: Option<&str>,
+        pinned: bool,
+    ) -> Result<(), StoreError> {
         let tx = self.write_transaction()?;
-        let changed = tx.execute(
+        // The row is read rather than trusted to the UPDATE's row count: the
+        // count can say a row is absent but not which project it is in, and the
+        // ownership check needs the project. Inside one immediate transaction
+        // the row cannot move between this read and the write below.
+        let observation = get_active_observation(&tx, id)?;
+        assert_expected_project(id, observation.project.as_deref(), expected_project)?;
+        tx.execute(
             "UPDATE observations SET pinned = ?1 WHERE id = ?2 AND deleted_at IS NULL",
             params![pinned, id],
         )?;
-        if changed == 0 {
-            return Err(deleted_or_missing(&tx, id));
-        }
         tx.commit()?;
         Ok(())
     }
@@ -910,13 +964,19 @@ impl Store {
         Ok(())
     }
 
-    pub fn delete_observation(&mut self, id: i64, hard_delete: bool) -> Result<(), StoreError> {
+    pub fn delete_observation(
+        &mut self,
+        id: i64,
+        expected_project: Option<&str>,
+        hard_delete: bool,
+    ) -> Result<(), StoreError> {
         let tx = self.write_transaction()?;
         let observation = if hard_delete {
             get_observation_row(&tx, id)?
         } else {
             get_active_observation(&tx, id)?
         };
+        assert_expected_project(id, observation.project.as_deref(), expected_project)?;
         let deleted_at = sqlite_now();
         if hard_delete {
             tx.execute("DELETE FROM observations WHERE id = ?1", [id])?;

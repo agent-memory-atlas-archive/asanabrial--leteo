@@ -909,7 +909,7 @@ mod hydrate_tests {
         let vivas = store.hydrate(candidatos(&ids)).unwrap();
         assert_eq!(vivas.len(), 3);
 
-        store.delete_observation(ids[1], false).unwrap();
+        store.delete_observation(ids[1], None, false).unwrap();
         let despues = store.hydrate(candidatos(&ids)).unwrap();
         assert_eq!(
             despues.iter().map(|r| r.observation.id).collect::<Vec<_>>(),
@@ -917,7 +917,7 @@ mod hydrate_tests {
             "una memoria borrada no vuelve de una búsqueda"
         );
 
-        store.delete_observation(ids[0], true).unwrap();
+        store.delete_observation(ids[0], None, true).unwrap();
         assert_eq!(store.hydrate(candidatos(&ids)).unwrap().len(), 1);
     }
 }

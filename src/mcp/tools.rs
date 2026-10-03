@@ -171,6 +171,7 @@ impl LeteoMcpServer {
         let observation = store
             .update_observation(
                 params.id,
+                Some(params.expected_project.as_str()),
                 UpdateObservation {
                     kind: params.kind,
                     title: params.title,
@@ -292,7 +293,11 @@ impl LeteoMcpServer {
         Parameters(params): Parameters<DeleteParams>,
     ) -> Result<Json<DeleteOutput>, CallToolResult> {
         self.lock_store()?
-            .delete_observation(params.id, params.hard_delete)
+            .delete_observation(
+                params.id,
+                Some(params.expected_project.as_str()),
+                params.hard_delete,
+            )
             .map_err(store_error)?;
         Ok(Json(DeleteOutput {
             id: params.id,
@@ -665,7 +670,7 @@ impl LeteoMcpServer {
         &self,
         Parameters(params): Parameters<PinParams>,
     ) -> Result<Json<PinOutput>, CallToolResult> {
-        self.set_pin(params.id, true)
+        self.set_pin(params.id, Some(params.expected_project.as_str()), true)
     }
 
     #[tool(
@@ -683,7 +688,7 @@ impl LeteoMcpServer {
         &self,
         Parameters(params): Parameters<PinParams>,
     ) -> Result<Json<PinOutput>, CallToolResult> {
-        self.set_pin(params.id, false)
+        self.set_pin(params.id, Some(params.expected_project.as_str()), false)
     }
 
     #[tool(

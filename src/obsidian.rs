@@ -683,6 +683,7 @@ mod orphan_tests {
         store
             .update_observation(
                 id,
+                None,
                 crate::memory::model::UpdateObservation {
                     title: Some("A completely different title now".to_owned()),
                     ..Default::default()
