@@ -113,12 +113,18 @@ should come back is known without anybody labelling anything.
 ```bash
 cargo run --release --manifest-path tools/retrieval/Cargo.toml -- ~/.leteo/leteo.db
 cargo run --release --manifest-path tools/retrieval/Cargo.toml -- copy.db \n  --weights "20.0, 0.3, 0.0, 0.0, 0.0, 6.0"
+cargo run --release --manifest-path tools/retrieval/Cargo.toml -- copy.db --rerank
 ```
 
 Read-only, against the database you name. It reports title-shaped and
 body-shaped questions separately, each against two independent draws, because
 the gap between those four numbers is the only thing that makes a weight change
 believable.
+
+`--rerank` prints the shipped ordering beside the same statement with the Engram
+pin/recency/stability factor as its sort key, over the same draws. The factor is
+not adopted; the measurement that rejected it is in
+[`openspec/specs/search.md`](../openspec/specs/search.md) §2.
 
 ### The trap, which has now caught two attempts
 

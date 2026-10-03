@@ -21,6 +21,21 @@ before any of it.
    are merged by reciprocal rank fusion — a memory is worth `1 / (60 + place)`
    in each list it appears in, and the sum orders the answer.
 
+   **A pin/recency/stability rerank was measured and is not taken.** Engram
+   orders by `bm25 × (1 + 0.10·pinned + 0.06·recency + 0.04·stability)` and
+   publishes no measurement of its own, so the factor was put to this crate's
+   own ranking statement rather than copied. Both orderings — the shipped one,
+   and the same statement with that factor as its sort key — ran over one copy
+   of a real 5,273-memory store, 300 questions per draw over four seeds, through
+   `tools/retrieval`. The factor is neutral on bodies and plainly worse on
+   titles: mean MRR 0.9706 against 0.9722 on bodies, inside the seed-to-seed
+   spread, and 0.8666 against 0.8042 on titles, with top-1 falling from 81.9% to
+   73.4% and the held-out draw repeating the loss (0.8718 against 0.8075). A
+   sort key applied to a ranking that already knows what matched lifts a pinned
+   or recent memory above the memory that matched best, and on a title-shaped
+   question the best match is usually the answer. Recorded here so the factor is
+   not re-proposed without a measurement that contradicts this one.
+
 3. **Five stages, in order, stopping at the first that answers.**
    1. every word must match;
    2. failing that, every word as a prefix — a word somebody half-remembers;
@@ -256,6 +271,8 @@ before any of it.
 - `src/memory/normalize.rs` — `fts_query`, `topic_key`, and the narrowing folds
 - `src/store/schema.rs` — the two indexes and the triggers that feed them
 - `src/store/tests/search.rs` — the stage-by-stage tests
+- `tools/retrieval/` — the self-retrieval harness, and the reranked variant of
+  the ranking statement it measures
 - `tools/engram-bench/ratchet.py`, `floors.json` — the quality and reply-size
   floors, run by the `search-quality` job in `.github/workflows/ci.yml`
 
