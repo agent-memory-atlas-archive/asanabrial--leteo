@@ -72,6 +72,12 @@
     "new": "    if structured_output {"
   },
   {
+    "name": "mcp: a preview description promises characters again",
+    "file": "src/mcp/tools.rs",
+    "old": "The memory comes back as a 400-byte preview marked `content_truncated`; read one in full with mem_get_observation.",
+    "new": "The memory comes back as a 400-character preview marked `content_truncated`; read one in full with mem_get_observation."
+  },
+  {
     "name": "mcp: clamp notice suppressed",
     "file": "src/mcp/tools.rs",
     "old": "let clamped = params.limit.is_some_and(|asked| asked > cap) && results.len() >= cap;",

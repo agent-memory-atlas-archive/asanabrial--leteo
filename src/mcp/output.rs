@@ -294,7 +294,7 @@ impl From<TimelineResult> for TimelineOutput {
             //
             // The reasoning was that the caller named this memory by id, so it
             // should arrive whole. Two things say otherwise. The tool's own
-            // description promises "a 400-character preview marked
+            // description promises "a 400-byte preview marked
             // `content_truncated`; read one in full with mem_get_observation",
             // which was false for the very memory the call is about — a
             // published limit that is not the applied one. And the three-layer

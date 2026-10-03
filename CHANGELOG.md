@@ -17,6 +17,13 @@ All notable changes to Leteo are documented in this file.
 
 ### Fixed
 
+- **The preview tools promised characters but cut bytes.** Every description that
+  previews a body said "a 400-character preview", and the cut is `PREVIEW_BYTES = 400`
+  bytes — so in Spanish, CJK or emoji an agent was shown less than it was told. The unit
+  is now bytes everywhere it is published: the eight descriptions say "a 400-byte
+  preview", `PREVIEW_BYTES` says bytes in its own doc comment, and `mcp-tools.md` §3
+  states it. The cut does not move; the promise now matches the limit applied (#113).
+
 - **Two tools described their `relation` argument as a "Verdict", and an agent read the
   description as the key name.** `mem_judge` and `mem_compare` publish the argument as
   `relation`, but the `description` beside it began with the word "Verdict" — the slot where a

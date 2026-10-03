@@ -2223,6 +2223,11 @@ fn a_preview_is_no_longer_than_the_number_the_description_publishes() {
         content.len(),
         &content[content.len().saturating_sub(40)..]
     );
+    assert!(
+        content.chars().count() < PREVIEW_BYTES,
+        "the cut is on bytes, so this non-ASCII body arrives in {} characters, fewer than the {PREVIEW_BYTES} bytes the description promises: {content:?}",
+        content.chars().count()
+    );
     assert!(content.ends_with("[truncated]"), "{content:?}");
 }
 
@@ -3241,12 +3246,17 @@ fn a_suggested_topic_key_is_the_key_a_search_looks_for() {
 
 #[test]
 fn the_descriptions_publish_the_preview_length_the_code_cuts_at() {
-    let published = format!("{PREVIEW_BYTES}-character preview");
+    let published = format!("{PREVIEW_BYTES}-byte preview");
     let mut saying = 0;
     for tool in LeteoMcpServer::router().list_all() {
         let Some(description) = tool.description.as_ref() else {
             continue;
         };
+        assert!(
+            !description.contains("character preview"),
+            "{} promises a unit the cut does not use; the preview is cut in bytes and it says {description:?}",
+            tool.name
+        );
         if !description.contains("preview marked") {
             continue;
         }

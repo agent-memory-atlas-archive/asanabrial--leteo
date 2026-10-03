@@ -86,6 +86,14 @@ useful part out of a context window has failed even if every field is right.
    description. `mem_get_observation` is the one tool that promises the body in
    full, and its description says so.
 
+   The unit is bytes, and it is the unit the descriptions publish: a previewing
+   description says `400-byte`, and a test holds every one of them to
+   `PREVIEW_BYTES`, so the constant and the prose cannot drift apart. A
+   description that promised characters was the bug this fixes — a 400-byte cut
+   of non-ASCII text is fewer than four hundred characters, so the agent was told
+   it had been shown more than it had. The cut itself is unchanged; only the
+   promise moved to the unit already applied.
+
    This covers what a caller has just sent as much as what it is being shown.
    `mem_update` echoed a memory whole — 4,556 bytes to change a title, byte for
    byte what `mem_get_observation` sends — `mem_save_prompt` echoed the prompt,

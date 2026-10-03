@@ -136,7 +136,7 @@ impl LeteoMcpServer {
 
     #[tool(
         name = "mem_update",
-        description = "Revise a stored memory. Fields left out keep their current value. The memory comes back as a 400-character preview marked `content_truncated`; read one in full with mem_get_observation.",
+        description = "Revise a stored memory. Fields left out keep their current value. The memory comes back as a 400-byte preview marked `content_truncated`; read one in full with mem_get_observation.",
         annotations(
             title = "Update Memory",
             read_only_hint = false,
@@ -197,7 +197,7 @@ impl LeteoMcpServer {
     #[tool(
         name = "mem_review",
         description = "List observations due for review or mark one reviewed. Actions: \
-                       list, mark_reviewed. Bodies come back as a 400-character preview \
+                       list, mark_reviewed. Bodies come back as a 400-byte preview \
                        marked `content_truncated`; read one in full with \
                        mem_get_observation.",
         annotations(
@@ -315,7 +315,7 @@ impl LeteoMcpServer {
         name = "mem_search",
         description = "Search persistent observations by full-text query and optional \
                        filters. Answers about the current project unless you pass a \
-                       project or all_projects. Long bodies come back as a 400-character \
+                       project or all_projects. Long bodies come back as a 400-byte \
                        preview marked `content_truncated`; read one in full with \
                        mem_get_observation.",
         annotations(
@@ -439,7 +439,7 @@ impl LeteoMcpServer {
         description = "Get pinned and recent observations plus the recent sessions and \
                        user prompts of a project. Answers about the current project \
                        unless you pass a project or all_projects. Long bodies come back \
-                       as a 400-character preview marked `content_truncated`; read one \
+                       as a 400-byte preview marked `content_truncated`; read one \
                        in full with mem_get_observation.",
         annotations(
             title = "Get Memory Context",
@@ -551,7 +551,7 @@ impl LeteoMcpServer {
 
     #[tool(
         name = "mem_save_prompt",
-        description = "Save a user prompt in an existing session. The prompt comes back as a 400-character preview marked `content_truncated`; keep the sync_id to link a later save to it.",
+        description = "Save a user prompt in an existing session. The prompt comes back as a 400-byte preview marked `content_truncated`; keep the sync_id to link a later save to it.",
         annotations(
             title = "Save User Prompt",
             read_only_hint = false,
@@ -632,7 +632,7 @@ impl LeteoMcpServer {
 
     #[tool(
         name = "mem_session_end",
-        description = "End an existing memory session and optionally attach a summary. The session comes back with its summary as a 400-character preview marked `summary_truncated`.",
+        description = "End an existing memory session and optionally attach a summary. The session comes back with its summary as a 400-byte preview marked `summary_truncated`.",
         annotations(
             title = "End Session",
             read_only_hint = false,
@@ -694,7 +694,7 @@ impl LeteoMcpServer {
     #[tool(
         name = "mem_timeline",
         description = "Show chronological context around a specific observation. Bodies \
-                       come back as a 400-character preview marked `content_truncated`; \
+                       come back as a 400-byte preview marked `content_truncated`; \
                        read one in full with mem_get_observation.",
         annotations(
             title = "Memory Timeline",
@@ -953,7 +953,7 @@ impl LeteoMcpServer {
 
     #[tool(
         name = "mem_judge",
-        description = "Record a manual verdict on a pending relation surfaced by mem_save. Manual not_conflict verdicts are persisted. Reason and evidence each come back as a 400-character preview marked `reason_truncated` or `evidence_truncated`.",
+        description = "Record a manual verdict on a pending relation surfaced by mem_save. Manual not_conflict verdicts are persisted. Reason and evidence each come back as a 400-byte preview marked `reason_truncated` or `evidence_truncated`.",
         annotations(
             title = "Judge Conflict",
             read_only_hint = false,
