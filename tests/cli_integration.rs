@@ -1012,6 +1012,74 @@ fn a_command_line_search_explains_an_empty_answer_without_spoiling_its_output() 
     );
 }
 
+/// `leteo search` names every term it read as another, where a person sees it.
+///
+/// The same sentence `mem_search` answers with, on the channel a person reads.
+/// The rows match words other than the ones typed, so a terminal that printed
+/// them in silence would present a typo's answer as an exact one.
+#[test]
+fn a_command_line_search_names_a_corrected_term() {
+    let temp = tempfile::tempdir().expect("create CLI test directory");
+    let database = temp.path().join("leteo-cli.db");
+    run_json(
+        leteo(&database)
+            .arg("session-start")
+            .arg("s1")
+            .arg("--project")
+            .arg("leteo")
+            .arg("--directory")
+            .arg(temp.path()),
+    );
+    run_json(
+        leteo(&database)
+            .arg("save")
+            .arg("Fixed connection pool exhaustion under load")
+            .arg("one pgxpool.Pool is built in main and injected")
+            .arg("--session")
+            .arg("s1"),
+    );
+
+    let corrected = leteo(&database)
+        .arg("search")
+        .arg("conection pool exaustion")
+        .arg("--project")
+        .arg("leteo")
+        .assert()
+        .success();
+    let output = corrected.get_output();
+    let results: Value = serde_json::from_slice(&output.stdout).expect("stdout stays a JSON array");
+    assert_eq!(
+        results.as_array().expect("search output is an array").len(),
+        1,
+        "the corrected query has to answer: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("\"connection\" instead of \"conection\""),
+        "the first substitution is named: {stderr}"
+    );
+    assert!(
+        stderr.contains("\"exhaustion\" instead of \"exaustion\""),
+        "and the second: {stderr}"
+    );
+
+    // A query the store answers exactly says nothing extra.
+    let exact = leteo(&database)
+        .arg("search")
+        .arg("connection pool exhaustion")
+        .arg("--project")
+        .arg("leteo")
+        .assert()
+        .success();
+    assert!(
+        String::from_utf8_lossy(&exact.get_output().stderr)
+            .trim()
+            .is_empty(),
+        "a search that answered the question has nothing to add"
+    );
+}
+
 /// A listing answers about the project somebody is standing in.
 ///
 /// `search`, `recent` and `context` passed `--project` straight through, so

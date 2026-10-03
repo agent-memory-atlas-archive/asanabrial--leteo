@@ -479,6 +479,13 @@ useful part out of a context window has failed even if every field is right.
     for the eleven clients of fifteen that run no hooks it is the first thing they
    read.
 
+   A search that read a term as another word says so too, naming every
+   substitution — "searched for X instead of Y" — because its rows match words
+   other than the ones typed and an agent that does not read the substitution
+   would take a typo's answer for an exact one. The sentence is built once, in
+   `corrected_terms_hint`, and `leteo search` prints the same one on stderr. See
+   [`search.md`](search.md) §13.
+
 9. **A number is named after the question it answers.** `mem_timeline` reports
    `before_total` and `after_total` — how much of the session lies on each side
    of the focus — because `before` and `after` are capped by the window asked

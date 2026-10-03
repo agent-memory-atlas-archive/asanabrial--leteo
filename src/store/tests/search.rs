@@ -1631,3 +1631,135 @@ fn the_title_fragment_stage_demands_every_word() {
         "the fragment stage has to demand every word, not any: {found:?}"
     );
 }
+
+/// The vocabulary a correction reads, whether or not this connection built it.
+fn vocabulary_tables(store: &Store) -> i64 {
+    store
+        .connection
+        .query_row(
+            "SELECT count(*) FROM sqlite_temp_master WHERE name = ?1",
+            [crate::store::search::VOCAB_TABLE],
+            |row| row.get(0),
+        )
+        .unwrap()
+}
+
+/// A typo is read as the word the store holds, and both surfaces can say which.
+#[test]
+fn a_typo_is_read_as_the_word_the_store_holds() {
+    let (_temp, mut store) = store();
+    store.create_session("s1", "leteo", "C:/repo").unwrap();
+    store
+        .add_observation(observation(
+            "s1",
+            "Fixed connection pool exhaustion under load",
+            "one pgxpool.Pool is built in main and injected",
+        ))
+        .unwrap();
+
+    let (found, _more, corrections) = store
+        .search_with_more_and_corrections("conection pool exaustion", SearchOptions::default())
+        .unwrap();
+    assert_eq!(
+        found.len(),
+        1,
+        "a question with two typos has to find the memory: {found:?}"
+    );
+    assert_eq!(
+        corrections,
+        vec![
+            Correction {
+                asked: "conection".to_owned(),
+                used: "connection".to_owned(),
+            },
+            Correction {
+                asked: "exaustion".to_owned(),
+                used: "exhaustion".to_owned(),
+            },
+        ],
+        "every corrected term is named, in the order it was asked"
+    );
+}
+
+/// A search that answers never builds the vocabulary.
+///
+/// The correction stage is only worth its cost on an empty strict pass, and
+/// "only" is the acceptance: a query the store can answer must not pay for a
+/// table it will not read. The temp table is the observable, because it is
+/// created on the correction path and nowhere else, so this fails the moment
+/// the stage runs before the empty check.
+#[test]
+fn a_search_that_answers_never_consults_the_vocabulary() {
+    let (_temp, mut store) = store();
+    store.create_session("s1", "leteo", "C:/repo").unwrap();
+    store
+        .add_observation(observation(
+            "s1",
+            "Fixed connection pool exhaustion under load",
+            "one pgxpool.Pool is built in main and injected",
+        ))
+        .unwrap();
+    store
+        .add_observation(observation(
+            "s1",
+            "OpenTelemetry collector setup",
+            "the exporter sends spans to the collector",
+        ))
+        .unwrap();
+
+    let answered = store
+        .search("connection pool", SearchOptions::default())
+        .unwrap();
+    assert_eq!(answered.len(), 1, "{answered:?}");
+    assert_eq!(
+        vocabulary_tables(&store),
+        0,
+        "a search that answered must not have built the correction vocabulary"
+    );
+
+    // And a query a relaxed stage answered is a query that answered too: the
+    // correction stage sits below the fragment stages, so reaching it would
+    // mean rewriting a question that was already found.
+    let fragment = store.search("telemetr", SearchOptions::default()).unwrap();
+    assert_eq!(fragment.len(), 1, "{fragment:?}");
+    assert_eq!(
+        vocabulary_tables(&store),
+        0,
+        "a query the substring stage answered must not have built the vocabulary"
+    );
+
+    // And the same store, asked a typo it cannot answer exactly, does build it.
+    let (_, _, corrections) = store
+        .search_with_more_and_corrections("conection pool", SearchOptions::default())
+        .unwrap();
+    assert_eq!(corrections.len(), 1, "the correction stage did run");
+    assert_eq!(vocabulary_tables(&store), 1);
+}
+
+/// One unknown word with no near word refuses the whole correction.
+///
+/// A conjunction that still carries an unknown word fails exactly as the
+/// original did, so correcting the rest would read the vocabulary and report a
+/// substitution that changed no answer. `kubernetes` has no word near it, and
+/// the query that also carries a correctable typo must come back with nothing
+/// to say.
+#[test]
+fn a_correction_needs_every_unknown_word_to_be_placed() {
+    let (_temp, mut store) = store();
+    store.create_session("s1", "leteo", "C:/repo").unwrap();
+    store
+        .add_observation(observation(
+            "s1",
+            "Fixed connection pool exhaustion under load",
+            "one pgxpool.Pool is built in main and injected",
+        ))
+        .unwrap();
+
+    let (_, _, corrections) = store
+        .search_with_more_and_corrections("conection kubernetes", SearchOptions::default())
+        .unwrap();
+    assert!(
+        corrections.is_empty(),
+        "one unplaceable word refuses the whole correction: {corrections:?}"
+    );
+}

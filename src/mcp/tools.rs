@@ -367,8 +367,8 @@ impl LeteoMcpServer {
         let scope = params.scope.clone();
         let limit = params.limit;
         let mode = params.match_mode.into();
-        let (results, more) = store
-            .search_with_more(
+        let (results, more, corrections) = store
+            .search_with_more_and_corrections(
                 &params.query,
                 SearchOptions {
                     kind: params.kind,
@@ -410,7 +410,13 @@ impl LeteoMcpServer {
         };
 
         Ok(Json(SearchOutput::new(
-            results, envelope, clamped, &caveats, elsewhere, more,
+            results,
+            envelope,
+            clamped,
+            &caveats,
+            elsewhere,
+            more,
+            corrections,
         )))
     }
 
