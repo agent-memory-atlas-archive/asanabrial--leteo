@@ -36,13 +36,15 @@ before any of it.
    question the best match is usually the answer. Recorded here so the factor is
    not re-proposed without a measurement that contradicts this one.
 
-3. **Five stages, in order, stopping at the first that answers.**
+3. **Six stages, in order, stopping at the first that answers.**
    1. every word must match;
    2. failing that, every word as a prefix — a word somebody half-remembers;
    3. failing that, every word as a substring of the title — a fragment from
       the middle of a word no prefix can reach;
-   4. failing that, all but one of them;
-   5. failing that, any of them, kept only above a floor relative to the median
+   4. failing that, every word the index does not hold read as the nearest word
+      it does — a typo, one or two edits away, before the question is loosened;
+   5. failing that, all but one of them;
+   6. failing that, any of them, kept only above a floor relative to the median
       rank of what came back.
    Requiring every word is the right first answer, but it fails completely
    rather than partially: one word the store has never seen takes the whole
@@ -51,7 +53,7 @@ before any of it.
    long ones, and the widened retry found the memory every time, at rank one
    every time.
 
-   **The two stages between the strict pass and the widening are for a word
+   **The prefix and substring stages before the widening are for a word
    somebody only half-remembers.** `pgxpo` for `pgxpool` is a prefix the strict
    pass cannot match, because it wants the whole token; the second stage opens
    every word at its end, a smaller claim than the widening's dropping one.
@@ -61,6 +63,12 @@ before any of it.
    over bodies the scan would read everything the store holds on every question
    that reached this far. Both mark their results `partial`, the way the
    widening does, because both matched a fragment rather than the whole word.
+
+   The fourth stage is for a word that is *wrong* rather than unfinished, which
+   neither a prefix nor a substring can answer: `conection` does not begin a
+   word and is not inside one. It is requirement 13's subject and runs before
+   the widening because reading a word as the word it meant is a smaller claim
+   than dropping a word and hoping the rest is enough.
 
    The indexed way to ask the same question is a trigram index, and it was
    built and measured before the title scan was written: `tokenize = 'trigram'`
@@ -95,7 +103,11 @@ before any of it.
 4. **A relaxed answer says it is relaxed, and an empty one says why it is
    empty.** Results from any stage below the strict pass — one that matched less
    than every word whole — carry `partial: true`, and the answer carries a hint
-   saying so. An empty answer has two possible
+   saying so. The correction stage is the exception: it rebuilt the question
+   rather than loosening it, so its rows match every word whole and are not
+   marked `partial`; instead the answer names every substitution, "searched for
+   X instead of Y", and that sentence is what tells the reader the words
+   changed. An empty answer has two possible
    reasons that call for opposite actions — the store has never heard of this,
    or it is filed in another project — and names the right one: where the
    project was inferred from the directory, the same question is asked once
@@ -236,6 +248,45 @@ before any of it.
    worth saying. It costs 128% of the empty answer, 12.2ms against 28.5ms, with
    the project named explicitly as the control so that the three stages are the
    same on both sides of the comparison.
+
+13. **A word the store has never held is read as the word it was meant to be,
+    and every substitution is named.** A term that matches nothing in the
+    stemmed index is a candidate. A term the index holds is never changed —
+    correcting it would answer a different question from the one asked — and
+    neither is an inflected word the stemmer already reaches (`limitting` for
+    `limit`), which is why the decision is made against the *stemmed* index and
+    not the vocabulary. The replacement comes from the *unstemmed* vocabulary,
+    so the word put back into the query is a word somebody could have written.
+    The nearest word within an edit budget is chosen — one edit at five
+    characters or fewer, two above that — with ties broken by the word the index
+    holds in more memories and then by the lexicographically smaller one, so the
+    answer does not depend on the order SQLite returns rows in.
+
+    Every unknown word has to be placed, or none is. A conjunction that still
+    carries one unknown word fails exactly as the original did, so a partial
+    correction would read the vocabulary and report a substitution that changed
+    no answer.
+
+    The stage runs only when the strict pass came back empty, after the fragment
+    stages and before the widening. A query that already answered never builds
+    the vocabulary, and that is the guard: the temp table is created on this
+    path and nowhere else, so a search which answers leaves it absent. The
+    vocabulary is a per-connection TEMP `fts5vocab` over `observations_exact`,
+    read directly from the index, so there is no migration and no
+    `SCHEMA_VERSION` bump; an unreadable one is not an error and the search
+    falls through as it did before the stage existed. Both surfaces share one
+    sentence, built in `corrected_terms_hint`.
+
+    It is the stage that pays for the typo set: measured on
+    `tools/engram-bench`, MRR on the `typo` kind moves from 0.615 to 1.000 —
+    thirteen of thirteen at rank one — and overall from 0.784 to 0.835, with no
+    kind down. What it costs is stated rather than hidden. On a copy of a real
+    42,538-term store the vocabulary table is created in about 0.1 ms once per
+    connection, and a corrected query pays 20 to 30 ms for the scan of the
+    21,241 terms near its length, the same order as the widened stage's own
+    note. It is not a per-prompt cost: the strict pass answers almost every
+    prompt, and this stage is reached only when the strict pass and the two
+    fragment stages above it all came back empty.
 
 ## Invariants
 

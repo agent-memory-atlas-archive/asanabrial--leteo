@@ -925,6 +925,33 @@ pub(crate) const PARTIAL_MATCH_HINT: &str = "No memory matched every word, so th
     matched some of them — check each one against the question before relying \
     on it. Fewer, more distinctive words usually match exactly.";
 
+/// What to say when the search had to correct a term to answer.
+///
+/// A corrected answer is not a strict one: the words that came back match
+/// *other* words than the ones typed, and an agent that reads the page without
+/// knowing that will treat a typo's answer as an exact one. So every
+/// substitution is named, in the caller's own order, with the word the store
+/// read and the word it was asked for.
+///
+/// Built here and only here, so the tool and the command line cannot come to
+/// word the same fact differently — the defect the "nothing in this project"
+/// sentence already paid for once.
+pub(crate) fn corrected_terms_hint(corrections: &[crate::store::Correction]) -> String {
+    let substitutions = corrections
+        .iter()
+        .map(|correction| {
+            format!(
+                "\"{}\" instead of \"{}\"",
+                correction.used, correction.asked
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "No memory matched every word as typed, so the search used corrected terms: searched for {substitutions}."
+    )
+}
+
 #[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(super) struct SearchOutput {
     #[serde(flatten)]
@@ -933,12 +960,13 @@ pub(super) struct SearchOutput {
     /// many matched. When more matched than were returned, the hint says so.
     pub(super) count: usize,
     pub(super) results: Vec<SearchResultOutput>,
-    /// Carried when nothing matched, or when only some of the words did.
+    /// Carried when nothing matched, when only some of the words did, or when a
+    /// term was read as another word to answer.
     ///
-    /// The wording is in [`NO_MATCH_HINT`] and [`PARTIAL_MATCH_HINT`]. Below
-    /// the blank line because everything above it is shipped to every client
-    /// that lists the tools, and an intra-doc link arrives there as brackets
-    /// around a name that resolves to nothing.
+    /// The wording is in [`NO_MATCH_HINT`], [`PARTIAL_MATCH_HINT`] and
+    /// [`corrected_terms_hint`]. Below the blank line because everything above
+    /// it is shipped to every client that lists the tools, and an intra-doc
+    /// link arrives there as brackets around a name that resolves to nothing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) hint: Option<String>,
 }
@@ -957,6 +985,10 @@ impl SearchOutput {
     /// narrowing lifted, and the limit it was counted against, because that
     /// limit is what the number can reach — see [`no_match_here_hint`]. Only
     /// asked for when the answer came back empty and nobody named a project.
+    ///
+    /// `corrections` are the terms the store had to read as other words to
+    /// answer, and they are the first thing a non-empty answer says, because
+    /// they change what the rows below them mean.
     pub(super) fn new(
         value: Vec<SearchResult>,
         project_context: ProjectEnvelope,
@@ -964,6 +996,7 @@ impl SearchOutput {
         caveats: &std::collections::BTreeMap<String, Vec<crate::memory::model::Caveat>>,
         elsewhere: Option<(String, usize, usize)>,
         more: bool,
+        corrections: Vec<crate::store::Correction>,
     ) -> Self {
         let widened = value.iter().any(|result| result.partial);
         let results: Vec<SearchResultOutput> = value
@@ -991,6 +1024,11 @@ impl SearchOutput {
                 }
                 _ => Some(NO_MATCH_HINT.to_owned()),
             }
+        } else if !corrections.is_empty() {
+            // Before the relaxed-answer sentence: a corrected page matched every
+            // word, just not the ones typed, and "these matched some of them"
+            // would describe it wrongly.
+            Some(corrected_terms_hint(&corrections))
         } else if widened {
             Some(PARTIAL_MATCH_HINT.to_owned())
         } else if clamped {

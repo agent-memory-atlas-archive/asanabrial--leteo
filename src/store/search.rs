@@ -8,6 +8,60 @@ pub const FTS_STEMMED: &str = "observations_fts";
 /// The same memories indexed as they were written, with no stemmer.
 pub const FTS_EXACT: &str = "observations_exact";
 
+/// The vocabulary of the unstemmed index, as a table this connection reads.
+///
+/// Created on first use, and only on the one path that needs it — an empty
+/// strict pass carrying a word the index does not hold — so a search that
+/// answers never pays for it. A TEMP table because the alternative is a schema
+/// write on every store, and because `fts5vocab` reads the index directly: it
+/// holds no copy, so there is nothing to migrate and no `SCHEMA_VERSION` to
+/// bump.
+///
+/// The three-argument form is not decoration. For a TEMP `fts5vocab`, SQLite
+/// resolves the target table in the vocabulary's own schema, so the unqualified
+/// form looks for `temp.observations_exact` and fails; the database name has to
+/// be passed first. See `fts5VocabInitVtab` in the bundled `sqlite3.c`.
+///
+/// `pub(super)` so the guard can read the same name the code writes: a test
+/// that spelled `fts_vocab` itself would be watching its own copy.
+pub(super) const VOCAB_TABLE: &str = "fts_vocab";
+
+/// The most edits a corrected term may be from the word it is read as.
+///
+/// One for a short word and two for a longer one, because a second edit on five
+/// letters or fewer only widens the vocabulary scan: measured on the benchmark's
+/// typo set, allowing two edits on short words changes no kind's MRR. The
+/// budget bounds the scan rather than deciding which stage answers a fragment —
+/// this stage runs after the prefix and substring stages, so a partial word such
+/// as `pgxpo` is answered before a correction can reach it.
+const TYPO_SHORT_DISTANCE: usize = 1;
+const TYPO_LONG_DISTANCE: usize = 2;
+/// The length at or below which only [`TYPO_SHORT_DISTANCE`] applies.
+const TYPO_SHORT_TERM_CHARS: usize = 5;
+
+/// A term the query asked for that the index does not hold, and the word the
+/// vocabulary holds that the search read it as.
+///
+/// Carried out of the store so both surfaces can name every substitution. The
+/// sentence itself is built in one place — see `corrected_terms_hint` — so the
+/// tool and the command line cannot come to word it differently.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Correction {
+    /// The term as the caller wrote it, with its case kept.
+    pub asked: String,
+    /// The word the unstemmed index holds that the query was taken to mean.
+    pub used: String,
+}
+
+/// The edit budget for a term of this many characters.
+fn typo_budget(chars: usize) -> usize {
+    if chars <= TYPO_SHORT_TERM_CHARS {
+        TYPO_SHORT_DISTANCE
+    } else {
+        TYPO_LONG_DISTANCE
+    }
+}
+
 /// How much a place in one ranking is worth when the two are merged.
 ///
 /// Reciprocal rank fusion: a memory is worth `1 / (60 + place)` in each list it
@@ -151,6 +205,41 @@ pub(super) struct Candidate {
     partial: bool,
 }
 
+/// What one search decided: the page, and any terms it had to correct to get
+/// it.
+///
+/// Private, because the only caller that reads both halves is
+/// [`Store::search_with_more_and_corrections`]; every other caller takes the
+/// page and drops the corrections.
+struct SearchOutcome {
+    results: Vec<SearchResult>,
+    corrections: Vec<Correction>,
+}
+
+/// The number of single-character edits between two words.
+///
+/// The plain dynamic-programming distance, kept whole rather than banded: a
+/// candidate is already bounded by length before this runs, and on a real store
+/// the whole vocabulary is 42,538 words — small enough that the budget check
+/// after the fact is cheaper than the bookkeeping a banded version needs.
+fn levenshtein(left: &str, right: &str) -> usize {
+    let left: Vec<char> = left.chars().collect();
+    let right: Vec<char> = right.chars().collect();
+    let mut previous: Vec<usize> = (0..=right.len()).collect();
+    let mut current = vec![0usize; right.len() + 1];
+    for (index, a) in left.iter().enumerate() {
+        current[0] = index + 1;
+        for (other, b) in right.iter().enumerate() {
+            let substitution = previous[other] + usize::from(a != b);
+            current[other + 1] = (previous[other + 1] + 1)
+                .min(current[other] + 1)
+                .min(substitution);
+        }
+        std::mem::swap(&mut previous, &mut current);
+    }
+    previous[right.len()]
+}
+
 impl Store {
     /// The same search, and whether the store had more than it was asked for.
     ///
@@ -167,11 +256,30 @@ impl Store {
     ///
     /// At the store's maximum this cannot answer — asking for one past the cap
     /// is clamped back to it — and that end is what the clamped hint is for.
+    ///
+    /// A caller that has to say which terms were corrected asks
+    /// [`Self::search_with_more_and_corrections`] instead; this one throws that
+    /// answer away, because most callers have nowhere to put it.
     pub fn search_with_more(
         &self,
         query: &str,
         options: SearchOptions,
     ) -> Result<(Vec<SearchResult>, bool), StoreError> {
+        let (found, more, _) = self.search_with_more_and_corrections(query, options)?;
+        Ok((found, more))
+    }
+
+    /// The same search, with the terms it had to correct to answer.
+    ///
+    /// Split from its sibling rather than widening it, because the two surfaces
+    /// that must name a correction — `mem_search` and `leteo search` — are the
+    /// only callers with anywhere to put the list, and every other caller (the
+    /// "elsewhere" retry, a test) would carry a value it ignores.
+    pub fn search_with_more_and_corrections(
+        &self,
+        query: &str,
+        options: SearchOptions,
+    ) -> Result<(Vec<SearchResult>, bool, Vec<Correction>), StoreError> {
         let asked = options
             .limit
             .unwrap_or(DEFAULT_SEARCH_LIMIT)
@@ -187,10 +295,11 @@ impl Store {
         // the list, and neither had anything that announced itself. That is the
         // same full-page-or-exhausted silence the hint was written for, hiding
         // at the one limit where it cannot be widened away.
-        let mut found = self.search_limited(query, options, asked.saturating_add(1))?;
-        let more = found.len() > asked;
+        let outcome = self.search_limited(query, options, asked.saturating_add(1))?;
+        let more = outcome.results.len() > asked;
+        let mut found = outcome.results;
         found.truncate(asked);
-        Ok((found, more))
+        Ok((found, more, outcome.corrections))
     }
 
     pub fn search(
@@ -202,7 +311,7 @@ impl Store {
             .limit
             .unwrap_or(DEFAULT_SEARCH_LIMIT)
             .clamp(1, self.config.max_search_results);
-        self.search_limited(query, options, limit)
+        Ok(self.search_limited(query, options, limit)?.results)
     }
 
     /// The search body, with the row budget decided by the caller.
@@ -215,7 +324,7 @@ impl Store {
         query: &str,
         mut options: SearchOptions,
         limit: usize,
-    ) -> Result<Vec<SearchResult>, StoreError> {
+    ) -> Result<SearchOutcome, StoreError> {
         if query.trim().is_empty() {
             return Err(StoreError::EmptySearch);
         }
@@ -317,6 +426,37 @@ impl Store {
         if matched.is_empty() && results.is_empty() && !any {
             matched = self.substring_observations(query, &options, limit)?;
         }
+        // And a word the store has never seen, read as the word it was meant to
+        // be, before the question is loosened.
+        //
+        // A typo is a different failure from a fragment, and the stages above
+        // cannot answer it: the strict pass wants the word whole, and a prefix
+        // or a substring asks whether the *typed* letters begin or sit inside a
+        // word, which `conection` does not. Measured on the benchmark's typo
+        // set, the widening below rescues the ones carrying a single typo and
+        // fails every one carrying two, because dropping one bad word leaves
+        // the other. Correcting them is the smaller claim: it says this word is
+        // that word, one or two edits away, rather than dropping a word and
+        // hoping the rest is enough.
+        //
+        // It runs before the widening and after the fragment stages, so a
+        // fragment a prefix already answers is never touched, and only when the
+        // strict pass came back empty — a query that matched is never rewritten
+        // under the caller. `corrected_fts` refuses the whole correction when
+        // any unknown word has no candidate, because a conjunction that still
+        // holds an unknown word fails exactly as the original did.
+        let mut corrections = Vec::new();
+        if matched.is_empty()
+            && results.is_empty()
+            && !any
+            && let Some((corrected, said)) = self.corrected_fts(query)?
+        {
+            let retried = self.fused_observations(&corrected, &options, limit)?;
+            if !retried.is_empty() {
+                matched = retried;
+                corrections = said;
+            }
+        }
         // Every word, and then any of them rather than nothing at all.
         //
         // Requiring all of them is the right first answer — it is what makes
@@ -368,7 +508,192 @@ impl Store {
         matched.truncate(limit.saturating_sub(results.len()));
         results.extend(self.hydrate(matched)?);
         results.truncate(limit);
-        Ok(results)
+        Ok(SearchOutcome {
+            results,
+            corrections,
+        })
+    }
+
+    /// The strict query again, with every word the index has never seen read as
+    /// the nearest word it does hold, or nothing when that cannot be done.
+    ///
+    /// Only the words that match nothing are candidates. A word the index holds
+    /// is left exactly as written — correcting it would answer a different
+    /// question from the one asked, which is the whole risk of this stage — and
+    /// it is the *stemmed* index that decides, not the vocabulary, so an
+    /// inflected word the stemmer already reaches (`limitting` for `limit`) is
+    /// known and untouched.
+    ///
+    /// The replacement comes from the *unstemmed* vocabulary, because the word
+    /// put back into the query has to be a word somebody could have written:
+    /// the stemmed vocabulary holds `limit`, and searching for it would be a
+    /// different question again.
+    ///
+    /// Every unknown word has to be placed, or none is. A conjunction that
+    /// still carries one unknown word fails exactly as the original did, so
+    /// correcting the rest would cost a vocabulary read and buy no answer while
+    /// reporting a substitution that changed nothing.
+    fn corrected_fts(&self, query: &str) -> Result<Option<(String, Vec<Correction>)>, StoreError> {
+        let terms = normalize::fts_terms(query);
+        if terms.is_empty() {
+            return Ok(None);
+        }
+        // The vocabulary is read before anything is decided, so that "this
+        // stage ran" and "the vocabulary was consulted" are one fact: the guard
+        // that a search which already answered never reaches here watches the
+        // table this creates.
+        //
+        // An unreadable vocabulary is not an error, the way an unreadable
+        // second index is not one in `fused_observations`: a store that could
+        // not build the unstemmed index, or one whose SQLite has no `fts5vocab`
+        // module, searches the way it did before this stage existed.
+        if let Err(error) = self.ensure_vocabulary() {
+            tracing::debug!(%error, "the unstemmed vocabulary is unreadable; searching without correction");
+            return Ok(None);
+        }
+        let mut unknown: Vec<(usize, String)> = Vec::new();
+        for (index, term) in terms.iter().enumerate() {
+            let word = normalize::unquote_fts_term(term);
+            if word.is_empty() || self.term_is_indexed(&word)? {
+                continue;
+            }
+            unknown.push((index, word));
+        }
+        if unknown.is_empty() {
+            return Ok(None);
+        }
+        let mut corrected = terms;
+        let mut said = Vec::with_capacity(unknown.len());
+        let folded: Vec<String> = unknown
+            .iter()
+            .map(|(_, asked)| asked.to_lowercase())
+            .collect();
+        // The read is guarded as well as the build, because the build does not
+        // establish that the index is there: `CREATE VIRTUAL TABLE IF NOT
+        // EXISTS ... USING fts5vocab` returns without validating its target, so
+        // a store that never had `observations_exact` — or lost it to a
+        // half-finished upgrade — fails here, with "no such fts5 table", rather
+        // than at the `CREATE`. An unreadable vocabulary is not an error, the
+        // way an unreadable second index is not one in `fused_observations`.
+        let nearest = match self.nearest_vocabulary_words(&folded) {
+            Ok(nearest) => nearest,
+            Err(error) => {
+                tracing::debug!(%error, "the unstemmed vocabulary is unreadable; searching without correction");
+                return Ok(None);
+            }
+        };
+        for ((index, asked), used) in unknown.into_iter().zip(nearest) {
+            match used {
+                Some(used) => {
+                    corrected[index] = normalize::quote_fts_term(&used);
+                    said.push(Correction { asked, used });
+                }
+                // One word the vocabulary cannot place makes the whole
+                // corrected conjunction fail exactly as the original did, so
+                // there is nothing to gain by correcting the rest and something
+                // to lose by reporting a correction that changed no answer.
+                None => return Ok(None),
+            }
+        }
+        Ok(Some((normalize::fts_query_of(&corrected), said)))
+    }
+
+    /// Whether the stemmed index holds anything for one word.
+    ///
+    /// The same index the strict pass reads, so a word the stemmer reaches is
+    /// known even when the unstemmed vocabulary has never held its spelling.
+    /// Deleted memories are excluded, the way every other read excludes them:
+    /// a word that survives only in a deleted memory is not one a search can
+    /// reach, so it is corrected like any other unknown.
+    fn term_is_indexed(&self, word: &str) -> Result<bool, StoreError> {
+        let mut statement = self.connection.prepare(&format!(
+            "SELECT EXISTS(
+                 SELECT 1 FROM {FTS_STEMMED} fts
+                 CROSS JOIN observations o ON o.id = fts.rowid
+                 WHERE {FTS_STEMMED} MATCH ?1 AND o.deleted_at IS NULL)"
+        ))?;
+        let known = statement.query_row(params![normalize::quote_fts_term(word)], |row| {
+            row.get::<_, bool>(0)
+        })?;
+        Ok(known)
+    }
+
+    /// Creates the vocabulary table this connection reads, once.
+    fn ensure_vocabulary(&self) -> Result<(), StoreError> {
+        self.connection.execute_batch(&format!(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS temp.{VOCAB_TABLE}
+             USING fts5vocab('main', '{FTS_EXACT}', 'row');"
+        ))?;
+        Ok(())
+    }
+
+    /// The words the unstemmed index holds that are nearest to each of `words`.
+    ///
+    /// The nearest within each word's own budget, ties broken by the word the
+    /// index holds in more memories and then by the lexicographically smaller
+    /// one, so the answer does not depend on the order SQLite happens to return
+    /// rows in. A word's length bounds its candidates before any distance is
+    /// computed, which is what keeps the scan proportional to the words near
+    /// the right size rather than to the whole vocabulary.
+    ///
+    /// One scan of the vocabulary for all the unknown words together, not one
+    /// per word: the scan is the expensive part — 21,241 rows in 18 ms on a real
+    /// 42,538-term store — and a question with two typos would otherwise pay it
+    /// twice.
+    fn nearest_vocabulary_words(
+        &self,
+        words: &[String],
+    ) -> Result<Vec<Option<String>>, StoreError> {
+        let lengths: Vec<usize> = words.iter().map(|word| word.chars().count()).collect();
+        let budgets: Vec<usize> = lengths.iter().map(|length| typo_budget(*length)).collect();
+        let low = lengths
+            .iter()
+            .zip(&budgets)
+            .map(|(length, budget)| length.saturating_sub(*budget))
+            .min()
+            .unwrap_or(1)
+            .max(1) as i64;
+        let high = lengths
+            .iter()
+            .zip(&budgets)
+            .map(|(length, budget)| length + budget)
+            .max()
+            .unwrap_or(0) as i64;
+        let mut best: Vec<Option<(usize, i64, String)>> = vec![None; words.len()];
+        let mut statement = self.connection.prepare(&format!(
+            "SELECT term, doc FROM temp.{VOCAB_TABLE} WHERE length(term) BETWEEN ?1 AND ?2"
+        ))?;
+        let rows = statement.query_map(params![low, high], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })?;
+        for row in rows {
+            let (term, doc) = row?;
+            let term_length = term.chars().count();
+            for (index, word) in words.iter().enumerate() {
+                if term_length.abs_diff(lengths[index]) > budgets[index] {
+                    continue;
+                }
+                let distance = levenshtein(word, &term);
+                if distance > budgets[index] {
+                    continue;
+                }
+                let better = match &best[index] {
+                    None => true,
+                    Some((best_distance, best_doc, best_term)) => {
+                        distance < *best_distance
+                            || (distance == *best_distance
+                                && (doc > *best_doc || (doc == *best_doc && term < *best_term)))
+                    }
+                };
+                if better {
+                    best[index] = Some((distance, doc, term.clone()));
+                }
+            }
+        }
+        Ok(best
+            .into_iter()
+            .map(|slot| slot.map(|(_, _, term)| term))
+            .collect())
     }
 
     /// Both indexes, merged by where each put a memory rather than by score.

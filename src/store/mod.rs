@@ -975,6 +975,7 @@ use schema::*;
 pub(crate) use schema::{SCHEMA_VERSION, SUMMARY_HEADLINE_CHARS};
 use wire::*;
 pub(crate) mod search;
+pub use search::Correction;
 pub(crate) use search::DEFAULT_SEARCH_LIMIT;
 
 mod observations;

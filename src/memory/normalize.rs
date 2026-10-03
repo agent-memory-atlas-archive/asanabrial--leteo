@@ -1092,10 +1092,7 @@ pub fn fts_terms(query: &str) -> Vec<String> {
     let mut seen = std::collections::HashSet::new();
     strip_nul(query)
         .split_whitespace()
-        .map(|term| {
-            let escaped = term.trim_matches('"').replace('"', "\"\"");
-            format!("\"{escaped}\"")
-        })
+        .map(quote_fts_term)
         .filter(|term| seen.insert(term.to_lowercase()))
         .collect()
 }
@@ -1118,6 +1115,35 @@ pub fn fts_query(query: &str, any: bool) -> String {
     terms.join(if any { " OR " } else { " " })
 }
 
+/// A word as one quoted full-text term, in the shape [`fts_terms`] writes.
+///
+/// The inverse of [`unquote_fts_term`], and here rather than in the search so
+/// that the quoting a corrected term gets is the quoting every other term gets:
+/// written twice, the two would drift and a term with a quote in it would stop
+/// round-tripping.
+pub fn quote_fts_term(word: &str) -> String {
+    format!("\"{}\"", word.trim_matches('"').replace('"', "\"\""))
+}
+
+/// The word a quoted full-text term was written from.
+///
+/// [`fts_terms`] wraps every word in quotes and doubles any quote inside it.
+/// A correction works on the word, compares it against a vocabulary of words,
+/// and rebuilds the query, so it has to be able to see the word again.
+pub fn unquote_fts_term(term: &str) -> String {
+    term.trim_matches('"').replace("\"\"", "\"")
+}
+
+/// Terms that are already quoted, joined into one conjunction.
+///
+/// [`fts_query`] builds its string from [`fts_terms`]; a corrected query is a
+/// term list whose words have changed, so it is joined by the same rule without
+/// being split and re-quoted. See [`quote_fts_term`] for why the quoting is not
+/// repeated here.
+pub fn fts_query_of(terms: &[String]) -> String {
+    terms.join(" ")
+}
+
 /// The same, with the word somebody is still typing left open at the end.
 ///
 /// For a search that runs as it is typed: `postgr` has to find `postgres`, or
@@ -1130,9 +1156,10 @@ pub fn fts_query(query: &str, any: bool) -> String {
 pub fn fts_prefix_query(query: &str) -> String {
     let mut terms = strip_nul(query)
         .split_whitespace()
-        .map(|term| term.trim_matches('"').replace('"', "\"\""))
-        .filter(|term| !term.is_empty())
-        .map(|term| format!("\"{term}\""))
+        .map(quote_fts_term)
+        // A token that was only quotes escapes to nothing, and quoting that
+        // yields `""`, which would open to `"*` rather than a prefix.
+        .filter(|term| term.len() > 2)
         .collect::<Vec<_>>();
     if let Some(last) = terms.last_mut() {
         last.push('*');

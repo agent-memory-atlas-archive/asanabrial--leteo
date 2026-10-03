@@ -446,7 +446,8 @@ pub async fn run(cli: Cli) -> Result<()> {
                 },
             };
             let cap = store.max_search_results();
-            let (found, more) = store.search_with_more(&query, options.clone())?;
+            let (found, more, corrections) =
+                store.search_with_more_and_corrections(&query, options.clone())?;
             // The same sentence the MCP tool answers with, on the channel a
             // person reads rather than the one a script parses.
             //
@@ -501,6 +502,15 @@ pub async fn run(cli: Cli) -> Result<()> {
                     ),
                     _ => eprintln!("leteo search: {}", crate::mcp::NO_MATCH_HINT),
                 }
+            } else if !corrections.is_empty() {
+                // The same sentence `mem_search` answers with. A corrected page
+                // is not a strict one — the words that matched are other words
+                // than the ones typed — so it is said before the relaxed-answer
+                // line, which would describe it wrongly.
+                eprintln!(
+                    "leteo search: {}",
+                    crate::mcp::corrected_terms_hint(&corrections)
+                );
             } else if found.iter().any(|result| result.partial) {
                 eprintln!("leteo search: {}", crate::mcp::PARTIAL_MATCH_HINT);
             } else if more && found.len() >= cap {

@@ -1860,6 +1860,58 @@ fn an_empty_search_explains_itself_and_a_full_one_does_not() {
     );
 }
 
+/// A search that read a term as another word names every substitution.
+///
+/// The rows that come back match words other than the ones typed, so an agent
+/// that does not read the substitution will take a typo's answer for an exact
+/// one. Both surfaces share the sentence; this is the tool's half.
+#[test]
+fn a_search_names_every_term_it_read_as_another() {
+    let (_temp, server) = test_server(McpOptions::default());
+    {
+        let mut store = server.lock_store().unwrap();
+        store
+            .create_session("typo", "leteo", "C:/workspace")
+            .unwrap();
+    }
+    server
+        .mem_save(Parameters(
+            serde_json::from_value(json!({
+                "session_id": "typo",
+                "title": "Fixed connection pool exhaustion under load",
+                "content": "one pgxpool.Pool is built in main and injected",
+            }))
+            .unwrap(),
+        ))
+        .unwrap();
+
+    let search = |query: &str| {
+        server
+            .mem_search(Parameters(
+                serde_json::from_value(json!({ "query": query })).unwrap(),
+            ))
+            .unwrap()
+            .0
+    };
+
+    let found = search("conection pool exaustion");
+    assert_eq!(found.count, 1, "{found:?}");
+    let hint = found.hint.expect("a corrected search says so");
+    assert!(
+        hint.contains("\"connection\" instead of \"conection\""),
+        "the hint has to name the first substitution: {hint}"
+    );
+    assert!(
+        hint.contains("\"exhaustion\" instead of \"exaustion\""),
+        "and the second: {hint}"
+    );
+
+    // A query the store answers exactly spends nothing on the sentence.
+    let exact = search("connection pool exhaustion");
+    assert_eq!(exact.count, 1, "{exact:?}");
+    assert!(exact.hint.is_none(), "{:?}", exact.hint);
+}
+
 #[test]
 fn mem_context_spends_its_budget_on_memories_the_way_the_session_opening_does() {
     let (_temp, server) = test_server(McpOptions::default());
