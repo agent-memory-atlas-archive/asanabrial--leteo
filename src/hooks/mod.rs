@@ -412,14 +412,22 @@ pub fn run(store: &mut Store, event: HookEvent, input: &HookInput) -> Result<Hoo
             // already folds the one drift it can repair on its own — a
             // repository that took its directory's name — so what is left to
             // warn about is a remote that was renamed or pointed at a fork.
-            let drifted = drifted_directory_projects(store, &directory, &project);
-            if !drifted.is_empty() {
-                outcome.warnings.push(format!(
-                    "this directory's sessions were recorded under {}, and it now resolves to \
-                     {project:?}; ask the user which project this belongs to, or fold the two \
-                     together with `leteo projects consolidate`",
-                    drifted.join(", ")
-                ));
+            match drifted_directory_projects(store, &directory, &project) {
+                Ok(drifted) if !drifted.is_empty() => {
+                    outcome.warnings.push(format!(
+                        "this directory's sessions were recorded under {}, and it now resolves \
+                         to {project:?}; ask the user which project this belongs to, or fold the \
+                         two together with `leteo projects consolidate`",
+                        drifted.join(", ")
+                    ));
+                }
+                Ok(_) => {}
+                // A lookup that could not run is not a lookup that found no
+                // drift, so it says which it was rather than passing as
+                // agreement.
+                Err(error) => outcome
+                    .warnings
+                    .push(said("check this directory's project history", &error)),
             }
             ensure_session(store, &session_id, &project, &directory, &mut outcome);
             sweep_stale_nudges(store);

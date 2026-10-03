@@ -647,6 +647,33 @@ fn a_session_start_in_an_agreeing_directory_says_nothing_about_projects() {
     );
 }
 
+/// A lookup that could not run is not a lookup that found no drift.
+///
+/// `recent_projects_in_directory` reads `sessions`. If that read fails, the
+/// session-start has to say so rather than folding the error into an empty list
+/// and passing as agreement — which is how a check that could not run gets
+/// reported as one that found nothing. The table is renamed out from under the
+/// hook so the statement cannot even be prepared, which is the only way to reach
+/// the error branch without a second process holding the store.
+#[test]
+fn a_session_start_says_when_it_could_not_check_the_directorys_history() {
+    let (temp, mut store) = store();
+    store
+        .connection()
+        .execute("ALTER TABLE sessions RENAME TO sessions_moved", [])
+        .unwrap();
+
+    let outcome = run(&mut store, HookEvent::SessionStart, &input(temp.path())).unwrap();
+    assert!(
+        outcome
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("check this directory's project history")),
+        "a check that could not run has to say which it was: {:?}",
+        outcome.warnings
+    );
+}
+
 fn memory(title: &str, content: &str) -> crate::memory::model::AddObservation {
     crate::memory::model::AddObservation {
         session_id: "agent-session".to_owned(),

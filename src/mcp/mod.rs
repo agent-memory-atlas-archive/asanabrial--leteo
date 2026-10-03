@@ -297,7 +297,23 @@ impl LeteoMcpServer {
                 SOURCE_USER_SELECTED_AFTER_AMBIGUOUS_PROJECT.to_owned(),
             ));
         }
+        // A retry that names either side of a drift is a user choice, and the
+        // same choice the ambiguity above demanded. Without this the recovery
+        // token a drift issued was never redeemed: the recorded name resolved as
+        // a known project and the detected name as itself, so a retry that never
+        // saw the token was accepted and the token was decorative. The gate sits
+        // where a name would otherwise be accepted without one — the detected
+        // name, and an explicit name the store already holds — and not before
+        // the process override, which wins over the gate as it wins over
+        // detection.
         if requested == detected {
+            if let Some(drifted) = self.recorded_directory_detection(store, detection)? {
+                let project = self.accept_ambiguous_choice(&requested, &drifted, choice)?;
+                return Ok((
+                    project,
+                    SOURCE_USER_SELECTED_AFTER_AMBIGUOUS_PROJECT.to_owned(),
+                ));
+            }
             return Ok((requested, detection.source.clone()));
         }
         if self
@@ -312,6 +328,18 @@ impl LeteoMcpServer {
         }
         let known = store.project_exists(&requested).map_err(store_error)?;
         if known {
+            if let Some(drifted) = self.recorded_directory_detection(store, detection)?
+                && drifted
+                    .available_projects
+                    .iter()
+                    .any(|available| normalize::project(available) == requested)
+            {
+                let project = self.accept_ambiguous_choice(&requested, &drifted, choice)?;
+                return Ok((
+                    project,
+                    SOURCE_USER_SELECTED_AFTER_AMBIGUOUS_PROJECT.to_owned(),
+                ));
+            }
             return Ok((requested, SOURCE_KNOWN_PROJECT.to_owned()));
         }
         Err(unknown_project_error(
@@ -319,6 +347,44 @@ impl LeteoMcpServer {
             &detected,
             store.list_project_names().unwrap_or_default(),
         ))
+    }
+
+    /// The project a `mem_session_start` opens a session under.
+    ///
+    /// The session door is the one `SERVER_INSTRUCTIONS` tells an agent to come
+    /// through before it saves anything, and a session owns its project for the
+    /// rest of the conversation: a later `mem_save` carrying that id returns the
+    /// session's project without looking at detection again, and `create_session`
+    /// is `INSERT OR IGNORE`. A gate only on the write path would therefore be
+    /// bypassed by the door the brief names first, filing a whole conversation
+    /// under the new name in silence. So the silent pick is intercepted here
+    /// exactly as it is in [`Self::resolve_write_project`]: an explicit project
+    /// and the process override win, and a detection that drifts is refused with
+    /// the same ambiguity, candidate list and recovery token.
+    fn resolve_session_project(
+        &self,
+        store: &Store,
+        explicit_project: Option<String>,
+        detection: &ProjectDetection,
+    ) -> Result<String, CallToolResult> {
+        if let Some(project) = explicit_project {
+            let project = normalize::project(&project);
+            if !project.is_empty() {
+                return Ok(project);
+            }
+            return Err(structured_error(
+                error_code::INVALID_PROJECT,
+                crate::project::EMPTY_NAME,
+            ));
+        }
+        let project = normalize::project(&detection.project);
+        if !project.is_empty() {
+            if let Some(drifted) = self.recorded_directory_detection(store, detection)? {
+                return Err(self.project_detection_error(&drifted));
+            }
+            return Ok(project);
+        }
+        Err(project_detection_error(detection))
     }
 
     /// The ambiguity a directory has when the project it now resolves to is not
@@ -334,8 +400,10 @@ impl LeteoMcpServer {
     ///
     /// The recorded projects come first because they are what the user is most
     /// likely to mean; the detected name is appended because picking it is the
-    /// other way to resolve the drift. They are deduplicated, since a recorded
-    /// project that normalises to the detected one is not a second choice.
+    /// other way to resolve the drift. `recent_projects_in_directory` already
+    /// excludes the detected name — it is the `exclude` argument — so appending
+    /// it is the one place the two sides are joined and the list has no
+    /// duplicates by construction.
     fn recorded_directory_detection(
         &self,
         store: &Store,
@@ -353,12 +421,7 @@ impl LeteoMcpServer {
         }
         let recorded_names = recorded.join(", ");
         let mut available_projects = recorded;
-        if !available_projects
-            .iter()
-            .any(|project| project == &detected)
-        {
-            available_projects.push(detected.clone());
-        }
+        available_projects.push(detected.clone());
         Ok(Some(ProjectDetection {
             project: String::new(),
             source: crate::project::SOURCE_AMBIGUOUS.to_owned(),
@@ -941,27 +1004,6 @@ struct WriteSession {
     project: String,
     envelope: ProjectEnvelope,
     named: bool,
-}
-
-fn resolve_detected_project(
-    explicit_project: Option<String>,
-    detection: &ProjectDetection,
-) -> Result<String, CallToolResult> {
-    if let Some(project) = explicit_project {
-        let project = normalize::project(&project);
-        if !project.is_empty() {
-            return Ok(project);
-        }
-        return Err(structured_error(
-            error_code::INVALID_PROJECT,
-            crate::project::EMPTY_NAME,
-        ));
-    }
-    let project = normalize::project(&detection.project);
-    if !project.is_empty() {
-        return Ok(project);
-    }
-    Err(project_detection_error(detection))
 }
 
 pub(crate) fn manual_session_id(project: &str) -> String {

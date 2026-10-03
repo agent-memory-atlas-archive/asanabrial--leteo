@@ -637,13 +637,14 @@ impl LeteoMcpServer {
         let detection = requested_directory
             .as_deref()
             .map_or_else(detect_current_project, detect_project);
-        let project = resolve_detected_project(
+        let mut store = self.lock_store()?;
+        let project = self.resolve_session_project(
+            &store,
             params.project.or_else(|| self.default_project.clone()),
             &detection,
         )?;
         let directory = requested_directory.unwrap_or(detection.path);
-        let session = self
-            .lock_store()?
+        let session = store
             .create_session(&params.id, &project, &directory)
             .map_err(store_error)?;
 

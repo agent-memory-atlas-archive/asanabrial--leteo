@@ -439,9 +439,11 @@ deadline, so every promise here is a promise about time as much as content.
 - `src/hooks/context.rs` — what a session opening is built from
 - `src/hooks/nudge.rs` — the per-session record of what has been shown
 - `src/hooks/session.rs` — `drifted_directory_projects`, §2's drift warning, held
-  by `a_session_start_warns_when_the_directorys_history_is_under_another_name`
-  and its agreeing half by
-  `a_session_start_in_an_agreeing_directory_says_nothing_about_projects`
+  by `a_session_start_warns_when_the_directorys_history_is_under_another_name`,
+  its agreeing half by
+  `a_session_start_in_an_agreeing_directory_says_nothing_about_projects`, and
+  the lookup's error half by
+  `a_session_start_says_when_it_could_not_check_the_directorys_history`
 - `src/recall.rs` — the sizes and the rendering shared with the CLI. §5 is
   held by `a_session_line_and_a_prompt_line_are_cut_for_opposite_reasons` and,
   for the two sections that also carry a content preview, by

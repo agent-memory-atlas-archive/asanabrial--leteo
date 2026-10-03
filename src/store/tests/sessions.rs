@@ -240,8 +240,9 @@ fn a_projects_directories_are_found_without_reading_every_other_project() {
 ///
 /// The comparison is in Rust rather than in SQL — the same directory arrives
 /// with a trailing separator, with backslashes, and on Windows with a different
-/// case — so what this holds is that the narrowing and the ordering happen, not
-/// the folding itself, which the session-start rename guard already covers.
+/// case — and this holds the fold as much as the narrowing and the ordering: a
+/// session recorded as `C:\repo\` is found from `C:/repo`, and one recorded
+/// elsewhere is not.
 #[test]
 fn the_projects_recorded_in_a_directory_come_back_newest_first() {
     let (_temp, mut store) = store();
@@ -249,7 +250,8 @@ fn the_projects_recorded_in_a_directory_come_back_newest_first() {
     store.create_session("s2", "newer", "C:/repo").unwrap();
     store.create_session("s3", "elsewhere", "C:/other").unwrap();
     // Written the way another machine might have: backslashes and a trailing
-    // separator, which the fold has to see through.
+    // separator, which the fold has to see through for this session to be found
+    // from `C:/repo` at all.
     store.create_session("s4", "folded", "C:\\repo\\").unwrap();
     // Neither an empty project nor an empty directory is a choice to offer.
     store.create_session("s5", "ghost", "").unwrap();

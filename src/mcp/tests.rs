@@ -738,8 +738,9 @@ fn explicit_projects_must_be_backed_by_known_context() {
 /// stayed under the old one, and the two halves of the project could no longer
 /// see each other. The ambiguity the directory already knows how to report is
 /// reused: the same error code, the same candidate list, the same recovery
-/// token. An agent that names a project explicitly has made the choice itself
-/// and is not stopped; only the silent pick is.
+/// token. Naming a side of the drift is the choice that ambiguity asked for and
+/// is held to the same replay — the reason and the token — so the token is not
+/// minted and then ignored; only the silent pick is refused outright.
 #[test]
 fn a_remote_that_changed_makes_the_write_ask_which_project() {
     let (_temp, server) = test_server(McpOptions::default());
@@ -779,35 +780,217 @@ fn a_remote_that_changed_makes_the_write_ask_which_project() {
         .to_owned();
     assert!(!token.is_empty());
 
-    // An explicit project is the agent having made the choice, so it wins:
-    // naming the project the directory was recorded under is accepted on its
-    // own, and so is choosing the name detection now gives. Only the silent
-    // pick is refused.
+    // Naming either side of the drift is the choice the ambiguity asked for, so
+    // it is held to the same replay as an ambiguous directory: a bare choice is
+    // refused, and so is the reason without the token.
+    for choice in ["old-remote", "new-remote"] {
+        let error = server
+            .resolve_write_project(
+                &store,
+                Some(choice.to_owned()),
+                &detection,
+                ProjectChoice::default(),
+            )
+            .expect_err("a bare choice does not resolve the drift");
+        assert_eq!(error_payload(&error)["error"]["code"], "ambiguous_project");
+
+        let error = server
+            .resolve_write_project(
+                &store,
+                Some(choice.to_owned()),
+                &detection,
+                ProjectChoice {
+                    reason: Some(SOURCE_USER_SELECTED_AFTER_AMBIGUOUS_PROJECT.to_owned()),
+                    recovery_token: None,
+                },
+            )
+            .expect_err("the reason without the token is not enough");
+        assert_eq!(
+            error_payload(&error)["error"]["code"],
+            "recovery_token_required"
+        );
+    }
+
+    // The recorded side, with the token the refusal handed out.
     assert_eq!(
         server
             .resolve_write_project(
                 &store,
                 Some("old-remote".to_owned()),
                 &detection,
-                ProjectChoice::default()
+                ProjectChoice {
+                    reason: Some(SOURCE_USER_SELECTED_AFTER_AMBIGUOUS_PROJECT.to_owned()),
+                    recovery_token: Some(token),
+                }
             )
             .unwrap(),
-        ("old-remote".to_owned(), SOURCE_KNOWN_PROJECT.to_owned())
+        (
+            "old-remote".to_owned(),
+            SOURCE_USER_SELECTED_AFTER_AMBIGUOUS_PROJECT.to_owned()
+        )
     );
+
+    // And the detected side, with a token of its own: one redemption cannot
+    // switch projects.
+    let fresh = server
+        .resolve_write_project(&store, None, &detection, ProjectChoice::default())
+        .expect_err("still ambiguous until a side is replayed");
+    let fresh_token = error_payload(&fresh)["recovery_token"]
+        .as_str()
+        .expect("recovery token")
+        .to_owned();
     assert_eq!(
         server
             .resolve_write_project(
                 &store,
                 Some("new-remote".to_owned()),
                 &detection,
-                ProjectChoice::default()
+                ProjectChoice {
+                    reason: Some(SOURCE_USER_SELECTED_AFTER_AMBIGUOUS_PROJECT.to_owned()),
+                    recovery_token: Some(fresh_token),
+                }
             )
             .unwrap(),
         (
             "new-remote".to_owned(),
-            crate::project::SOURCE_GIT_REMOTE.to_owned()
+            SOURCE_USER_SELECTED_AFTER_AMBIGUOUS_PROJECT.to_owned()
         )
     );
+}
+
+/// The session door is gated the same way the write path is.
+///
+/// `SERVER_INSTRUCTIONS` tells an agent to open a session with
+/// `mem_session_start` before it saves anything, and the session owns its
+/// project for the rest of the conversation: `create_session` is
+/// `INSERT OR IGNORE`, so a later `mem_save` carrying that id returns the
+/// session's project without looking at detection again. A gate only on the
+/// write path is therefore bypassed by the door the brief names first, filing a
+/// whole conversation under the new name in silence.
+#[test]
+fn a_remote_that_changed_makes_the_session_door_ask_too() {
+    let (temp, server) = test_server(McpOptions::default());
+    let workspace = temp.path().join("new-remote");
+    std::fs::create_dir_all(&workspace).unwrap();
+    // Canonical, because detection canonicalizes the directory it is given and
+    // `same_directory` compares spellings rather than resolving them: on macOS a
+    // recorded `/var/...` would not match the detected `/private/var/...`.
+    let directory = std::fs::canonicalize(&workspace)
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    {
+        let mut store = server.lock_store().unwrap();
+        store
+            .create_session("old", "old-remote", &directory)
+            .unwrap();
+    }
+
+    let error = server
+        .mem_session_start(Parameters(
+            serde_json::from_value(json!({
+                "id": "s-drift",
+                "directory": directory.clone(),
+            }))
+            .unwrap(),
+        ))
+        .err()
+        .expect("the documented session door must not file under the new name in silence");
+    let payload = error_payload(&error);
+    assert_eq!(payload["error"]["code"], "ambiguous_project");
+    assert_eq!(
+        payload["available_projects"],
+        json!(["old-remote", "new-remote"]),
+        "both sides are named"
+    );
+    assert!(
+        payload["recovery_token"]
+            .as_str()
+            .is_some_and(|token| !token.is_empty()),
+        "and a token comes back, as on the write path: {:?}",
+        payload["recovery_token"]
+    );
+
+    // An explicit project is the agent having chosen, and it still wins.
+    let chosen = server
+        .mem_session_start(Parameters(
+            serde_json::from_value(json!({
+                "id": "s-drift",
+                "project": "old-remote",
+                "directory": directory,
+            }))
+            .unwrap(),
+        ))
+        .expect("an explicit project is the choice the gate is asking for");
+    assert_eq!(chosen.0.session.project, "old-remote");
+}
+
+/// The process override wins over the drift gate, as it wins over detection.
+///
+/// The override is the operator's answer for this process, given before any
+/// directory was seen. Asking it to replay a choice the operator already made
+/// would be a prompt nobody can answer, and it is why the gate sits after the
+/// override on the write path rather than before it.
+#[test]
+fn the_process_override_wins_over_the_drift_gate() {
+    let (_temp, server) = test_server(McpOptions {
+        default_project: Some("old-remote".to_owned()),
+        ..McpOptions::default()
+    });
+    let mut store = server.lock_store().unwrap();
+    store
+        .create_session("old", "old-remote", "C:/repo")
+        .unwrap();
+    let detection = ProjectDetection {
+        project: "new-remote".to_owned(),
+        source: crate::project::SOURCE_GIT_REMOTE.to_owned(),
+        path: "C:/repo".to_owned(),
+        available_projects: Vec::new(),
+        warning: None,
+        error_hint: None,
+    };
+
+    // Naming the override, which is also a drift candidate, and taking the
+    // silent path that would otherwise have used it: both are the override.
+    for requested in [Some("old-remote".to_owned()), None] {
+        assert_eq!(
+            server
+                .resolve_write_project(&store, requested, &detection, ProjectChoice::default())
+                .unwrap(),
+            (
+                "old-remote".to_owned(),
+                crate::project::SOURCE_PROCESS_OVERRIDE.to_owned()
+            )
+        );
+    }
+}
+
+/// The same override wins on the session door.
+#[test]
+fn the_process_override_wins_over_the_drift_gate_on_the_session_door() {
+    let (temp, server) = test_server(McpOptions {
+        default_project: Some("old-remote".to_owned()),
+        ..McpOptions::default()
+    });
+    let workspace = temp.path().join("new-remote");
+    std::fs::create_dir_all(&workspace).unwrap();
+    let directory = std::fs::canonicalize(&workspace)
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    {
+        let mut store = server.lock_store().unwrap();
+        store
+            .create_session("old", "old-remote", &directory)
+            .unwrap();
+    }
+
+    let started = server
+        .mem_session_start(Parameters(
+            serde_json::from_value(json!({ "id": "s-override", "directory": directory })).unwrap(),
+        ))
+        .expect("the process override is the operator's answer, not a choice to replay");
+    assert_eq!(started.0.session.project, "old-remote");
 }
 
 /// A directory whose sessions agree with detection is not asked about.
@@ -3006,7 +3189,10 @@ fn a_memory_cannot_be_moved_into_a_project_that_does_not_exist() {
 
     server
         .mem_session_start(Parameters(
-            serde_json::from_value(json!({ "id": "s2", "project": "somewhere-real" })).unwrap(),
+            serde_json::from_value(
+                json!({ "id": "s2", "project": "somewhere-real", "directory": "C:/elsewhere" }),
+            )
+            .unwrap(),
         ))
         .unwrap();
     let moved =

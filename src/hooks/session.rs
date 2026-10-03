@@ -113,12 +113,14 @@ pub(super) fn migrate_directory_project(
 /// run, so the ordinary case it already folds — a repository that gained a
 /// remote and took its directory's name — is not warned about as a split it
 /// has just repaired.
+///
+/// The error is returned rather than folded into an empty list: a lookup that
+/// could not run is not a lookup that found no drift, and the caller says which
+/// it was.
 pub(super) fn drifted_directory_projects(
     store: &Store,
     directory: &Path,
     project: &str,
-) -> Vec<String> {
-    store
-        .recent_projects_in_directory(&directory.to_string_lossy(), project)
-        .unwrap_or_default()
+) -> Result<Vec<String>, crate::store::StoreError> {
+    store.recent_projects_in_directory(&directory.to_string_lossy(), project)
 }
