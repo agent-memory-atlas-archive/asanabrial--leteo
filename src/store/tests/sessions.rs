@@ -285,6 +285,28 @@ fn the_recent_sessions_are_the_ones_that_recorded_something() {
     assert_eq!(all, 5);
 }
 
+/// Ending a session with no summary keeps the one it already had.
+///
+/// The stop hook ends every session with `end_session(id, None)`, and a plain
+/// assignment wiped a summary `mem_session_end` had already written — the
+/// session came back from the stop hook with its summary gone. The replicated
+/// path had kept it since it was written (`wire.rs`); this is the sibling that
+/// did not.
+#[test]
+fn ending_a_session_without_a_summary_keeps_the_one_it_had() {
+    let (_temp, mut store) = store();
+    store.create_session("s1", "leteo", "C:/repo").unwrap();
+    store
+        .end_session("s1", Some("Rewrote the candidate query"))
+        .unwrap();
+    let ended = store.end_session("s1", None).unwrap();
+    assert_eq!(
+        ended.summary.as_deref(),
+        Some("Rewrote the candidate query"),
+        "the stop hook must not wipe a summary the agent already wrote"
+    );
+}
+
 /// A session arriving over the wire is filed under the project name this store
 /// uses, not the one the sender typed.
 ///

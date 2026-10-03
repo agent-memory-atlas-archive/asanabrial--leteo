@@ -1771,6 +1771,58 @@ fn a_session_summary_is_titled_by_what_the_session_was_for() {
 }
 
 #[test]
+fn a_save_naming_an_ended_session_is_refused() {
+    let (_temp, server) = test_server(McpOptions::default());
+    server
+        .mem_session_start(Parameters(
+            serde_json::from_value(json!({
+                "id": "s-ended",
+                "project": "leteo",
+                "directory": "H:/REPO/leteo",
+            }))
+            .unwrap(),
+        ))
+        .unwrap();
+    server
+        .mem_session_end(Parameters(
+            serde_json::from_value(json!({ "id": "s-ended" })).unwrap(),
+        ))
+        .unwrap();
+
+    // A write naming the closed session is refused rather than filed under it,
+    // so the session's history and its summary cannot drift apart afterwards.
+    let error = server
+        .mem_save(Parameters(
+            serde_json::from_value(json!({
+                "session_id": "s-ended",
+                "project": "leteo",
+                "title": "Too late",
+                "content": "a memory for a session that already closed",
+            }))
+            .unwrap(),
+        ))
+        .err()
+        .expect("a write naming an ended session is refused");
+    assert_eq!(
+        error_payload(&error)["error"]["code"],
+        "session_already_ended"
+    );
+
+    // The manual session a save without an id lands in never ends, so that door
+    // stays open.
+    server
+        .mem_save(Parameters(
+            serde_json::from_value(json!({
+                "project": "leteo",
+                "title": "Still accepted",
+                "content": "a memory with no session id",
+            }))
+            .unwrap(),
+        ))
+        .unwrap();
+}
+
+#[test]
 fn mem_context_carries_the_language_memories_are_written_in() {
     let (temp, server) = test_server(McpOptions::default());
     let context = || -> String {

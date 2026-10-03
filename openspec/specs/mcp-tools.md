@@ -771,6 +771,21 @@ useful part out of a context window has failed even if every field is right.
     both ends: `expected_project` says where it is now and `project` says where
     it goes. A memory that stays put needs only the one.
 
+17. **A write naming an ended session is refused, and the stop hook keeps the
+    summary it finds.** The `SessionStop` hook closes a session, and a write that
+    still names it — `mem_save`, `mem_save_prompt`, `mem_session_summary` or
+    `mem_capture_passive` — answers `session_already_ended` rather than filing
+    the memory under a conversation that has closed; a save that names no session
+    keeps landing in the project's manual session, and that unnamed path never
+    reads the ended state, so it cannot be refused. The hook ends every session
+    with no summary, and that end preserves the summary `mem_session_end` already
+    wrote instead of wiping it — the replicated path had kept it since it was
+    written, and this is the sibling that did not. (`mem_session_summary` writes
+    a `session_summary` observation, not the session row, so it was never the one
+    at risk.) Both write doors refuse alike: the CLI resolves its session through
+    the same rule, so `leteo save --session` cannot file under a closed session
+    either.
+
 ## Invariants
 
 - Titles printed into anything an agent reads are folded to a single line and

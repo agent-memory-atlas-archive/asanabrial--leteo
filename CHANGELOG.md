@@ -27,6 +27,22 @@ All notable changes to Leteo are documented in this file.
 
 ### Fixed
 
+- **Ending a session wiped a summary it had already been given.** The
+  `SessionStop` hook closes every session with no summary, and `end_session`
+  assigned it — so a summary written with `mem_session_end` was gone the moment
+  the session closed, and the opening block and `mem_timeline` lost what the
+  conversation had been for. The end now keeps the summary it finds, the way the
+  replicated path already did.
+
+- **A save could be filed under a session that had already ended.** A write
+  naming any existing session was accepted, so a memory could land in a
+  conversation that had closed and never appear beside its own prompts.
+  `mem_save`, `mem_save_prompt`, `mem_session_summary` and `mem_capture_passive`
+  now answer `session_already_ended`, and `leteo save --session` refuses the same
+  way; a save that names no session keeps landing in the project's manual
+  session, and the unnamed path never reads the ended state, so it cannot be
+  refused (#121).
+
 - **The OpenCode plugin did not load on OpenCode 2.x.** It exported only the 1.x
   `server` factory, so on 2.x — which calls `setup` — the plugin never loaded and
   no lifecycle capture happened, silently. One file now serves both: the default

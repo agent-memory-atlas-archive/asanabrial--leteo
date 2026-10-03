@@ -68,8 +68,13 @@ impl Store {
         // `normalize::session_summary`.
         let summary = normalize::session_summary(summary, self.config.max_observation_length);
         let tx = self.write_transaction()?;
+        // `COALESCE`, not a plain assignment: the stop hook ends a session with
+        // no summary, and a plain `summary = ?1` would wipe one the agent had
+        // already written with `mem_session_end`. The replicated path has kept
+        // the existing summary since it was written (`wire.rs`, the session
+        // upsert); this one was the sibling left behind.
         let changed = tx.execute(
-            "UPDATE sessions SET ended_at = datetime('now'), summary = ?1 WHERE id = ?2",
+            "UPDATE sessions SET ended_at = datetime('now'), summary = COALESCE(?1, summary) WHERE id = ?2",
             params![summary, id],
         )?;
         if changed == 0 {
