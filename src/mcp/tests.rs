@@ -738,9 +738,12 @@ fn explicit_projects_must_be_backed_by_known_context() {
 /// stayed under the old one, and the two halves of the project could no longer
 /// see each other. The ambiguity the directory already knows how to report is
 /// reused: the same error code, the same candidate list, the same recovery
-/// token. Naming a side of the drift is the choice that ambiguity asked for and
-/// is held to the same replay — the reason and the token — so the token is not
-/// minted and then ignored; only the silent pick is refused outright.
+/// token. Only the silent pick is refused; a caller that names a side has made
+/// the choice the ambiguity was asking for and resolves it on its own, because
+/// the tools that share this path cannot all send a token — `mem_update` has
+/// neither a reason nor a token, and `mem_capture_passive` has no project at
+/// all. That half is held by `a_drifted_directory_lets_mem_update_move_a_memory`
+/// and `a_passive_capture_in_a_drifted_directory_keeps_the_project_whole`.
 #[test]
 fn a_remote_that_changed_makes_the_write_ask_which_project() {
     let (_temp, server) = test_server(McpOptions::default());
@@ -774,86 +777,41 @@ fn a_remote_that_changed_makes_the_write_ask_which_project() {
         "and the message points at the command that folds them: {}",
         payload["error"]["message"]
     );
-    let token = payload["recovery_token"]
-        .as_str()
-        .expect("recovery token")
-        .to_owned();
-    assert!(!token.is_empty());
+    assert!(
+        payload["recovery_token"]
+            .as_str()
+            .is_some_and(|token| !token.is_empty()),
+        "the refusal still carries a token, for the tools that can send one: {:?}",
+        payload["recovery_token"]
+    );
 
-    // Naming either side of the drift is the choice the ambiguity asked for, so
-    // it is held to the same replay as an ambiguous directory: a bare choice is
-    // refused, and so is the reason without the token.
-    for choice in ["old-remote", "new-remote"] {
-        let error = server
-            .resolve_write_project(
-                &store,
-                Some(choice.to_owned()),
-                &detection,
-                ProjectChoice::default(),
-            )
-            .expect_err("a bare choice does not resolve the drift");
-        assert_eq!(error_payload(&error)["error"]["code"], "ambiguous_project");
-
-        let error = server
-            .resolve_write_project(
-                &store,
-                Some(choice.to_owned()),
-                &detection,
-                ProjectChoice {
-                    reason: Some(SOURCE_USER_SELECTED_AFTER_AMBIGUOUS_PROJECT.to_owned()),
-                    recovery_token: None,
-                },
-            )
-            .expect_err("the reason without the token is not enough");
-        assert_eq!(
-            error_payload(&error)["error"]["code"],
-            "recovery_token_required"
-        );
-    }
-
-    // The recorded side, with the token the refusal handed out.
+    // Naming either side of the drift resolves it, with no reason and no token:
+    // that is the only shape `mem_update` can send, and it must not be left
+    // holding an error it cannot clear. The recorded side is a project the store
+    // already knows; the detected side is simply detection's own answer.
     assert_eq!(
         server
             .resolve_write_project(
                 &store,
                 Some("old-remote".to_owned()),
                 &detection,
-                ProjectChoice {
-                    reason: Some(SOURCE_USER_SELECTED_AFTER_AMBIGUOUS_PROJECT.to_owned()),
-                    recovery_token: Some(token),
-                }
+                ProjectChoice::default()
             )
             .unwrap(),
-        (
-            "old-remote".to_owned(),
-            SOURCE_USER_SELECTED_AFTER_AMBIGUOUS_PROJECT.to_owned()
-        )
+        ("old-remote".to_owned(), SOURCE_KNOWN_PROJECT.to_owned())
     );
-
-    // And the detected side, with a token of its own: one redemption cannot
-    // switch projects.
-    let fresh = server
-        .resolve_write_project(&store, None, &detection, ProjectChoice::default())
-        .expect_err("still ambiguous until a side is replayed");
-    let fresh_token = error_payload(&fresh)["recovery_token"]
-        .as_str()
-        .expect("recovery token")
-        .to_owned();
     assert_eq!(
         server
             .resolve_write_project(
                 &store,
                 Some("new-remote".to_owned()),
                 &detection,
-                ProjectChoice {
-                    reason: Some(SOURCE_USER_SELECTED_AFTER_AMBIGUOUS_PROJECT.to_owned()),
-                    recovery_token: Some(fresh_token),
-                }
+                ProjectChoice::default()
             )
             .unwrap(),
         (
             "new-remote".to_owned(),
-            SOURCE_USER_SELECTED_AFTER_AMBIGUOUS_PROJECT.to_owned()
+            crate::project::SOURCE_GIT_REMOTE.to_owned()
         )
     );
 }
@@ -872,13 +830,12 @@ fn a_remote_that_changed_makes_the_session_door_ask_too() {
     let (temp, server) = test_server(McpOptions::default());
     let workspace = temp.path().join("new-remote");
     std::fs::create_dir_all(&workspace).unwrap();
-    // Canonical, because detection canonicalizes the directory it is given and
-    // `same_directory` compares spellings rather than resolving them: on macOS a
-    // recorded `/var/...` would not match the detected `/private/var/...`.
-    let directory = std::fs::canonicalize(&workspace)
-        .unwrap()
-        .to_string_lossy()
-        .into_owned();
+    // The raw temp spelling on purpose, not `canonicalize`: on macOS the temp
+    // directory is `/var/...` while detection resolves it to `/private/var/...`,
+    // and the session recorded here has to be found from that resolved form. The
+    // spelling alone would not match, which is the symlink case `same_directory`
+    // resolves.
+    let directory = workspace.to_string_lossy().into_owned();
     {
         let mut store = server.lock_store().unwrap();
         store
@@ -1022,6 +979,98 @@ fn a_directory_whose_sessions_agree_is_not_asked_which_project() {
         ),
         "the recorded project is the detected one, so nothing is asked"
     );
+}
+
+/// `mem_update` can name a project but has no reason or token to send.
+///
+/// It shares `resolve_write_project` with `mem_save`, but `UpdateParams` is
+/// `deny_unknown_fields` and carries neither `project_choice_reason` nor
+/// `recovery_token`. When the write path held an explicit retry to the drift's
+/// replay, moving a memory into either side of a drift returned an
+/// `ambiguous_project` error whose token the tool could never send — an error no
+/// caller could clear. The drift gate belongs on the silent pick; an explicit
+/// project resolves on its own, and this drives the real tool to prove it.
+#[test]
+fn a_drifted_directory_lets_mem_update_move_a_memory() {
+    let (_temp, server) = test_server(McpOptions::default());
+    let detection = crate::project::detect_current_project();
+    let detected = detection.project.clone();
+    let recorded = "old-remote";
+    assert_ne!(detected, recorded, "the fixture needs a real drift");
+
+    let id = {
+        let mut store = server.lock_store().unwrap();
+        store
+            .create_session("s1", &detected, &detection.path)
+            .unwrap();
+        // The same directory, already used under another name.
+        store
+            .create_session("old", recorded, &detection.path)
+            .unwrap();
+        store
+            .add_observation(AddObservation {
+                session_id: "s1".to_owned(),
+                kind: "decision".to_owned(),
+                title: "A memory to move".to_owned(),
+                content: "the directory has drifted since this was written".to_owned(),
+                tool_name: None,
+                project: Some(detected.clone()),
+                scope: "project".to_owned(),
+                topic_key: None,
+                prompt_sync_id: None,
+            })
+            .unwrap()
+            .observation
+            .id
+    };
+
+    let moved = server
+        .mem_update(Parameters(
+            serde_json::from_value(json!({
+                "id": id,
+                "expected_project": detected,
+                "project": recorded,
+            }))
+            .unwrap(),
+        ))
+        .expect("mem_update has no reason or token, so a drift must not ask it for one")
+        .0;
+    assert_eq!(moved.observation.project.as_deref(), Some(recorded));
+}
+
+/// Passive capture cannot name a project, so it must not be blocked by a drift.
+///
+/// `mem_capture_passive` takes no project and has nobody to prompt: an agent
+/// ends with a Key Learnings block and the hook hands it over. Refusing would
+/// drop the learnings, and taking the detected name would split the project the
+/// directory's history is already under, so it files under the recorded project
+/// instead.
+#[test]
+fn a_passive_capture_in_a_drifted_directory_keeps_the_project_whole() {
+    let (_temp, server) = test_server(McpOptions::default());
+    let detection = crate::project::detect_current_project();
+    let detected = detection.project.clone();
+    let recorded = "old-remote";
+    assert_ne!(detected, recorded, "the fixture needs a real drift");
+
+    {
+        let mut store = server.lock_store().unwrap();
+        store
+            .create_session("old", recorded, &detection.path)
+            .unwrap();
+    }
+
+    let captured = server
+        .mem_capture_passive(Parameters(
+            serde_json::from_value(json!({
+                "content": "## Key Learnings\n- the drift is filed under the name the directory already used",
+            }))
+            .unwrap(),
+        ))
+        .expect("passive capture has no project to name and nobody to prompt")
+        .0;
+    assert_eq!(captured.project_context.project, recorded);
+    assert_eq!(captured.saved, 1);
 }
 
 #[test]

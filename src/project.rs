@@ -789,7 +789,25 @@ pub(crate) fn same_directory(recorded: &str, directory: &Path) -> bool {
         }
     }
 
-    comparable(recorded) == comparable(&directory.to_string_lossy())
+    if comparable(recorded) == comparable(&directory.to_string_lossy()) {
+        return true;
+    }
+    // The same directory is also spelled through a symlink: on macOS `/var` is
+    // `/private/var`, detection canonicalizes the path it is given, and a hook
+    // records the cwd it was handed while `mem_session_start` records the
+    // directory the caller named. Comparing only the spelling reads those as two
+    // directories, so a session recorded one way is invisible from the other and
+    // the drift this lookup exists to find is never seen. The resolved forms are
+    // compared instead, with `canonical_path` falling back to the absolute path
+    // when one no longer exists. The spelling check above stays first so the
+    // ordinary case pays no syscall.
+    let recorded = canonical_path(Path::new(recorded));
+    let directory = canonical_path(directory);
+    if cfg!(windows) {
+        path_string(&recorded).eq_ignore_ascii_case(&path_string(&directory))
+    } else {
+        recorded == directory
+    }
 }
 
 /// Strips the `\\?\` prefix Windows canonicalization adds. Agent launchers and

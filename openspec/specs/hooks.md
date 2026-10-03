@@ -27,7 +27,8 @@ deadline, so every promise here is a promise about time as much as content.
 
    `session-start` also asks whether this directory's sessions were recorded
    under a project other than the one it now resolves to — the drift the write
-   path refuses on, asked where nobody is there to answer a prompt. When one
+   path's silent pick refuses on, asked where nobody is there to answer a
+   prompt. When one
    differs it pushes a warning naming both and `leteo projects consolidate`,
    and it asks after `migrate_directory_project`, so the one drift already
    folded on its own — a repository that took its directory's name — is not

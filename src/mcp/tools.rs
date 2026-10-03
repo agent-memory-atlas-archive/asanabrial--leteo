@@ -853,10 +853,15 @@ impl LeteoMcpServer {
             ));
         }
         let mut store = self.lock_store()?;
+        // Passive capture has no project to name and nobody to prompt, so a
+        // drifted directory must not refuse it: the resolution files it under
+        // the project that directory's history already uses, keeping the
+        // project whole. See `passive_capture_project`.
+        let project = self.passive_capture_project(&store, &detect_current_project())?;
         let context = self.write_session(
             &mut store,
             params.session_id,
-            None,
+            project,
             ProjectChoice::default(),
         )?;
         let source = if params.source.trim().is_empty() {

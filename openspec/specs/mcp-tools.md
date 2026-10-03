@@ -322,22 +322,26 @@ useful part out of a context window has failed even if every field is right.
    path's silent auto-pick and `mem_session_start`, which is the door
    `SERVER_INSTRUCTIONS` names first and whose project every later call carrying
    that session id inherits. When the sessions recorded in this exact directory
-   name a project other than the one detection resolved to, the call is refused
-   with the same `ambiguous_project` error, the same candidate list — the
-   recorded names first, then the detected one — and the same recovery token the
-   ambiguous-directory case mints, with a message naming both and pointing at
-   `leteo projects consolidate`. The retry that names either side of the drift
-   is that same choice and is held to the same replay — the reason and the token
-   — which is what makes the token more than decorative. The lookup is a scan of
-   `sessions` alone, folded in Rust for the reason `same_directory` gives, and it
-   is asked before detection's name is returned and before an explicit name the
-   store already holds is accepted; what is drift-only is the prompt: a directory
-   whose recorded sessions agree with detection returns the detected project
-   exactly as before, with no prompt and no new fields. An explicit `project`
-   and the process override win over the gate, and a requested name the store
-   already holds is accepted on its own — unless it is one of the drift
-   candidates, in which case naming it is the choice the gate is asking for and
-   needs the replay. The hook path cannot refuse or prompt, so it says the same
+   name a project other than the one detection resolved to, the **silent** pick
+   is refused with the same `ambiguous_project` error, the same candidate list —
+   the recorded names first, then the detected one — and the same recovery token
+   the ambiguous-directory case mints, with a message naming both and pointing
+   at `leteo projects consolidate`. An explicit `project` resolves the drift on
+   its own, with no reason and no token, exactly as an explicit project resolves
+   the session door: naming a side is the choice the ambiguity was asking for,
+   and the tools that share this path cannot all send a token — `mem_update`
+   carries neither a reason nor a token and `mem_capture_passive` carries no
+   project at all. `mem_capture_passive`, which cannot name a project and has
+   nobody to prompt, files under the directory's **recorded** project rather
+   than the detected name, so a passive capture keeps the project whole instead
+   of splitting it or failing. The lookup is a scan of `sessions` alone, folded
+   in Rust for the reason `same_directory` gives — including a symlinked
+   spelling, so macOS's `/var/...` is found from the `/private/var/...` detection
+   canonicalizes to — and it is asked only before the silent pick returns a
+   detected project. What is drift-only is the prompt: a directory whose
+   recorded sessions agree with detection returns the detected project exactly
+   as before, with no prompt and no new fields, and the process override wins
+   over the gate. The hook path cannot refuse or prompt, so it says the same
    thing as a warning — [`hooks.md`](hooks.md) §2 carries that and the measured
    cost of the lookup.
 
@@ -857,8 +861,11 @@ useful part out of a context window has failed even if every field is right.
 - `src/mcp/params.rs` — parameter parsing and the project gate
 - `src/mcp/tests.rs` — §5's drift refusal is held by
   `a_remote_that_changed_makes_the_write_ask_which_project`, its session door by
-  `a_remote_that_changed_makes_the_session_door_ask_too`, and its agreeing half
-  by `a_directory_whose_sessions_agree_is_not_asked_which_project`
+  `a_remote_that_changed_makes_the_session_door_ask_too`, its agreeing half by
+  `a_directory_whose_sessions_agree_is_not_asked_which_project`, its
+  explicit-project half by `a_drifted_directory_lets_mem_update_move_a_memory`,
+  and its passive-capture half by
+  `a_passive_capture_in_a_drifted_directory_keeps_the_project_whole`
 - `src/store/sessions.rs` — `recent_projects_in_directory`, the lookup the
   write path and the session-start hook share
 - `src/store/tests/diagnostics.rs` — the store-side project counts and the bound `mem_stats` applies

@@ -297,23 +297,15 @@ impl LeteoMcpServer {
                 SOURCE_USER_SELECTED_AFTER_AMBIGUOUS_PROJECT.to_owned(),
             ));
         }
-        // A retry that names either side of a drift is a user choice, and the
-        // same choice the ambiguity above demanded. Without this the recovery
-        // token a drift issued was never redeemed: the recorded name resolved as
-        // a known project and the detected name as itself, so a retry that never
-        // saw the token was accepted and the token was decorative. The gate sits
-        // where a name would otherwise be accepted without one — the detected
-        // name, and an explicit name the store already holds — and not before
-        // the process override, which wins over the gate as it wins over
-        // detection.
+        // An explicitly requested project resolves the drift on its own, exactly
+        // as it resolves the session door and exactly as it did before the drift
+        // gate existed. The gate is on the *silent* pick above, which is where
+        // the issue's ambiguity belongs: a caller that names a side has made the
+        // choice the ambiguity was asking for, and requiring a recovery token it
+        // may have no field to send — `mem_update` has neither a reason nor a
+        // token, and `mem_capture_passive` has no project at all — would be an
+        // error no caller could ever clear.
         if requested == detected {
-            if let Some(drifted) = self.recorded_directory_detection(store, detection)? {
-                let project = self.accept_ambiguous_choice(&requested, &drifted, choice)?;
-                return Ok((
-                    project,
-                    SOURCE_USER_SELECTED_AFTER_AMBIGUOUS_PROJECT.to_owned(),
-                ));
-            }
             return Ok((requested, detection.source.clone()));
         }
         if self
@@ -328,18 +320,6 @@ impl LeteoMcpServer {
         }
         let known = store.project_exists(&requested).map_err(store_error)?;
         if known {
-            if let Some(drifted) = self.recorded_directory_detection(store, detection)?
-                && drifted
-                    .available_projects
-                    .iter()
-                    .any(|available| normalize::project(available) == requested)
-            {
-                let project = self.accept_ambiguous_choice(&requested, &drifted, choice)?;
-                return Ok((
-                    project,
-                    SOURCE_USER_SELECTED_AFTER_AMBIGUOUS_PROJECT.to_owned(),
-                ));
-            }
             return Ok((requested, SOURCE_KNOWN_PROJECT.to_owned()));
         }
         Err(unknown_project_error(
@@ -385,6 +365,37 @@ impl LeteoMcpServer {
             return Ok(project);
         }
         Err(project_detection_error(detection))
+    }
+
+    /// The project a `mem_capture_passive` files under, which is the one path
+    /// that can neither name a project nor answer a prompt.
+    ///
+    /// `mem_capture_passive` takes no `project` parameter — it receives a
+    /// subagent's Key Learnings block and files what it finds — so it cannot
+    /// send the recovery token a drift refusal would demand, and refusing would
+    /// drop the learnings on the floor. Taking the detected name instead would
+    /// split the project the directory's history is already under. So when the
+    /// directory has drifted this returns the project that history uses, the
+    /// most recent one recorded there, and the detected project otherwise. The
+    /// process override still wins, and an ambiguous directory still refuses
+    /// exactly as before: `recorded_directory_detection` answers `None` when
+    /// there is nothing detected, and `write_session` then reports the
+    /// ambiguity.
+    fn passive_capture_project(
+        &self,
+        store: &Store,
+        detection: &ProjectDetection,
+    ) -> Result<Option<String>, CallToolResult> {
+        if self.default_project.is_some() {
+            return Ok(None);
+        }
+        let Some(drifted) = self.recorded_directory_detection(store, detection)? else {
+            return Ok(None);
+        };
+        // `available_projects` is the recorded projects newest first, then the
+        // detected one appended, so the first entry is the directory's own
+        // current name.
+        Ok(drifted.available_projects.first().cloned())
     }
 
     /// The ambiguity a directory has when the project it now resolves to is not
