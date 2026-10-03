@@ -272,6 +272,13 @@ pub struct CandidateOptions {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Relation {
+    /// A local SQLite key in Leteo's own export, and absent from Engram 0.2.0's.
+    ///
+    /// Engram's `BackupRelation` has no `id` — the key is a local autoincrement
+    /// that does not travel, and supersession is named by the other relation's
+    /// `sync_id` instead. `default` lets that shape deserialize; the import
+    /// assigns ids by inserting, so the value here is never read.
+    #[serde(default)]
     pub id: i64,
     pub sync_id: String,
     pub source_id: String,
@@ -600,6 +607,22 @@ pub struct Stats {
     pub projects: Vec<String>,
 }
 
+/// One prompt Engram 0.2.0 records as deleted.
+///
+/// Leteo's `prompt_deletions` is the home for it: the same table `mem_delete`
+/// writes and the import already consults, so a prompt the source deleted comes
+/// back deleted. `source_inbox_id`, which 0.2.0 also carries here, has no
+/// column in this model and is dropped.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PromptTombstone {
+    pub sync_id: String,
+    #[serde(default)]
+    pub session_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    pub deleted_at: String,
+}
+
 // No `Eq`: a relation carries a confidence, and a float has no total equality.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ExportData {
@@ -625,6 +648,18 @@ pub struct ExportData {
     /// far.
     #[serde(default, deserialize_with = "nullable_sequence")]
     pub relations: Vec<Relation>,
+    /// Prompt tombstones, which Engram 0.2.0 added.
+    ///
+    /// Leteo writes `0.1.0`, which has no tombstones, so this is
+    /// deserialization-only and never serialized: the field is here so an
+    /// Engram 0.2.0 backup's deletions are read rather than ignored. See
+    /// [`PromptTombstone`].
+    #[serde(
+        default,
+        deserialize_with = "nullable_sequence",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub prompt_tombstones: Vec<PromptTombstone>,
 }
 
 /// Reads a list that may arrive as `null` instead of `[]`.
@@ -653,6 +688,9 @@ pub struct ImportResult {
     /// hold a relation reaching a memory that lives in another, and somebody
     /// restoring it deserves to know the graph came back with holes.
     pub relations_skipped: i64,
+    /// Prompt tombstones carried into `prompt_deletions` from an Engram 0.2.0
+    /// backup. Zero for a 0.1.0 export, which has none.
+    pub prompt_tombstones_imported: i64,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]

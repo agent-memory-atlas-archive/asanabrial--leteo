@@ -158,6 +158,16 @@ duties about what an answer explains.
    them level, which is a store that answers searches with yesterday's words and
    looks fine doing it.
 
+   Both shapes of an Engram direct backup are read. Engram moved its file to
+   `0.2.0` in v3.0.0 — relations lost their local `id` and name their
+   supersession chain by `sync_id`, prompts gained an inbox identity, and a
+   `prompt_tombstones` list appeared — and Leteo reads that alongside the
+   `0.1.0` it still writes. The tombstones land in `prompt_deletions`, the home
+   a deletion already has, so a prompt the source deleted is not resurrected by
+   a later import. The inbox identity and the relation supersession chain have
+   no column in this model and are not carried; an unknown version is still
+   refused by name rather than half-read.
+
 7. **`leteo import --from-engram` adopts an Engram database in place.** It runs
    before anything opens the target, because it replaces the file.
 

@@ -164,6 +164,9 @@ impl Store {
             observations: Vec::new(),
             prompts: Vec::new(),
             relations: Vec::new(),
+            // Leteo writes `0.1.0`, which has no tombstones. The field exists
+            // to read Engram 0.2.0's; producing them is not this build's job.
+            prompt_tombstones: Vec::new(),
         };
 
         let session_sql = match project {

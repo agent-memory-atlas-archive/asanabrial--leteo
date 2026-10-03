@@ -300,6 +300,15 @@ const SYNC_MUTATION_COLUMNS: &str = "seq, target_key, entity, entity_key, op, pa
 /// changes in a way older readers cannot handle.
 const EXPORT_FORMAT_VERSION: &str = "0.1.0";
 
+/// The export formats this build can read, oldest first.
+///
+/// Engram moved its direct backup to `0.2.0` in v3.0.0: relations stopped
+/// carrying a local `id`, and it added `prompt_tombstones`. Leteo reads both
+/// shapes and still writes `0.1.0` — producing `0.2.0` is not this build's job.
+/// A version outside this list is refused by name, so a future format fails
+/// loudly rather than being half-read.
+const READABLE_EXPORT_VERSIONS: [&str; 2] = ["0.1.0", "0.2.0"];
+
 pub use crate::memory::rules::{
     RELATION_COMPATIBLE, RELATION_CONFLICTS_WITH, RELATION_NOT_CONFLICT, RELATION_RELATED,
     RELATION_SCOPED, RELATION_SUPERSEDES,
