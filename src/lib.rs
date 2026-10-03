@@ -80,7 +80,9 @@ pub mod store;
 pub mod measure {
     pub use crate::memory::normalize::{fts_any_of, fts_terms, fts_within_project, prompt_terms};
     pub use crate::store::BM25_WEIGHTS;
-    pub use crate::store::search::{FTS_EXACT, FTS_STEMMED, matching_observations_sql};
+    pub use crate::store::search::{
+        FTS_EXACT, FTS_STEMMED, matching_observations_reranked_sql, matching_observations_sql,
+    };
     // The prompt hint's own statement, its sample depth and its two floors.
     //
     // Here for the same reason the ranking statement is: "would a different

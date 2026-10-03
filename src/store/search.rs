@@ -56,6 +56,76 @@ pub fn matching_observations_sql(index: &str, weights: &str) -> String {
     )
 }
 
+/// The coefficients and scales of the Engram rerank, under measurement rather
+/// than adopted.
+///
+/// Compiled for the measurement and the guard that holds it together, and not
+/// in a normal build: the rerank is not wired into any product path yet, so
+/// nothing there would use it and the compiler would be right to say so.
+///
+/// Engram orders a search by
+/// `bm25 × (1 + pin·pinned + recency·recent + stability·stable)`, and Leteo as
+/// shipped orders by bm25 and reciprocal rank fusion alone. The variant below is
+/// that factor applied to the statement [`matching_observations_sql`] builds, so
+/// the two orderings can be measured on one corpus through one query builder.
+///
+/// The sign is the thing to keep in mind, and the query below says it: SQLite's
+/// `bm25()` is negative and more negative is better, so a factor of one or more
+/// multiplies a good row further from zero and `ORDER BY` ascending puts it
+/// first. The weights are positive and the factor is `1 + …` rather than `1 − …`
+/// for that reason — the factor boosts.
+///
+/// `recency` needs a "last seen" Leteo does not have. The row carries
+/// `created_at` and `updated_at`, and the later of the two stands in for it.
+/// Engram's own `last_seen` moves on every retrieval; Leteo does not write on a
+/// read, so `MAX(updated_at, created_at)` is the nearest field and is stated
+/// rather than hidden. A row missing both falls back to `now`, so it is treated
+/// as current rather than dropped to the top by a NULL sort key.
+///
+/// The coefficients are named constants so the number measured is the number
+/// written down. Whether they ship is a separate decision this does not make.
+#[cfg(any(feature = "measure", test))]
+pub const RERANK_PIN_WEIGHT: f64 = 0.10;
+#[cfg(any(feature = "measure", test))]
+pub const RERANK_RECENCY_WEIGHT: f64 = 0.06;
+#[cfg(any(feature = "measure", test))]
+pub const RERANK_STABILITY_WEIGHT: f64 = 0.04;
+/// The recency scale: `1 / (1 + days / 30)`, so a memory touched today scores 1
+/// and one untouched for thirty days scores a half.
+#[cfg(any(feature = "measure", test))]
+pub const RERANK_RECENCY_DAYS: f64 = 30.0;
+/// The stability smoothing: `(revisions + duplicates) / (revisions + duplicates
+/// + 4)`, so a memory seen once scores a fifth and the term saturates near one.
+#[cfg(any(feature = "measure", test))]
+pub const RERANK_STABILITY_SMOOTHING: f64 = 4.0;
+
+/// [`matching_observations_sql`], ordered by the Engram rerank instead of bm25.
+///
+/// The `SELECT`, the join and every `WHERE` clause are the shipped statement's
+/// character for character, so the only thing that differs when the two are
+/// measured against one corpus is the sort key. A filter that moved would
+/// confound the comparison rather than measure the rerank, which is why a test
+/// holds the two prefixes together instead of trusting this sentence.
+#[cfg(any(feature = "measure", test))]
+pub fn matching_observations_reranked_sql(index: &str, weights: &str) -> String {
+    format!(
+        "SELECT o.id, o.type, bm25({index}, {weights}) AS rank
+         FROM {index} fts CROSS JOIN observations o ON o.id = fts.rowid
+         WHERE {index} MATCH ?1 AND o.deleted_at IS NULL
+           AND (?2 IS NULL OR o.type = ?2)
+           AND (?3 IS NULL OR LOWER(o.project) = ?3)
+           AND (?4 IS NULL OR o.scope = ?4)
+         ORDER BY rank * (1.0
+           + {RERANK_PIN_WEIGHT} * o.pinned
+           + {RERANK_RECENCY_WEIGHT} / (1.0 + (julianday('now') - julianday(
+               COALESCE(NULLIF(MAX(COALESCE(o.updated_at, ''), COALESCE(o.created_at, '')), ''), datetime('now'))
+             )) / {RERANK_RECENCY_DAYS})
+           + {RERANK_STABILITY_WEIGHT} * ((o.revision_count + o.duplicate_count) * 1.0
+               / (o.revision_count + o.duplicate_count + {RERANK_STABILITY_SMOOTHING}))
+         ) LIMIT ?5"
+    )
+}
+
 /// A memory a stage is still deciding about: what it takes to rank it, drop it
 /// and merge it, and nothing else.
 ///

@@ -636,6 +636,37 @@ fn the_ranking_weights_are_the_ones_that_were_measured() {
     }
 }
 
+/// The reranked statement differs from the shipped one only in its sort key.
+///
+/// The retrieval measurement under `tools/` compares the two orderings on one
+/// corpus, and any difference in the join or the filters would confound that
+/// comparison rather than measure the rerank. Both builders are functions so a
+/// test can hold their prefixes together, which is the only way to know the
+/// measurement is of the sort key and not of a query the product does not
+/// issue. Broken by dropping a `WHERE` clause from the reranked builder, which
+/// fails this as it should.
+#[test]
+fn the_reranked_statement_differs_only_in_its_sort_key() {
+    let shipped = crate::store::search::matching_observations_sql(
+        crate::store::search::FTS_STEMMED,
+        crate::store::BM25_WEIGHTS,
+    );
+    let reranked = crate::store::search::matching_observations_reranked_sql(
+        crate::store::search::FTS_STEMMED,
+        crate::store::BM25_WEIGHTS,
+    );
+    let before_the_order = |sql: &str| sql.split("ORDER BY").next().unwrap().to_owned();
+    assert_eq!(
+        before_the_order(&shipped),
+        before_the_order(&reranked),
+        "the rerank has to be the same query with a different sort key"
+    );
+    assert_ne!(
+        shipped, reranked,
+        "and it has to actually change the ordering"
+    );
+}
+
 #[test]
 fn a_question_in_a_language_the_store_does_not_hold_is_answered_with_nothing() {
     // Widening rescues a question one unknown word took down. Left unchecked

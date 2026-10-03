@@ -63,6 +63,19 @@ fn words(text: &str, count: usize, skip: usize) -> Vec<String> {
     seen
 }
 
+/// Which ordering a question is asked through.
+///
+/// `Shipped` is the statement the product issues. `Reranked` is the same
+/// statement with the Engram pin/recency/stability factor as its sort key,
+/// which is under measurement and not adopted — see
+/// `store::search::matching_observations_reranked_sql`. Both come from the
+/// binary's own builder, so neither is a copy that can drift.
+#[derive(Clone, Copy, PartialEq)]
+enum Ranking {
+    Shipped,
+    Reranked,
+}
+
 /// Where `wanted` lands for `query`, or `None` if it is not in the first
 /// `DEPTH`.
 ///
@@ -71,6 +84,7 @@ fn words(text: &str, count: usize, skip: usize) -> Vec<String> {
 /// statement the product does not issue.
 fn rank_of(
     connection: &Connection,
+    ranking: Ranking,
     weights: &str,
     query: &[String],
     wanted: i64,
@@ -80,7 +94,14 @@ fn rank_of(
         .map(|word| format!("\"{word}\""))
         .collect::<Vec<_>>()
         .join(" ");
-    let sql = leteo::measure::matching_observations_sql(leteo::measure::FTS_STEMMED, weights);
+    let sql = match ranking {
+        Ranking::Shipped => {
+            leteo::measure::matching_observations_sql(leteo::measure::FTS_STEMMED, weights)
+        }
+        Ranking::Reranked => {
+            leteo::measure::matching_observations_reranked_sql(leteo::measure::FTS_STEMMED, weights)
+        }
+    };
     let mut statement = connection.prepare(&sql)?;
     let rows = statement.query_map(
         rusqlite::params![
@@ -106,6 +127,7 @@ struct Measure {
 
 fn measure(
     connection: &Connection,
+    ranking: Ranking,
     weights: &str,
     sample: &[(i64, String, String)],
     titles: bool,
@@ -118,7 +140,7 @@ fn measure(
         if query.is_empty() {
             continue;
         }
-        places.push(rank_of(connection, weights, &query, *id)?);
+        places.push(rank_of(connection, ranking, weights, &query, *id)?);
     }
     let asked = places.len().max(1);
     let at = |n: usize| {
@@ -144,18 +166,24 @@ fn measure(
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut arguments = std::env::args().skip(1);
     let Some(database) = arguments.next() else {
-        eprintln!("usage: leteo-retrieval <leteo.db> [--sample N] [--seed N] [--weights \"…\"]…");
+        eprintln!(
+            "usage: leteo-retrieval <leteo.db> [--sample N] [--seed N] [--weights \"…\"]… [--rerank]"
+        );
         return Ok(());
     };
     let mut sample_size = 300_usize;
     let mut seed = 7_u64;
     let mut extra = Vec::new();
+    let mut rerank = false;
     while let Some(flag) = arguments.next() {
-        let value = arguments.next().unwrap_or_default();
         match flag.as_str() {
-            "--sample" => sample_size = value.parse()?,
-            "--seed" => seed = value.parse()?,
-            "--weights" => extra.push(value),
+            "--sample" => sample_size = arguments.next().unwrap_or_default().parse()?,
+            "--seed" => seed = arguments.next().unwrap_or_default().parse()?,
+            "--weights" => extra.push(arguments.next().unwrap_or_default()),
+            // Boolean, so it takes no value and must not swallow the flag after
+            // it — the first version of this parse read one value per flag and
+            // would have eaten `--sample` here.
+            "--rerank" => rerank = true,
             other => return Err(format!("unknown option {other}").into()),
         }
     }
@@ -192,20 +220,37 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         } else {
             weights.clone()
         };
-        println!();
-        println!("bm25({label})");
-        for (name, titles, count, skip, questions) in [
-            ("titles", true, 6, 0, &sample),
-            ("titles, held out", true, 6, 0, &held_out),
-            // Past the lead sentence, which restates the title.
-            ("bodies", false, 12, BODY_SKIP, &sample),
-            ("bodies, held out", false, 12, BODY_SKIP, &held_out),
-        ] {
-            let result = measure(&connection, weights, questions, titles, count, skip)?;
-            println!(
-                "  {name:<18} n={:<4} top1={:5.1}%  top3={:5.1}%  top10={:5.1}%  mrr={:.4}",
-                result.asked, result.top1, result.top3, result.top10, result.mrr
-            );
+        // The shipped ordering always runs, and the rerank runs beside it on
+        // the same sample when it was asked for. Without `--rerank` the output
+        // is exactly what it was, header included.
+        let mut orderings = vec![(Ranking::Shipped, format!("bm25({label})"))];
+        if rerank {
+            orderings.push((Ranking::Reranked, format!("bm25({label}, reranked)")));
+        }
+        for (ranking, header) in orderings {
+            println!();
+            println!("{header}");
+            for (name, titles, count, skip, questions) in [
+                ("titles", true, 6, 0, &sample),
+                ("titles, held out", true, 6, 0, &held_out),
+                // Past the lead sentence, which restates the title.
+                ("bodies", false, 12, BODY_SKIP, &sample),
+                ("bodies, held out", false, 12, BODY_SKIP, &held_out),
+            ] {
+                let result = measure(
+                    &connection,
+                    ranking,
+                    weights,
+                    questions,
+                    titles,
+                    count,
+                    skip,
+                )?;
+                println!(
+                    "  {name:<18} n={:<4} top1={:5.1}%  top3={:5.1}%  top10={:5.1}%  mrr={:.4}",
+                    result.asked, result.top1, result.top3, result.top10, result.mrr
+                );
+            }
         }
     }
     if !extra.is_empty() {
