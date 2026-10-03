@@ -1531,14 +1531,18 @@ fn configured_commands(path: &Path, format: ConfigFormat) -> Vec<PathBuf> {
 }
 
 fn json_configured_commands(text: &str, mcp_format: McpFormat) -> Vec<PathBuf> {
-    let Ok(config) = serde_json::from_str::<Value>(text) else {
+    // OpenCode's config may be a `.jsonc` with comments, which `serde_json`
+    // rejects outright; the same strip the writer applies keeps the reader able
+    // to see the command `setup` itself just wrote into that file.
+    let stripped = strip_jsonc(text.as_bytes());
+    let Ok(config) = serde_json::from_slice::<Value>(&stripped) else {
         return Vec::new();
     };
     let mut commands = Vec::new();
     if let Some(command) = servers_at(&config, mcp_format)
         .and_then(|servers| servers.get(SERVER_NAME))
         .and_then(|server| server.get("command"))
-        .and_then(Value::as_str)
+        .and_then(command_string)
     {
         commands.push(PathBuf::from(command));
     }
@@ -1568,6 +1572,21 @@ fn json_configured_commands(text: &str, mcp_format: McpFormat) -> Vec<PathBuf> {
         }
     }
     commands
+}
+
+/// The executable a server entry's `command` names.
+///
+/// Most formats write it as a string, but `McpFormat::Mcp` — OpenCode and Kilo
+/// Code — writes it as an argv array whose first element is the executable,
+/// the same shape `setup` itself writes for those agents. A reader that only
+/// accepted a string therefore never saw their command at all, and `doctor`
+/// reported a healthy installation while their binary was gone.
+fn command_string(value: &Value) -> Option<&str> {
+    match value {
+        Value::String(command) => Some(command),
+        Value::Array(parts) => parts.first().and_then(Value::as_str),
+        _ => None,
+    }
 }
 
 /// The executable a `… hook <slug>` command runs.

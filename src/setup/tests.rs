@@ -550,8 +550,12 @@ fn setup_prefers_the_stable_link_a_package_manager_keeps() {
     let temp = TempDir::new().unwrap();
     // The canonical form of the temp directory, because canonicalization is
     // what turns the stable link into the Cellar path in the first place, and
-    // on macOS `/var` is itself a symlink to `/private/var`.
-    let base = fs::canonicalize(temp.path()).unwrap();
+    // on macOS `/var` is itself a symlink to `/private/var`. `setup` strips the
+    // `\\?\` prefix Windows canonicalization adds, because agent launchers
+    // reject verbatim paths, so the expected link is built from that same
+    // stripped form rather than from the raw canonical path.
+    let base =
+        crate::project::remove_windows_verbatim_prefix(fs::canonicalize(temp.path()).unwrap());
     let versioned = base
         .join("Cellar")
         .join("leteo")
@@ -607,7 +611,7 @@ fn a_non_package_install_keeps_its_canonical_path() {
     );
     assert_eq!(
         config["mcpServers"]["leteo"]["command"].as_str(),
-        executable.canonicalize().unwrap().to_str(),
+        crate::project::remove_windows_verbatim_prefix(executable.canonicalize().unwrap()).to_str(),
         "nothing about an ordinary install is rewritten"
     );
 }
@@ -627,13 +631,25 @@ fn doctor_reports_a_configured_command_whose_binary_is_gone() {
         .unwrap()
         .hooks
         .expect("Claude Code has a hooks file");
-    write_fixture(
-        &hooks,
-        &format!(
-            r#"{{"hooks":{{"SessionStart":[{{"hooks":[{{"type":"command","command":"\"{}\" hook session-start"}}]}}]}}}}"#,
-            missing.display()
-        ),
-    );
+    // Built through `serde_json` rather than a format string: a Windows path's
+    // backslashes are not valid JSON escapes, so a hand-written fixture holding
+    // `missing.display()` is unparseable exactly where the check must see it.
+    let fixture = serde_json::json!({
+        "hooks": {
+            "SessionStart": [
+                {
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": format!("\"{}\" hook session-start", missing.display())
+                        }
+                    ]
+                }
+            ]
+        }
+    })
+    .to_string();
+    write_fixture(&hooks, &fixture);
 
     let found = missing_binaries(&setup_options);
     let claude = found
@@ -655,6 +671,52 @@ fn doctor_reports_a_configured_command_whose_binary_is_gone() {
             .iter()
             .all(|item| item.agent != "claude-code"),
         "a present executable is not reported"
+    );
+}
+
+#[test]
+fn doctor_reads_the_array_command_opencode_writes() {
+    let temp = TempDir::new().unwrap();
+    let setup_options = options(&temp);
+    // OpenCode and Kilo Code write `command` as an argv array, and OpenCode's
+    // file may be a `.jsonc`. A reader that accepted only a string, or that fed
+    // the commented file straight to `serde_json`, saw neither — and `doctor`
+    // called a missing binary healthy for those two agents.
+    let config = setup_options
+        .config_home
+        .as_ref()
+        .unwrap()
+        .join("opencode")
+        .join("opencode.jsonc");
+    let missing = temp
+        .path()
+        .join("Cellar")
+        .join("leteo")
+        .join("1.0.0")
+        .join("bin")
+        .join("leteo");
+    let fixture = serde_json::json!({
+        "mcp": {
+            SERVER_NAME: {
+                "type": "local",
+                "command": [missing.to_string_lossy(), "mcp", "--tools=agent"],
+                "enabled": true
+            }
+        }
+    })
+    .to_string()
+        + "\n// OpenCode permits JSONC.\n";
+    write_fixture(&config, &fixture);
+
+    let found = missing_binaries(&setup_options);
+    let opencode = found
+        .iter()
+        .find(|item| item.agent == "opencode")
+        .unwrap_or_else(|| panic!("OpenCode's array command is not read: {found:?}"));
+    assert_eq!(opencode.command, missing, "{opencode:?}");
+    assert_eq!(
+        opencode.config, config,
+        "the report names the file: {opencode:?}"
     );
 }
 
