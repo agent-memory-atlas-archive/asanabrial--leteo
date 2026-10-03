@@ -655,8 +655,12 @@ fn every_tool_declares_behavior_annotations() {
 fn explicit_projects_must_be_backed_by_known_context() {
     let (_temp, server) = test_server(McpOptions::default());
     let mut store = server.lock_store().unwrap();
+    // Recorded in another directory on purpose: a session under this project in
+    // *this* directory would make the directory drift, and the point of this
+    // test is the known-project path, not the drift gate that has its own test
+    // below.
     store
-        .create_session("known", "known-project", "C:/workspace")
+        .create_session("known", "known-project", "C:/elsewhere")
         .unwrap();
     let detection = ProjectDetection {
         project: "leteo".to_owned(),
@@ -723,6 +727,445 @@ fn explicit_projects_must_be_backed_by_known_context() {
         )
         .expect_err("blank projects are refused");
     assert_eq!(error_payload(&error)["error"]["code"], "invalid_project");
+}
+
+/// A directory whose sessions were recorded under another project does not
+/// silently take the name detection now resolves to.
+///
+/// Adding a remote to a repository named by its directory, renaming the remote,
+/// or pointing it at a fork changes what `origin` says, and Leteo used to file
+/// the next memory under the new name with nothing said — the earlier memories
+/// stayed under the old one, and the two halves of the project could no longer
+/// see each other. The ambiguity the directory already knows how to report is
+/// reused: the same error code, the same candidate list, the same recovery
+/// token. Only the silent pick is refused; a caller that names a side has made
+/// the choice the ambiguity was asking for and resolves it on its own, because
+/// the tools that share this path cannot all send a token — `mem_update` has
+/// neither a reason nor a token, and `mem_capture_passive` has no project at
+/// all. That half is held by `a_drifted_directory_lets_mem_update_move_a_memory`
+/// and `a_passive_capture_in_a_drifted_directory_keeps_the_project_whole`.
+#[test]
+fn a_remote_that_changed_makes_the_write_ask_which_project() {
+    let (_temp, server) = test_server(McpOptions::default());
+    let mut store = server.lock_store().unwrap();
+    store
+        .create_session("old", "old-remote", "C:/repo")
+        .unwrap();
+    let detection = ProjectDetection {
+        project: "new-remote".to_owned(),
+        source: crate::project::SOURCE_GIT_REMOTE.to_owned(),
+        path: "C:/repo".to_owned(),
+        available_projects: Vec::new(),
+        warning: None,
+        error_hint: None,
+    };
+
+    let error = server
+        .resolve_write_project(&store, None, &detection, ProjectChoice::default())
+        .expect_err("a silent pick would split the project in two");
+    let payload = error_payload(&error);
+    assert_eq!(payload["error"]["code"], "ambiguous_project");
+    assert_eq!(
+        payload["available_projects"],
+        json!(["old-remote", "new-remote"]),
+        "both names are offered: the recorded one first, then what it resolves to now"
+    );
+    assert!(
+        payload["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("projects consolidate")),
+        "and the message points at the command that folds them: {}",
+        payload["error"]["message"]
+    );
+    assert!(
+        payload["recovery_token"]
+            .as_str()
+            .is_some_and(|token| !token.is_empty()),
+        "the refusal still carries a token, for the tools that can send one: {:?}",
+        payload["recovery_token"]
+    );
+
+    // Naming either side of the drift resolves it, with no reason and no token:
+    // that is the only shape `mem_update` can send, and it must not be left
+    // holding an error it cannot clear. The recorded side is a project the store
+    // already knows; the detected side is simply detection's own answer.
+    assert_eq!(
+        server
+            .resolve_write_project(
+                &store,
+                Some("old-remote".to_owned()),
+                &detection,
+                ProjectChoice::default()
+            )
+            .unwrap(),
+        ("old-remote".to_owned(), SOURCE_KNOWN_PROJECT.to_owned())
+    );
+    assert_eq!(
+        server
+            .resolve_write_project(
+                &store,
+                Some("new-remote".to_owned()),
+                &detection,
+                ProjectChoice::default()
+            )
+            .unwrap(),
+        (
+            "new-remote".to_owned(),
+            crate::project::SOURCE_GIT_REMOTE.to_owned()
+        )
+    );
+}
+
+/// The session door is gated the same way the write path is.
+///
+/// `SERVER_INSTRUCTIONS` tells an agent to open a session with
+/// `mem_session_start` before it saves anything, and the session owns its
+/// project for the rest of the conversation: `create_session` is
+/// `INSERT OR IGNORE`, so a later `mem_save` carrying that id returns the
+/// session's project without looking at detection again. A gate only on the
+/// write path is therefore bypassed by the door the brief names first, filing a
+/// whole conversation under the new name in silence.
+#[test]
+fn a_remote_that_changed_makes_the_session_door_ask_too() {
+    let (temp, server) = test_server(McpOptions::default());
+    let workspace = temp.path().join("new-remote");
+    std::fs::create_dir_all(&workspace).unwrap();
+    // The raw temp spelling on purpose, not `canonicalize`: on macOS the temp
+    // directory is `/var/...` while detection resolves it to `/private/var/...`,
+    // and the session recorded here has to be found from that resolved form. The
+    // spelling alone would not match, which is the symlink case `same_directory`
+    // resolves.
+    let directory = workspace.to_string_lossy().into_owned();
+    {
+        let mut store = server.lock_store().unwrap();
+        store
+            .create_session("old", "old-remote", &directory)
+            .unwrap();
+    }
+
+    let error = server
+        .mem_session_start(Parameters(
+            serde_json::from_value(json!({
+                "id": "s-drift",
+                "directory": directory.clone(),
+            }))
+            .unwrap(),
+        ))
+        .err()
+        .expect("the documented session door must not file under the new name in silence");
+    let payload = error_payload(&error);
+    assert_eq!(payload["error"]["code"], "ambiguous_project");
+    assert_eq!(
+        payload["available_projects"],
+        json!(["old-remote", "new-remote"]),
+        "both sides are named"
+    );
+    // `SessionStartParams` is `deny_unknown_fields` and has no
+    // `project_choice_reason` or `recovery_token`, so the instructions have to
+    // match what this door accepts. A token here would be a recovery no caller
+    // could send.
+    assert!(
+        payload.get("recovery_token").is_none(),
+        "the session door has no field for a token, so it must not demand one: {:?}",
+        payload.get("recovery_token")
+    );
+    assert!(
+        payload["recovery_instructions"]
+            .as_str()
+            .is_some_and(|instructions| instructions.contains("project=<choice>")
+                && instructions.contains("no recovery_token")),
+        "and it says the retry takes the project directly: {:?}",
+        payload["recovery_instructions"]
+    );
+
+    // An explicit project is the agent having chosen, and it still wins.
+    let chosen = server
+        .mem_session_start(Parameters(
+            serde_json::from_value(json!({
+                "id": "s-drift",
+                "project": "old-remote",
+                "directory": directory,
+            }))
+            .unwrap(),
+        ))
+        .expect("an explicit project is the choice the gate is asking for");
+    assert_eq!(chosen.0.session.project, "old-remote");
+}
+
+/// The process override wins over the drift gate, as it wins over detection.
+///
+/// The override is the operator's answer for this process, given before any
+/// directory was seen. Asking it to replay a choice the operator already made
+/// would be a prompt nobody can answer, and it is why the gate sits after the
+/// override on the write path rather than before it.
+#[test]
+fn the_process_override_wins_over_the_drift_gate() {
+    let (_temp, server) = test_server(McpOptions {
+        default_project: Some("old-remote".to_owned()),
+        ..McpOptions::default()
+    });
+    let mut store = server.lock_store().unwrap();
+    store
+        .create_session("old", "old-remote", "C:/repo")
+        .unwrap();
+    let detection = ProjectDetection {
+        project: "new-remote".to_owned(),
+        source: crate::project::SOURCE_GIT_REMOTE.to_owned(),
+        path: "C:/repo".to_owned(),
+        available_projects: Vec::new(),
+        warning: None,
+        error_hint: None,
+    };
+
+    // Naming the override, which is also a drift candidate, and taking the
+    // silent path that would otherwise have used it: both are the override.
+    for requested in [Some("old-remote".to_owned()), None] {
+        assert_eq!(
+            server
+                .resolve_write_project(&store, requested, &detection, ProjectChoice::default())
+                .unwrap(),
+            (
+                "old-remote".to_owned(),
+                crate::project::SOURCE_PROCESS_OVERRIDE.to_owned()
+            )
+        );
+    }
+}
+
+/// The same override wins on the session door.
+#[test]
+fn the_process_override_wins_over_the_drift_gate_on_the_session_door() {
+    let (temp, server) = test_server(McpOptions {
+        default_project: Some("old-remote".to_owned()),
+        ..McpOptions::default()
+    });
+    let workspace = temp.path().join("new-remote");
+    std::fs::create_dir_all(&workspace).unwrap();
+    let directory = std::fs::canonicalize(&workspace)
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    {
+        let mut store = server.lock_store().unwrap();
+        store
+            .create_session("old", "old-remote", &directory)
+            .unwrap();
+    }
+
+    let started = server
+        .mem_session_start(Parameters(
+            serde_json::from_value(json!({ "id": "s-override", "directory": directory })).unwrap(),
+        ))
+        .expect("the process override is the operator's answer, not a choice to replay");
+    assert_eq!(started.0.session.project, "old-remote");
+}
+
+/// A directory whose sessions agree with detection is not asked about.
+///
+/// The interception is only for a drift; the ordinary case must pay no extra
+/// prompt and gain no new fields, which is the half a fix like this loses when
+/// the lookup is done and its emptiness is not checked.
+#[test]
+fn a_directory_whose_sessions_agree_is_not_asked_which_project() {
+    let (_temp, server) = test_server(McpOptions::default());
+    let mut store = server.lock_store().unwrap();
+    store.create_session("here", "leteo", "C:/repo").unwrap();
+    let detection = ProjectDetection {
+        project: "leteo".to_owned(),
+        source: crate::project::SOURCE_GIT_REMOTE.to_owned(),
+        path: "C:/repo".to_owned(),
+        available_projects: Vec::new(),
+        warning: None,
+        error_hint: None,
+    };
+
+    assert_eq!(
+        server
+            .resolve_write_project(&store, None, &detection, ProjectChoice::default())
+            .unwrap(),
+        (
+            "leteo".to_owned(),
+            crate::project::SOURCE_GIT_REMOTE.to_owned()
+        ),
+        "the recorded project is the detected one, so nothing is asked"
+    );
+}
+
+/// `mem_update` can name a project but has no reason or token to send.
+///
+/// It shares `resolve_write_project` with `mem_save`, but `UpdateParams` is
+/// `deny_unknown_fields` and carries neither `project_choice_reason` nor
+/// `recovery_token`. When the write path held an explicit retry to the drift's
+/// replay, moving a memory into either side of a drift returned an
+/// `ambiguous_project` error whose token the tool could never send — an error no
+/// caller could clear. The drift gate belongs on the silent pick; an explicit
+/// project resolves on its own, and this drives the real tool to prove it.
+#[test]
+fn a_drifted_directory_lets_mem_update_move_a_memory() {
+    let (_temp, server) = test_server(McpOptions::default());
+    let detection = crate::project::detect_current_project();
+    let detected = detection.project.clone();
+    let recorded = "old-remote";
+    assert_ne!(detected, recorded, "the fixture needs a real drift");
+
+    let id = {
+        let mut store = server.lock_store().unwrap();
+        store
+            .create_session("s1", &detected, &detection.path)
+            .unwrap();
+        // The same directory, already used under another name.
+        store
+            .create_session("old", recorded, &detection.path)
+            .unwrap();
+        store
+            .add_observation(AddObservation {
+                session_id: "s1".to_owned(),
+                kind: "decision".to_owned(),
+                title: "A memory to move".to_owned(),
+                content: "the directory has drifted since this was written".to_owned(),
+                tool_name: None,
+                project: Some(detected.clone()),
+                scope: "project".to_owned(),
+                topic_key: None,
+                prompt_sync_id: None,
+            })
+            .unwrap()
+            .observation
+            .id
+    };
+
+    let moved = server
+        .mem_update(Parameters(
+            serde_json::from_value(json!({
+                "id": id,
+                "expected_project": detected,
+                "project": recorded,
+            }))
+            .unwrap(),
+        ))
+        .expect("mem_update has no reason or token, so a drift must not ask it for one")
+        .0;
+    assert_eq!(moved.observation.project.as_deref(), Some(recorded));
+}
+
+/// Passive capture cannot name a project, so it must not be blocked by a drift.
+///
+/// `mem_capture_passive` takes no project and has nobody to prompt: an agent
+/// ends with a Key Learnings block and the hook hands it over. Refusing would
+/// drop the learnings, and taking the detected name would split the project the
+/// directory's history is already under, so it files under the recorded project
+/// instead.
+#[test]
+fn a_passive_capture_in_a_drifted_directory_keeps_the_project_whole() {
+    let (_temp, server) = test_server(McpOptions::default());
+    let detection = crate::project::detect_current_project();
+    let detected = detection.project.clone();
+    let recorded = "old-remote";
+    assert_ne!(detected, recorded, "the fixture needs a real drift");
+
+    {
+        let mut store = server.lock_store().unwrap();
+        store
+            .create_session("old", recorded, &detection.path)
+            .unwrap();
+    }
+
+    let captured = server
+        .mem_capture_passive(Parameters(
+            serde_json::from_value(json!({
+                "content": "## Key Learnings\n- the drift is filed under the name the directory already used",
+            }))
+            .unwrap(),
+        ))
+        .expect("passive capture has no project to name and nobody to prompt")
+        .0;
+    assert_eq!(captured.project_context.project, recorded);
+    assert_eq!(captured.saved, 1);
+}
+
+/// A capture that names an existing session files under that session's project.
+///
+/// `passive_capture_project` resolves the drift for a capture that opens a
+/// fresh manual session, but an existing session already owns its project:
+/// handing `write_session` the recorded name instead would make the two
+/// disagree and refuse the capture with `session_project_mismatch`, dropping
+/// the learnings. So a named session that exists must be left to
+/// `write_session`, which returns the session's own project.
+#[test]
+fn a_passive_capture_naming_a_session_files_under_that_sessions_project() {
+    let (_temp, server) = test_server(McpOptions::default());
+    let detection = crate::project::detect_current_project();
+    let detected = detection.project.clone();
+    let recorded = "old-remote";
+    assert_ne!(detected, recorded, "the fixture needs a real drift");
+
+    {
+        let mut store = server.lock_store().unwrap();
+        // The drift: this directory's history is under another name.
+        store
+            .create_session("old", recorded, &detection.path)
+            .unwrap();
+        // The session the capture names, opened under the detected project.
+        store
+            .create_session("mine", &detected, &detection.path)
+            .unwrap();
+    }
+
+    let captured = server
+        .mem_capture_passive(Parameters(
+            serde_json::from_value(json!({
+                "content": "## Key Learnings\n- a named session owns its project",
+                "session_id": "mine",
+            }))
+            .unwrap(),
+        ))
+        .expect("a session that exists owns its project, so the capture must not be refused")
+        .0;
+    assert_eq!(
+        captured.project_context.project, detected,
+        "the capture files under the session's project, not the recorded drift"
+    );
+    assert_eq!(captured.saved, 1);
+}
+
+/// `mem_session_start` is published as "create a session, or return it
+/// unchanged if its identifier exists", and the drift gate must not stand in
+/// front of that: a second start with the same id in a drifted directory
+/// returns the session already opened rather than an ambiguity about a choice
+/// already made.
+#[test]
+fn a_repeated_session_start_in_a_drifted_directory_returns_the_session_unchanged() {
+    let (_temp, server) = test_server(McpOptions::default());
+    let detection = crate::project::detect_current_project();
+    let detected = detection.project.clone();
+    let recorded = "old-remote";
+    assert_ne!(detected, recorded, "the fixture needs a real drift");
+
+    {
+        let mut store = server.lock_store().unwrap();
+        store
+            .create_session("old", recorded, &detection.path)
+            .unwrap();
+        store
+            .create_session("s-repeat", recorded, &detection.path)
+            .unwrap();
+    }
+
+    let started = server
+        .mem_session_start(Parameters(
+            serde_json::from_value(json!({
+                "id": "s-repeat",
+                "directory": detection.path,
+            }))
+            .unwrap(),
+        ))
+        .expect("an existing session comes back unchanged, before the drift gate")
+        .0;
+    assert_eq!(started.session.id, "s-repeat");
+    assert_eq!(
+        started.session.project, recorded,
+        "the session that already exists is returned, not re-resolved under a drift"
+    );
 }
 
 #[test]
@@ -2890,7 +3333,10 @@ fn a_memory_cannot_be_moved_into_a_project_that_does_not_exist() {
 
     server
         .mem_session_start(Parameters(
-            serde_json::from_value(json!({ "id": "s2", "project": "somewhere-real" })).unwrap(),
+            serde_json::from_value(
+                json!({ "id": "s2", "project": "somewhere-real", "directory": "C:/elsewhere" }),
+            )
+            .unwrap(),
         ))
         .unwrap();
     let moved =

@@ -575,6 +575,105 @@ fn a_renamed_project_folds_the_directory_name_into_the_detected_project() {
     );
 }
 
+/// A session-start says when this directory's history is under another name.
+///
+/// A hook cannot ask which project the user meant, so a warning is what it has
+/// instead: the write path refuses and hands over a token, but by the time a
+/// session opens the memories are about to be filed, and the agent is the only
+/// thing that can put the question to somebody. The project here is not the
+/// directory's basename, which is the case `migrate_directory_project` already
+/// folds on its own; this is the remote that was renamed, which nothing else
+/// notices.
+#[test]
+fn a_session_start_warns_when_the_directorys_history_is_under_another_name() {
+    let (temp, mut store) = store();
+    let workspace = temp.path().join("repo");
+    std::fs::create_dir_all(&workspace).unwrap();
+    store
+        .create_session("old", "old-remote", &workspace.to_string_lossy())
+        .unwrap();
+
+    let outcome = run(
+        &mut store,
+        HookEvent::SessionStart,
+        &HookInput {
+            session_id: "agent-session".to_owned(),
+            cwd: workspace.to_string_lossy().into_owned(),
+            project: Some("new-remote".to_owned()),
+            ..HookInput::default()
+        },
+    )
+    .unwrap();
+
+    assert!(
+        outcome.warnings.iter().any(|warning| {
+            warning.contains("old-remote")
+                && warning.contains("new-remote")
+                && warning.contains("projects consolidate")
+        }),
+        "a drift a hook cannot prompt about still has to be said: {:?}",
+        outcome.warnings
+    );
+}
+
+/// A session-start in a directory whose sessions agree says nothing extra.
+///
+/// The warning is only for a drift. An ordinary repository — the sessions
+/// recorded there are the project it still resolves to — must open exactly as
+/// it did before, with no line that teaches somebody to skip the warnings.
+#[test]
+fn a_session_start_in_an_agreeing_directory_says_nothing_about_projects() {
+    let (temp, mut store) = store();
+    let outcome = run(&mut store, HookEvent::SessionStart, &input(temp.path())).unwrap();
+    assert!(
+        outcome
+            .warnings
+            .iter()
+            .all(|warning| !warning.contains("projects consolidate")),
+        "{:?}",
+        outcome.warnings
+    );
+
+    // A second start in the same directory, now that a session recorded
+    // `hook-project` there, still agrees.
+    let outcome = run(&mut store, HookEvent::SessionStart, &input(temp.path())).unwrap();
+    assert!(
+        outcome
+            .warnings
+            .iter()
+            .all(|warning| !warning.contains("projects consolidate")),
+        "{:?}",
+        outcome.warnings
+    );
+}
+
+/// A lookup that could not run is not a lookup that found no drift.
+///
+/// `recent_projects_in_directory` reads `sessions`. If that read fails, the
+/// session-start has to say so rather than folding the error into an empty list
+/// and passing as agreement — which is how a check that could not run gets
+/// reported as one that found nothing. The table is renamed out from under the
+/// hook so the statement cannot even be prepared, which is the only way to reach
+/// the error branch without a second process holding the store.
+#[test]
+fn a_session_start_says_when_it_could_not_check_the_directorys_history() {
+    let (temp, mut store) = store();
+    store
+        .connection()
+        .execute("ALTER TABLE sessions RENAME TO sessions_moved", [])
+        .unwrap();
+
+    let outcome = run(&mut store, HookEvent::SessionStart, &input(temp.path())).unwrap();
+    assert!(
+        outcome
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("check this directory's project history")),
+        "a check that could not run has to say which it was: {:?}",
+        outcome.warnings
+    );
+}
+
 fn memory(title: &str, content: &str) -> crate::memory::model::AddObservation {
     crate::memory::model::AddObservation {
         session_id: "agent-session".to_owned(),

@@ -230,6 +230,88 @@ fn a_projects_directories_are_found_without_reading_every_other_project() {
     assert!(store.session_directories("nobody").unwrap().is_empty());
 }
 
+/// The projects a directory's sessions were recorded under, most recent first.
+///
+/// This is the evidence an MCP write and a session-start hook ask for before
+/// believing the name detection derived from `origin` this time. A repository
+/// that gained a remote, renamed it, or was pointed at a fork resolves to a new
+/// name, and the sessions already recorded in this directory are what says it
+/// used to be another.
+///
+/// The comparison is in Rust rather than in SQL — the same directory arrives
+/// with a trailing separator, with backslashes, and on Windows with a different
+/// case — and this holds the fold as much as the narrowing and the ordering: a
+/// session recorded as `C:\repo\` is found from `C:/repo`, and one recorded
+/// elsewhere is not.
+#[test]
+fn the_projects_recorded_in_a_directory_come_back_newest_first() {
+    let (_temp, mut store) = store();
+    store.create_session("s1", "older", "C:/repo").unwrap();
+    store.create_session("s2", "newer", "C:/repo").unwrap();
+    store.create_session("s3", "elsewhere", "C:/other").unwrap();
+    // Written the way another machine might have: backslashes and a trailing
+    // separator, which the fold has to see through for this session to be found
+    // from `C:/repo` at all.
+    store.create_session("s4", "folded", "C:\\repo\\").unwrap();
+    // Neither an empty project nor an empty directory is a choice to offer.
+    store.create_session("s5", "ghost", "").unwrap();
+    store.create_session("s6", "", "C:/repo").unwrap();
+
+    let database = store.database_path().to_path_buf();
+    let aged = rusqlite::Connection::open(&database).unwrap();
+    aged.execute(
+        "UPDATE sessions SET started_at = '2026-01-01 00:00:00' WHERE id = 's1'",
+        [],
+    )
+    .unwrap();
+    aged.execute(
+        "UPDATE sessions SET started_at = '2026-02-01 00:00:00' WHERE id = 's2'",
+        [],
+    )
+    .unwrap();
+    aged.execute(
+        "UPDATE sessions SET started_at = '2026-03-01 00:00:00' WHERE id = 's3'",
+        [],
+    )
+    .unwrap();
+    aged.execute(
+        "UPDATE sessions SET started_at = '2026-04-01 00:00:00' WHERE id = 's4'",
+        [],
+    )
+    .unwrap();
+    drop(aged);
+
+    assert_eq!(
+        store
+            .recent_projects_in_directory("C:/repo", "nothing")
+            .unwrap(),
+        ["folded", "newer", "older"],
+        "the recorded projects, newest first, with the folded spelling counted"
+    );
+    assert_eq!(
+        store
+            .recent_projects_in_directory("C:/repo", "newer")
+            .unwrap(),
+        ["folded", "older"],
+        "the detected project is excluded, not offered back"
+    );
+    assert_eq!(
+        store
+            .recent_projects_in_directory("C:/other", "nothing")
+            .unwrap(),
+        ["elsewhere"],
+        "a different directory's sessions are not this directory's"
+    );
+    assert!(
+        store
+            .recent_projects_in_directory("C:/repo", "nothing")
+            .unwrap()
+            .iter()
+            .all(|project| project != "ghost" && !project.is_empty()),
+        "an empty directory or an empty project is not a candidate"
+    );
+}
+
 #[test]
 fn the_recent_sessions_are_the_ones_that_recorded_something() {
     // These five go into the context every session opens with, to say what has

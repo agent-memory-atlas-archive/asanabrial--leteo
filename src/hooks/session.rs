@@ -7,7 +7,11 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::{Store, memory::normalize, project::ProjectDetection};
+use crate::{
+    Store,
+    memory::normalize,
+    project::{ProjectDetection, same_directory},
+};
 
 use super::{HookInput, HookOutcome};
 
@@ -99,20 +103,24 @@ pub(super) fn migrate_directory_project(
     }
 }
 
-/// Compares a stored session directory with the current one, tolerating the
-/// separator and case differences that Windows paths pick up along the way.
-fn same_directory(recorded: &str, directory: &Path) -> bool {
-    fn comparable(value: &str) -> String {
-        let value = value
-            .trim()
-            .trim_end_matches(['/', '\\'])
-            .replace('\\', "/");
-        if cfg!(windows) {
-            value.to_lowercase()
-        } else {
-            value
-        }
-    }
-
-    comparable(recorded) == comparable(&directory.to_string_lossy())
+/// The projects this directory's sessions were recorded under, when any of them
+/// is not the project detection now resolves to.
+///
+/// The write path can refuse and hand the agent a recovery token; a hook cannot
+/// ask anybody, so this is what it has to say instead: a session-start that
+/// finds the directory's history under another name names it and points at
+/// `leteo projects consolidate`. Asked after [`migrate_directory_project`] has
+/// run, so the ordinary case it already folds — a repository that gained a
+/// remote and took its directory's name — is not warned about as a split it
+/// has just repaired.
+///
+/// The error is returned rather than folded into an empty list: a lookup that
+/// could not run is not a lookup that found no drift, and the caller says which
+/// it was.
+pub(super) fn drifted_directory_projects(
+    store: &Store,
+    directory: &Path,
+    project: &str,
+) -> Result<Vec<String>, crate::store::StoreError> {
+    store.recent_projects_in_directory(&directory.to_string_lossy(), project)
 }

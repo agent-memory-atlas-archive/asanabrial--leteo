@@ -277,6 +277,9 @@ impl LeteoMcpServer {
                 ));
             }
             if !detected.is_empty() {
+                if let Some(drifted) = self.recorded_directory_detection(store, detection)? {
+                    return Err(self.project_detection_error(&drifted));
+                }
                 return Ok((detected, detection.source.clone()));
             }
             return Err(self.project_detection_error(detection));
@@ -294,6 +297,14 @@ impl LeteoMcpServer {
                 SOURCE_USER_SELECTED_AFTER_AMBIGUOUS_PROJECT.to_owned(),
             ));
         }
+        // An explicitly requested project resolves the drift on its own, exactly
+        // as it resolves the session door and exactly as it did before the drift
+        // gate existed. The gate is on the *silent* pick above, which is where
+        // the issue's ambiguity belongs: a caller that names a side has made the
+        // choice the ambiguity was asking for, and requiring a recovery token it
+        // may have no field to send — `mem_update` has neither a reason nor a
+        // token, and `mem_capture_passive` has no project at all — would be an
+        // error no caller could ever clear.
         if requested == detected {
             return Ok((requested, detection.source.clone()));
         }
@@ -316,6 +327,141 @@ impl LeteoMcpServer {
             &detected,
             store.list_project_names().unwrap_or_default(),
         ))
+    }
+
+    /// The project a `mem_session_start` opens a session under.
+    ///
+    /// The session door is the one `SERVER_INSTRUCTIONS` tells an agent to come
+    /// through before it saves anything, and a session owns its project for the
+    /// rest of the conversation: a later `mem_save` carrying that id returns the
+    /// session's project without looking at detection again, and `create_session`
+    /// is `INSERT OR IGNORE`. A gate only on the write path would therefore be
+    /// bypassed by the door the brief names first, filing a whole conversation
+    /// under the new name in silence. So the silent pick is intercepted here
+    /// exactly as it is in [`Self::resolve_write_project`]: an explicit project
+    /// and the process override win, and a detection that drifts is refused with
+    /// the same ambiguity and candidate list. The refusal takes no recovery
+    /// token, unlike the write path's: `SessionStartParams` is
+    /// `deny_unknown_fields` and carries neither `project_choice_reason` nor
+    /// `recovery_token`, so `SERVER_INSTRUCTIONS` tells the agent this door takes
+    /// `project=<choice>` on its own. The free [`project_detection_error`], which
+    /// the genuine ambiguous-directory path already uses here, says exactly that.
+    fn resolve_session_project(
+        &self,
+        store: &Store,
+        explicit_project: Option<String>,
+        detection: &ProjectDetection,
+    ) -> Result<String, CallToolResult> {
+        if let Some(project) = explicit_project {
+            let project = normalize::project(&project);
+            if !project.is_empty() {
+                return Ok(project);
+            }
+            return Err(structured_error(
+                error_code::INVALID_PROJECT,
+                crate::project::EMPTY_NAME,
+            ));
+        }
+        let project = normalize::project(&detection.project);
+        if !project.is_empty() {
+            if let Some(drifted) = self.recorded_directory_detection(store, detection)? {
+                return Err(project_detection_error(&drifted));
+            }
+            return Ok(project);
+        }
+        Err(project_detection_error(detection))
+    }
+
+    /// The project a `mem_capture_passive` files under, which is the one path
+    /// that can neither name a project nor answer a prompt.
+    ///
+    /// `mem_capture_passive` takes no `project` parameter — it receives a
+    /// subagent's Key Learnings block and files what it finds — so it cannot
+    /// send the recovery token a drift refusal would demand, and refusing would
+    /// drop the learnings on the floor. Taking the detected name instead would
+    /// split the project the directory's history is already under. So when the
+    /// directory has drifted this returns the project that history uses, the
+    /// most recent one recorded there; on every other path it returns `None` and
+    /// leaves the choice to [`Self::write_session`], including for a capture
+    /// that names an existing session, whose own project wins. The process
+    /// override still wins, and an ambiguous directory still refuses exactly as
+    /// before: `recorded_directory_detection` answers `None` when there is
+    /// nothing detected, and `write_session` then reports the ambiguity.
+    fn passive_capture_project(
+        &self,
+        store: &Store,
+        session_id: Option<&str>,
+        detection: &ProjectDetection,
+    ) -> Result<Option<String>, CallToolResult> {
+        if self.default_project.is_some() {
+            return Ok(None);
+        }
+        // An existing named session owns its project: `write_session` reads it
+        // and returns it unchanged, so passing the recorded name here would make
+        // the two disagree and refuse the capture with `session_project_mismatch`,
+        // dropping the learnings. A session that exists therefore leaves the
+        // choice to `write_session`.
+        if let Some(id) = session_id.filter(|id| !id.trim().is_empty())
+            && store.get_session(id).is_ok()
+        {
+            return Ok(None);
+        }
+        let Some(drifted) = self.recorded_directory_detection(store, detection)? else {
+            return Ok(None);
+        };
+        // `available_projects` is the recorded projects newest first, with the
+        // detected name appended last, so the first entry is the newest
+        // *recorded* name, not the directory's current one.
+        Ok(drifted.available_projects.first().cloned())
+    }
+
+    /// The ambiguity a directory has when the project it now resolves to is not
+    /// the one its sessions were recorded under.
+    ///
+    /// `None` when nothing drifts, which is the ordinary case and must stay
+    /// free: a directory whose recorded sessions agree with detection returns
+    /// the detected project with no prompt and no new fields. When it does
+    /// drift, the value is shaped exactly like the ambiguity
+    /// `detection_from_children` produces — empty project, `SOURCE_AMBIGUOUS`,
+    /// the candidates in `available_projects` — so the existing error envelope
+    /// and recovery-token flow carry it without a second mechanism.
+    ///
+    /// The recorded projects come first because they are what the user is most
+    /// likely to mean; the detected name is appended because picking it is the
+    /// other way to resolve the drift. `recent_projects_in_directory` already
+    /// excludes the detected name — it is the `exclude` argument — so appending
+    /// it is the one place the two sides are joined and the list has no
+    /// duplicates by construction.
+    fn recorded_directory_detection(
+        &self,
+        store: &Store,
+        detection: &ProjectDetection,
+    ) -> Result<Option<ProjectDetection>, CallToolResult> {
+        let detected = normalize::project(&detection.project);
+        if detected.is_empty() {
+            return Ok(None);
+        }
+        let recorded = store
+            .recent_projects_in_directory(&detection.path, &detected)
+            .map_err(store_error)?;
+        if recorded.is_empty() {
+            return Ok(None);
+        }
+        let recorded_names = recorded.join(", ");
+        let mut available_projects = recorded;
+        available_projects.push(detected.clone());
+        Ok(Some(ProjectDetection {
+            project: String::new(),
+            source: crate::project::SOURCE_AMBIGUOUS.to_owned(),
+            path: detection.path.clone(),
+            available_projects,
+            warning: None,
+            error_hint: Some(format!(
+                "this directory's sessions were recorded under {recorded_names}, but it now \
+                 resolves to {detected:?}; ask the user which project this belongs to. If the \
+                 two names are one project, `leteo projects consolidate` folds them together."
+            )),
+        }))
     }
 
     fn accept_ambiguous_choice(
@@ -886,27 +1032,6 @@ struct WriteSession {
     project: String,
     envelope: ProjectEnvelope,
     named: bool,
-}
-
-fn resolve_detected_project(
-    explicit_project: Option<String>,
-    detection: &ProjectDetection,
-) -> Result<String, CallToolResult> {
-    if let Some(project) = explicit_project {
-        let project = normalize::project(&project);
-        if !project.is_empty() {
-            return Ok(project);
-        }
-        return Err(structured_error(
-            error_code::INVALID_PROJECT,
-            crate::project::EMPTY_NAME,
-        ));
-    }
-    let project = normalize::project(&detection.project);
-    if !project.is_empty() {
-        return Ok(project);
-    }
-    Err(project_detection_error(detection))
 }
 
 pub(crate) fn manual_session_id(project: &str) -> String {

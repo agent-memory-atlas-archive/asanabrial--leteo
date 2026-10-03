@@ -25,6 +25,21 @@ deadline, so every promise here is a promise about time as much as content.
    of that. A killed hook tells nobody anything; one that answers carries a
    warning saying what it could not do.
 
+   `session-start` also asks whether this directory's sessions were recorded
+   under a project other than the one it now resolves to — the drift the write
+   path's silent pick refuses on, asked where nobody is there to answer a
+   prompt. When one
+   differs it pushes a warning naming both and `leteo projects consolidate`,
+   and it asks after `migrate_directory_project`, so the one drift already
+   folded on its own — a repository that took its directory's name — is not
+   warned about as a split it has just repaired. The lookup is one scan of
+   `sessions` with the directory folded in Rust, paid once at session start
+   rather than on every prompt. Measured through this crate in a release build
+   against a temporary store: 500 sessions, a real store held 483, cost
+   **235 µs**, and 5,000 cost **2.24 ms**, against this event's ten-second
+   patience. The write path's half of the same fact is
+   [`mcp-tools.md`](mcp-tools.md) §5.
+
 3. **The store is opened inside the hook path, not before it.** The promise that
    a hook never blocks was once written in `hooks` and broken in `cli`, which
    opened the database on the way to calling it.
@@ -424,6 +439,12 @@ deadline, so every promise here is a promise about time as much as content.
 - `src/hooks/mod.rs` — the events, the budgets, the dispatch
 - `src/hooks/context.rs` — what a session opening is built from
 - `src/hooks/nudge.rs` — the per-session record of what has been shown
+- `src/hooks/session.rs` — `drifted_directory_projects`, §2's drift warning, held
+  by `a_session_start_warns_when_the_directorys_history_is_under_another_name`,
+  its agreeing half by
+  `a_session_start_in_an_agreeing_directory_says_nothing_about_projects`, and
+  the lookup's error half by
+  `a_session_start_says_when_it_could_not_check_the_directorys_history`
 - `src/recall.rs` — the sizes and the rendering shared with the CLI. §5 is
   held by `a_session_line_and_a_prompt_line_are_cut_for_opposite_reasons` and,
   for the two sections that also carry a content preview, by

@@ -311,6 +311,47 @@ useful part out of a context window has failed even if every field is right.
    not repeated: shown at every session opened in such a directory, it is the
    line that teaches somebody to skip the warnings.
 
+   **A directory whose sessions were recorded under another project does not
+   silently take the name detection now resolves to.** The name is derived from
+   `origin` on every call, so adding a remote to a repository named by its
+   directory, renaming the remote, or pointing it at a fork changes it, and the
+   next write used to be filed under the new name with nothing said — the
+   memories already recorded stayed under the old one, and the two halves of the
+   project could no longer see each other. Both doors into a session ask
+   `recent_projects_in_directory` before returning a detected project: the write
+   path's silent auto-pick and `mem_session_start`, which is the door
+   `SERVER_INSTRUCTIONS` names first and whose project every later call carrying
+   that session id inherits. When the sessions recorded in this exact directory
+   name a project other than the one detection resolved to, the **silent** pick
+   is refused with the same `ambiguous_project` error, the same candidate list —
+   the recorded names first, then the detected one — and a message naming both
+   and pointing at `leteo projects consolidate`. The write path's refusal mints
+   the recovery token the ambiguous-directory case uses; the session door's does
+   not, because `SessionStartParams` is `deny_unknown_fields` and has no
+   `project_choice_reason` or `recovery_token`, and `SERVER_INSTRUCTIONS` already
+   tells the agent this door takes `project=<choice>` on its own. An explicit
+   `project` resolves the drift on its own, with no reason and no token, exactly
+   as an explicit project resolves the session door: naming a side is the choice
+   the ambiguity was asking for, and the tools that share this path cannot all
+   send a token — `mem_update` carries neither a reason nor a token and
+   `mem_capture_passive` carries no project at all. `mem_capture_passive`, which
+   cannot name a project and has nobody to prompt, files under the directory's
+   **recorded** project rather than the detected name, so a passive capture
+   keeps the project whole instead of splitting it or failing; a capture that
+   names an existing session instead files under that session's project, because
+   a session owns its project. `mem_session_start` likewise returns a session
+   that already exists unchanged, before the gate, so its published idempotency
+   holds under a drift. The lookup is a scan of `sessions` alone, folded in Rust
+   for the reason `same_directory` gives — including a symlinked spelling, so
+   macOS's `/var/...` is found from the `/private/var/...` detection
+   canonicalizes to — and it is asked only before the silent pick returns a
+   detected project. What is drift-only is the prompt: a directory whose
+   recorded sessions agree with detection returns the detected project exactly
+   as before, with no prompt and no new fields, and the process override wins
+   over the gate. The hook path cannot refuse or prompt, so it says the same
+   thing as a warning — [`hooks.md`](hooks.md) §2 carries that and the measured
+   cost of the lookup.
+
 6. **A memory says which question it answers, or says nothing.** The link is a
    chain of three guesses, each with a guard: the prompt this process last
    recorded (same project and session), then the last prompt of the same
@@ -825,7 +866,19 @@ useful part out of a context window has failed even if every field is right.
 - `src/mcp/tools.rs` — the tool router and every handler
 - `src/mcp/output.rs` — the typed replies, the previews, the hints
 - `src/mcp/params.rs` — parameter parsing and the project gate
-- `src/mcp/tests.rs`
+- `src/mcp/tests.rs` — §5's drift refusal is held by
+  `a_remote_that_changed_makes_the_write_ask_which_project`, its session door by
+  `a_remote_that_changed_makes_the_session_door_ask_too`, its agreeing half by
+  `a_directory_whose_sessions_agree_is_not_asked_which_project`, its
+  explicit-project half by `a_drifted_directory_lets_mem_update_move_a_memory`,
+  its passive-capture half by
+  `a_passive_capture_in_a_drifted_directory_keeps_the_project_whole`, its
+  named-session half by
+  `a_passive_capture_naming_a_session_files_under_that_sessions_project`, and
+  the session door's idempotency under a drift by
+  `a_repeated_session_start_in_a_drifted_directory_returns_the_session_unchanged`
+- `src/store/sessions.rs` — `recent_projects_in_directory`, the lookup the
+  write path and the session-start hook share
 - `src/store/tests/diagnostics.rs` — the store-side project counts and the bound `mem_stats` applies
 - `tests/mcp_protocol.rs` — the wire surface, driven through the built binary
 
