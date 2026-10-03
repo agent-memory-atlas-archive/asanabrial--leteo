@@ -375,26 +375,32 @@ impl Store {
         let mut projects: BTreeMap<String, ProjectStats> = BTreeMap::new();
 
         let mut observation_statement = self.connection.prepare(
-            "SELECT project, COUNT(*) FROM observations
+            "SELECT project, COUNT(*), MAX(datetime(created_at)) FROM observations
              WHERE project IS NOT NULL AND project != '' AND deleted_at IS NULL
              GROUP BY project",
         )?;
         let rows = observation_statement.query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, Option<String>>(2)?,
+            ))
         })?;
         for row in rows {
-            let (name, count) = row?;
-            projects
+            let (name, count, at) = row?;
+            let stats = projects
                 .entry(name.clone())
                 .or_insert_with(|| ProjectStats {
                     name,
                     ..ProjectStats::default()
-                })
-                .observation_count = count;
+                });
+            stats.observation_count = count;
+            keep_later(&mut stats.last_activity, at);
         }
 
         let mut session_statement = self.connection.prepare(
-            "SELECT project, COUNT(*), ifnull(directory, '') FROM sessions
+            "SELECT project, COUNT(*), ifnull(directory, ''),
+                    MAX(datetime(COALESCE(ended_at, started_at))) FROM sessions
              WHERE project IS NOT NULL AND project != ''
              GROUP BY project, directory
              ORDER BY project, directory",
@@ -404,10 +410,11 @@ impl Store {
                 row.get::<_, String>(0)?,
                 row.get::<_, i64>(1)?,
                 row.get::<_, String>(2)?,
+                row.get::<_, Option<String>>(3)?,
             ))
         })?;
         for row in rows {
-            let (name, count, directory) = row?;
+            let (name, count, directory, at) = row?;
             let stats = projects
                 .entry(name.clone())
                 .or_insert_with(|| ProjectStats {
@@ -418,25 +425,31 @@ impl Store {
             if !directory.is_empty() && !stats.directories.contains(&directory) {
                 stats.directories.push(directory);
             }
+            keep_later(&mut stats.last_activity, at);
         }
 
         let mut prompt_statement = self.connection.prepare(
-            "SELECT project, COUNT(*) FROM prompts
+            "SELECT project, COUNT(*), MAX(datetime(created_at)) FROM prompts
              WHERE project IS NOT NULL AND project != ''
              GROUP BY project",
         )?;
         let rows = prompt_statement.query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, Option<String>>(2)?,
+            ))
         })?;
         for row in rows {
-            let (name, count) = row?;
-            projects
+            let (name, count, at) = row?;
+            let stats = projects
                 .entry(name.clone())
                 .or_insert_with(|| ProjectStats {
                     name,
                     ..ProjectStats::default()
-                })
-                .prompt_count = count;
+                });
+            stats.prompt_count = count;
+            keep_later(&mut stats.last_activity, at);
         }
 
         let mut projects = projects.into_values().collect::<Vec<_>>();
@@ -447,6 +460,31 @@ impl Store {
                 .then_with(|| left.name.cmp(&right.name))
         });
         Ok(projects)
+    }
+
+    /// The per-project counts an agent reads through `mem_stats`: the same
+    /// aggregation as [`Self::list_projects_with_stats`], most recently active
+    /// first, cut to `limit`, with how many the cut left out.
+    ///
+    /// The order is the useful part — it answers "where has anything been
+    /// happening" — and the count of what was left out is what keeps a bounded
+    /// list from reading as the whole inventory. `mem_stats` passes the store's
+    /// own list ceiling, so this list and every other one on the surface are
+    /// bounded by the same number.
+    pub fn project_stats_bounded(
+        &self,
+        limit: usize,
+    ) -> Result<(Vec<ProjectStats>, usize), StoreError> {
+        let mut projects = self.list_projects_with_stats()?;
+        projects.sort_by(|left, right| {
+            right
+                .last_activity
+                .cmp(&left.last_activity)
+                .then_with(|| left.name.cmp(&right.name))
+        });
+        let omitted = projects.len().saturating_sub(limit);
+        projects.truncate(limit);
+        Ok((projects, omitted))
     }
 
     /// Removes the sessions and prompts of a project that holds no
@@ -770,5 +808,24 @@ impl Store {
         result.canonical_created = !canonical_existed && !result.sources_merged.is_empty();
         tx.commit()?;
         Ok(result)
+    }
+}
+
+/// Keeps the later of two SQLite `datetime(...)` readings.
+///
+/// They sort as strings, which is why every ordering in this codebase reads
+/// them through `datetime(...)` in the first place: one fixed
+/// `YYYY-MM-DD HH:MM:SS` shape compares correctly with `>`. `None` means the
+/// group carried no timestamp at all, and never displaces a real one.
+fn keep_later(current: &mut Option<String>, candidate: Option<String>) {
+    let Some(candidate) = candidate else {
+        return;
+    };
+    let later = match current.as_deref() {
+        Some(held) => candidate.as_str() > held,
+        None => true,
+    };
+    if later {
+        *current = Some(candidate);
     }
 }

@@ -1302,5 +1302,29 @@
     "file": "src/mcp/output.rs",
     "old": "    original.map(|original_bytes| Truncation {\n        original_bytes,\n        stored_bytes,\n    })",
     "new": "    original.map(|original_bytes| Truncation {\n        original_bytes,\n        stored_bytes: 0,\n    })"
+  },
+  {
+    "name": "mcp: mem_stats does not apply the project-list ceiling",
+    "file": "src/store/projects.rs",
+    "old": "        projects.truncate(limit);",
+    "new": "        let _ = limit;"
+  },
+  {
+    "name": "mcp: mem_stats reports no omitted projects",
+    "file": "src/store/projects.rs",
+    "old": "        let omitted = projects.len().saturating_sub(limit);",
+    "new": "        let omitted = 0;"
+  },
+  {
+    "name": "store: the bounded project list loses its recency order",
+    "file": "src/store/projects.rs",
+    "old": "                .cmp(&left.last_activity)",
+    "new": "                .cmp(&right.last_activity)"
+  },
+  {
+    "name": "store: last activity never advances past the first reading",
+    "file": "src/store/projects.rs",
+    "old": "    if later {",
+    "new": "    if later && false {"
   }
 ]

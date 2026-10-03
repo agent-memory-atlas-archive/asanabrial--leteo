@@ -355,6 +355,7 @@ mod tests {
                 .iter()
                 .map(|entry| (*entry).to_owned())
                 .collect(),
+            last_activity: None,
         }
     }
 

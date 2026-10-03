@@ -1639,19 +1639,52 @@ pub(super) struct StatsOutput {
     pub(super) total_sessions: i64,
     pub(super) total_observations: i64,
     pub(super) total_prompts: i64,
-    /// Projects that hold at least one memory, the most recently written
-    /// first. Not every project the store knows: one with only a session or a
-    /// prompt is absent, which on a real store is two of nineteen.
-    pub(super) projects: Vec<String>,
+    /// Each project the store knows, most recently active first, at most the
+    /// store's list ceiling — the same one every other list here is bounded by.
+    /// `projects_omitted` says how many it left out, so a bounded list is not
+    /// read as the whole inventory.
+    pub(super) projects: Vec<ProjectStatOutput>,
+    /// How many projects the ceiling left out. Absent when nothing was cut.
+    #[serde(default, skip_serializing_if = "is_zero_usize")]
+    pub(super) projects_omitted: usize,
 }
 
-impl From<Stats> for StatsOutput {
-    fn from(value: Stats) -> Self {
+impl StatsOutput {
+    pub(super) fn new(
+        stats: Stats,
+        projects: Vec<crate::memory::model::ProjectStats>,
+        projects_omitted: usize,
+    ) -> Self {
         Self {
-            total_sessions: value.total_sessions,
-            total_observations: value.total_observations,
-            total_prompts: value.total_prompts,
-            projects: value.projects,
+            total_sessions: stats.total_sessions,
+            total_observations: stats.total_observations,
+            total_prompts: stats.total_prompts,
+            projects: projects.into_iter().map(Into::into).collect(),
+            projects_omitted,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub(super) struct ProjectStatOutput {
+    pub(super) name: String,
+    pub(super) observation_count: i64,
+    pub(super) session_count: i64,
+    pub(super) prompt_count: i64,
+    /// The newest instant anything happened in this project. Absent only for a
+    /// project whose every row lacks a timestamp.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) last_activity: Option<String>,
+}
+
+impl From<crate::memory::model::ProjectStats> for ProjectStatOutput {
+    fn from(value: crate::memory::model::ProjectStats) -> Self {
+        Self {
+            name: value.name,
+            observation_count: value.observation_count,
+            session_count: value.session_count,
+            prompt_count: value.prompt_count,
+            last_activity: value.last_activity,
         }
     }
 }

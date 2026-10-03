@@ -25,6 +25,15 @@ All notable changes to Leteo are documented in this file.
   wire against a real store, a 20-result `mem_search` is 15,917 bytes received against
   32,097 — about half (#112).
 
+- **`mem_stats` named projects and counted nothing; it now carries each project's
+  counts, bounded.** The reply listed the projects holding a memory and stopped there,
+  which answers "which projects are there" but not "which one is real" — the question
+  after an `unknown_project` or an `ambiguous_project`. Each entry now carries the
+  project's live-memory, session and prompt counts and its last activity, most recently
+  active first, over every project the store knows rather than only those with a live
+  memory, and the list is bounded by the store's own list ceiling with `projects_omitted`
+  counting what it left out, so a bounded list is not read as the whole inventory (#129).
+
 ### Fixed
 
 - **A body over the storage bound was cut without saying so.** `mem_save` and
