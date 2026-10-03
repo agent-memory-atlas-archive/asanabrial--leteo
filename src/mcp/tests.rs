@@ -3910,6 +3910,51 @@ fn a_prompt_or_a_summary_listed_as_context_is_previewed_like_the_rest() {
 }
 
 #[test]
+fn the_project_list_is_bounded_and_says_what_it_left_out() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut config = crate::store::StoreConfig::new(temp.path().join("mcp.db"));
+    config.max_context_results = 3;
+    let mut store = Store::open(config).unwrap();
+    for index in 0..5 {
+        let project = format!("project-{index}");
+        store
+            .create_session(&format!("s{index}"), &project, "C:/repo")
+            .unwrap();
+        store
+            .add_observation(crate::memory::model::AddObservation {
+                session_id: format!("s{index}"),
+                kind: "decision".to_owned(),
+                title: "Una memoria".to_owned(),
+                content: "el cuerpo".to_owned(),
+                tool_name: None,
+                project: Some(project),
+                scope: "project".to_owned(),
+                topic_key: None,
+                prompt_sync_id: None,
+            })
+            .unwrap();
+    }
+    let server = LeteoMcpServer::with_options(Arc::new(Mutex::new(store)), McpOptions::default());
+    let Json(stats) = server.mem_stats(Parameters(NoParams {})).unwrap();
+    assert_eq!(stats.projects.len(), 3, "the ceiling is applied: {stats:?}");
+    assert_eq!(
+        stats.projects_omitted, 2,
+        "and what it cut is counted, so a bounded list is not read as the whole store: {stats:?}"
+    );
+    assert_eq!(
+        stats.total_observations, 5,
+        "the totals still count the whole store: {stats:?}"
+    );
+    assert!(
+        stats
+            .projects
+            .iter()
+            .all(|project| project.observation_count == 1 && project.session_count == 1),
+        "each listed project carries its own counts: {stats:?}"
+    );
+}
+
+#[test]
 fn the_seven_tools_that_had_no_test_of_their_own_answer_what_they_promise() {
     let temp = tempfile::tempdir().unwrap();
     let mut store =
@@ -3976,7 +4021,11 @@ fn the_seven_tools_that_had_no_test_of_their_own_answer_what_they_promise() {
     let Json(stats) = server.mem_stats(Parameters(NoParams {})).unwrap();
     assert_eq!(stats.total_observations, 2, "{stats:?}");
     assert_eq!(stats.total_sessions, 1, "{stats:?}");
-    assert_eq!(stats.projects, vec!["leteo".to_owned()], "{stats:?}");
+    assert_eq!(stats.projects.len(), 1, "{stats:?}");
+    assert_eq!(stats.projects[0].name, "leteo", "{stats:?}");
+    assert_eq!(stats.projects[0].observation_count, 2, "{stats:?}");
+    assert_eq!(stats.projects[0].session_count, 1, "{stats:?}");
+    assert_eq!(stats.projects_omitted, 0, "{stats:?}");
 
     let Json(report) = server
         .mem_doctor(Parameters(DoctorParams {

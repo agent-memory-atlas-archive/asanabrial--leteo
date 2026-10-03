@@ -1344,3 +1344,60 @@ fn the_project_list_is_newest_first_and_leaves_out_the_ones_with_nothing_left() 
          whatever order the plan happened to produce"
     );
 }
+
+/// The bounded list an agent reads keeps the order `stats` gives it, and counts
+/// the cut.
+///
+/// `mem_stats` passes the store's own list ceiling, so this is the number that
+/// bounds the reply; what the test protects is that the ceiling truncates rather
+/// than reshapes, that the head is answered per project, and that the projects
+/// it drops are counted rather than lost.
+#[test]
+fn the_bounded_project_list_keeps_the_stats_order_and_counts_the_rest() {
+    let temp = TempDir::new().unwrap();
+    let mut store = Store::open(StoreConfig::new(temp.path().join("bounded.db"))).unwrap();
+    let write = |store: &mut Store, project: &str, created: &str| {
+        store.create_session(project, project, "C:/repo").ok();
+        let mut add = observation(project, "A memory", "a body");
+        add.project = Some(project.to_owned());
+        let id = store.add_observation(add).unwrap().observation.id;
+        store
+            .connection()
+            .execute(
+                "UPDATE observations SET created_at = ?1 WHERE id = ?2",
+                rusqlite::params![created, id],
+            )
+            .unwrap();
+    };
+
+    write(&mut store, "oldest", "2020-01-01 00:00:00");
+    write(&mut store, "middle", "2025-01-01 00:00:00");
+    write(&mut store, "newest", "2030-01-01 00:00:00");
+
+    // The order is `stats`'s, not this call's: `mem_stats` reads the names once
+    // and answers the head of them, so the two must agree on it.
+    let names = store.stats().unwrap().projects;
+    assert_eq!(
+        names,
+        ["newest", "middle", "oldest"],
+        "stats is newest first"
+    );
+
+    let (listed, omitted) = store.project_stats_for(&names, 2).unwrap();
+    let answered: Vec<&str> = listed.iter().map(|project| project.name.as_str()).collect();
+    assert_eq!(
+        answered,
+        ["newest", "middle"],
+        "the head is answered in order"
+    );
+    assert_eq!(omitted, 1, "and the project the cut left out is counted");
+    assert_eq!(
+        listed[0].last_activity.as_deref(),
+        Some("2030-01-01 00:00:00"),
+        "each row carries the newest instant in its project"
+    );
+
+    let (all, none) = store.project_stats_for(&names, 20).unwrap();
+    assert_eq!(all.len(), 3, "a ceiling above the count cuts nothing");
+    assert_eq!(none, 0, "and reports nothing cut");
+}

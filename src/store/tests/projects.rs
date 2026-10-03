@@ -48,6 +48,11 @@ fn a_doctor_project_scope_reports_that_projects_counts() {
     let stats = stats.expect("an existing project reports its counts");
     assert_eq!(stats.name, "leteo");
     assert_eq!(stats.observation_count, 1);
+    assert!(
+        stats.last_activity.is_some(),
+        "the per-project detail carries the newest instant, so a project past \
+         mem_stats's ceiling can still be asked for it: {stats:?}"
+    );
 
     assert!(
         store

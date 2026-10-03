@@ -1302,5 +1302,29 @@
     "file": "src/mcp/output.rs",
     "old": "    original.map(|original_bytes| Truncation {\n        original_bytes,\n        stored_bytes,\n    })",
     "new": "    original.map(|original_bytes| Truncation {\n        original_bytes,\n        stored_bytes: 0,\n    })"
+  },
+  {
+    "name": "mcp: mem_stats does not apply the project-list ceiling",
+    "file": "src/store/projects.rs",
+    "old": "        for name in names.iter().take(limit) {",
+    "new": "        for name in names.iter() {"
+  },
+  {
+    "name": "mcp: mem_stats reports no omitted projects",
+    "file": "src/store/projects.rs",
+    "old": "        let omitted = names.len().saturating_sub(limit);",
+    "new": "        let omitted = 0;"
+  },
+  {
+    "name": "store: a project's memory count is not read",
+    "file": "src/store/projects.rs",
+    "old": "       (SELECT COUNT(*) FROM observations",
+    "new": "       (SELECT 0 FROM observations"
+  },
+  {
+    "name": "store: a project's last activity is not read",
+    "file": "src/store/projects.rs",
+    "old": "       (SELECT MAX(at) FROM (",
+    "new": "       (SELECT NULL FROM ("
   }
 ]

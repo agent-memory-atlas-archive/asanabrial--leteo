@@ -412,6 +412,17 @@ pub struct ProjectStats {
     pub session_count: i64,
     pub prompt_count: i64,
     pub directories: Vec<String>,
+    /// The newest instant anything happened in this project: its latest live
+    /// memory, the start or end of its latest session, or its latest prompt.
+    ///
+    /// `None` only for a project whose every row lacks a timestamp, which the
+    /// schema's `NOT NULL DEFAULT (datetime('now'))` columns make unreachable
+    /// today. It stays an `Option` because a reply must not declare required a
+    /// field it can leave out, and the value is compared as a string: SQLite's
+    /// `datetime(...)` writes one fixed `YYYY-MM-DD HH:MM:SS` shape, which is
+    /// the shape this whole codebase orders by.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_activity: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -604,6 +615,11 @@ pub struct Stats {
     /// absent, and on a real store of nineteen that is two of them. The order
     /// is the useful part — it answers "where has anything been happening" —
     /// and `leteo projects list` is the inventory.
+    ///
+    /// `mem_stats` answers these same projects, in this same order, with their
+    /// counts and last activity, bounded by the list ceiling; it reads them from
+    /// here rather than grouping the whole table, which is the seek
+    /// `store-and-schema.md` §13 fixes.
     pub projects: Vec<String>,
 }
 

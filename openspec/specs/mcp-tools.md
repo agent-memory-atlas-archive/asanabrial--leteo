@@ -448,10 +448,12 @@ useful part out of a context window has failed even if every field is right.
 
    The general rule, guarded rather than remembered: a field called `count`
    carries a description saying what it counts. A list is the same question in
-   another shape — `mem_stats` answers `projects` with the ones holding at
-   least one memory, most recently written first, which is two short of the
-   nineteen a real store knows and is the useful order rather than the
-   inventory. `mem_context` answers `count:
+   another shape — `mem_stats` answers `projects` with one entry per project that
+   holds a memory, most recently written first, each carrying its live-memory,
+   session and prompt counts and the newest instant anything happened in it. The
+   list is bounded by the store's list ceiling and `projects_omitted` counts what
+   the ceiling left out, so a bounded list is not read as the whole inventory;
+   `mem_doctor` answers one project's detail. `mem_context` answers `count:
    50` with five in `observations` and forty-five in `also_remembered`, and the
    description is the only place an agent can read that.
 
@@ -824,6 +826,7 @@ useful part out of a context window has failed even if every field is right.
 - `src/mcp/output.rs` — the typed replies, the previews, the hints
 - `src/mcp/params.rs` — parameter parsing and the project gate
 - `src/mcp/tests.rs`
+- `src/store/tests/diagnostics.rs` — the store-side project counts and the bound `mem_stats` applies
 - `tests/mcp_protocol.rs` — the wire surface, driven through the built binary
 
 ## Related

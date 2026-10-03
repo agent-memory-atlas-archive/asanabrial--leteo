@@ -251,8 +251,10 @@ there from any provenance, and how it says when something has gone wrong.
    `idx_obs_project_order`, which is `(project, datetime(created_at) DESC, id
    DESC)` and already has that row first. Seventeen seeks against four thousand
    lookups: 0.02 ms in SQLite, and `mem_stats` measured over its own protocol
-   goes from 9.4 ms to 0.3, with the same seventeen names in the same order and
-   the same 793 bytes. No new index.
+   goes from 9.4 ms to 0.3 for the list, with the same seventeen names in the
+   same order. The reply grew when each entry gained its counts and last activity
+   (#129): each listed project is one more seek, so the tool's cost follows the
+   ceiling and not the store. No new index.
 
    The guard reads the plan, because a result-based test cannot tell the two
    shapes apart — which is exactly how this survived the sweep that found it and
