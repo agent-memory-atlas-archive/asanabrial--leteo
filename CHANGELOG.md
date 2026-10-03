@@ -27,6 +27,16 @@ All notable changes to Leteo are documented in this file.
 
 ### Fixed
 
+- **An Engram 0.2.0 backup could not be imported.** Engram moved its direct backup
+  to `0.2.0` in v3.0.0, and `leteo import` refused it with "unsupported export
+  format 0.2.0; this build reads 0.1.0" — so the JSON fallback for migrating
+  another machine or a backup only worked for Engram ≤ 1.20. With the version
+  check passed it then failed on the relation's missing `id`, which 0.2.0 stopped
+  writing. Both shapes are read now: relations deserialize without an `id` and are
+  keyed by `sync_id` on insert, and the `prompt_tombstones` 0.2.0 added land in
+  `prompt_deletions` so a deleted prompt is not resurrected. Leteo still writes
+  `0.1.0`; an unknown future version is still refused by name (#119).
+
 - **The preview tools promised characters but cut bytes.** Every description that
   previews a body said "a 400-character preview", and the cut is `PREVIEW_BYTES = 400`
   bytes — so in Spanish, CJK or emoji an agent was shown less than it was told. The unit

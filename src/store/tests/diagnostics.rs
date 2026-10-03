@@ -54,6 +54,149 @@ fn an_export_written_by_go_imports_despite_its_null_lists() {
 }
 
 #[test]
+fn an_engram_0_2_0_export_imports_and_re_imports_as_a_no_op() {
+    // Engram moved its direct backup to 0.2.0 in v3.0.0: relations lost their
+    // local `id` and name their supersession chain by `sync_id` instead, prompts
+    // gained an inbox identity, and a `prompt_tombstones` list appeared. This is
+    // the shape an Engram v3 export writes. Before this it failed the whole
+    // import with "unsupported export format 0.2.0"; with the version check
+    // passed it failed on the relation's missing `id`.
+    let (_temp, mut store) = store();
+    let engram_export = r#"{
+      "version": "0.2.0",
+      "exported_at": "2026-10-02 12:00:00",
+      "sessions": [
+        {
+          "id": "s1",
+          "project": "interop",
+          "ownership_mode": "shared",
+          "directory": "C:/repo",
+          "started_at": "2026-10-02 12:00:00"
+        }
+      ],
+      "observations": [
+        {
+          "id": 1,
+          "sync_id": "obs-a",
+          "session_id": "s1",
+          "type": "decision",
+          "title": "Chose Postgres over MySQL",
+          "content": "picked Postgres",
+          "project": "interop",
+          "scope": "project",
+          "revision_count": 1,
+          "duplicate_count": 1,
+          "review_after": "2027-04-02 12:00:00",
+          "pinned": true,
+          "created_at": "2026-10-02 12:00:00",
+          "updated_at": "2026-10-02 12:00:00"
+        },
+        {
+          "id": 2,
+          "sync_id": "obs-b",
+          "session_id": "s1",
+          "type": "discovery",
+          "title": "Postgres has jsonb",
+          "content": "jsonb is good",
+          "project": "interop",
+          "scope": "project",
+          "revision_count": 1,
+          "duplicate_count": 1,
+          "created_at": "2026-10-02 12:00:01",
+          "updated_at": "2026-10-02 12:00:01"
+        }
+      ],
+      "prompts": [
+        {
+          "source_inbox_id": "inbox-1",
+          "id": 1,
+          "sync_id": "prompt-a",
+          "session_id": "s1",
+          "content": "why postgres",
+          "project": "interop",
+          "created_at": "2026-10-02 12:00:02"
+        }
+      ],
+      "relations": [
+        {
+          "sync_id": "rel-a",
+          "source_id": "obs-b",
+          "target_id": "obs-a",
+          "relation": "related",
+          "judgment_status": "judged",
+          "superseded_at": null,
+          "created_at": "2026-10-02 12:00:03",
+          "updated_at": "2026-10-02 12:00:03"
+        }
+      ],
+      "prompt_tombstones": [
+        {
+          "sync_id": "prompt-deleted",
+          "session_id": "s1",
+          "project": "interop",
+          "source_inbox_id": "inbox-2",
+          "deleted_at": "2026-10-02 12:00:04"
+        }
+      ]
+    }"#;
+
+    let imported = store.import_json(engram_export).unwrap();
+    assert_eq!(imported.sessions_imported, 1);
+    assert_eq!(imported.observations_imported, 2);
+    assert_eq!(imported.prompts_imported, 1);
+    assert_eq!(imported.relations_imported, 1);
+    assert_eq!(imported.relations_skipped, 0);
+    assert_eq!(imported.prompt_tombstones_imported, 1);
+
+    // The relation carried no `id` and still came through, pointing at both
+    // ends; the pinned flag and review window 0.2.0 carries came through too.
+    let relations: i64 = store
+        .connection
+        .query_row(
+            "SELECT COUNT(*) FROM memory_relations WHERE sync_id = 'rel-a'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(relations, 1, "a relation with no id still imports");
+    let pinned: i64 = store
+        .connection
+        .query_row(
+            "SELECT pinned FROM observations WHERE sync_id = 'obs-a'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(pinned, 1, "0.2.0's pinned state comes through");
+
+    // The tombstone landed where a deletion lives, so a prompt the source had
+    // deleted is not resurrected by a later import.
+    let deleted: i64 = store
+        .connection
+        .query_row(
+            "SELECT COUNT(*) FROM prompt_deletions WHERE sync_id = 'prompt-deleted'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        deleted, 1,
+        "the tombstone is a deletion, not a dropped field"
+    );
+
+    // Re-importing the same bytes changes nothing.
+    let again = store.import_json(engram_export).unwrap();
+    assert_eq!(again.sessions_imported, 0);
+    assert_eq!(again.observations_imported, 0);
+    assert_eq!(again.prompts_imported, 0);
+    assert_eq!(again.relations_imported, 0);
+    assert_eq!(
+        again.prompt_tombstones_imported, 0,
+        "a tombstone is idempotent"
+    );
+}
+
+#[test]
 fn a_validation_failure_reads_as_the_callers_mistake() {
     let (_temp, store) = store();
     let message = store

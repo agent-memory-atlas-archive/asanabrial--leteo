@@ -96,6 +96,18 @@
     "new": "            let named = pinned.len() + observations.len();"
   },
   {
+    "name": "import: an Engram 0.2.0 backup is refused again",
+    "file": "src/store/diagnostics.rs",
+    "old": "        if !data.version.is_empty() && !READABLE_EXPORT_VERSIONS.contains(&data.version.as_str()) {",
+    "new": "        if !data.version.is_empty() && data.version != EXPORT_FORMAT_VERSION {"
+  },
+  {
+    "name": "import: a 0.2.0 prompt tombstone is dropped again",
+    "file": "src/store/diagnostics.rs",
+    "old": "        for tombstone in &data.prompt_tombstones {",
+    "new": "        for tombstone in data.prompt_tombstones.iter().take(0) {"
+  },
+  {
     "name": "mcp: clamp notice suppressed",
     "file": "src/mcp/tools.rs",
     "old": "let clamped = params.limit.is_some_and(|asked| asked > cap) && results.len() >= cap;",

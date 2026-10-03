@@ -31,10 +31,11 @@ impl Store {
     }
 
     pub fn import(&mut self, data: &ExportData) -> Result<ImportResult, StoreError> {
-        if !data.version.is_empty() && data.version != EXPORT_FORMAT_VERSION {
+        if !data.version.is_empty() && !READABLE_EXPORT_VERSIONS.contains(&data.version.as_str()) {
             return Err(invalid_parameter(format!(
-                "unsupported export format {}; this build reads {EXPORT_FORMAT_VERSION}",
-                data.version
+                "unsupported export format {}; this build reads {}",
+                data.version,
+                READABLE_EXPORT_VERSIONS.join(" or ")
             )));
         }
         let max_length = self.config.max_observation_length;
@@ -152,6 +153,34 @@ impl Store {
                  WHERE NOT EXISTS (SELECT 1 FROM prompts WHERE sync_id = ?1)
                    AND NOT EXISTS (SELECT 1 FROM prompt_deletions WHERE sync_id = ?1)",
                 params![sync_id, prompt.session_id, content, project, created_at],
+            )? as i64;
+        }
+
+        // Engram 0.2.0's prompt tombstones, which Leteo has a home for:
+        // `prompt_deletions` is the table `mem_delete` writes and the prompt
+        // insert above already consults, so a prompt the source had deleted
+        // comes back deleted rather than resurrected. `source_inbox_id`, which
+        // 0.2.0 also carries here, has no column in this model and is dropped
+        // with the rest of the fields Leteo does not hold.
+        for tombstone in &data.prompt_tombstones {
+            let sync_id = tombstone.sync_id.trim();
+            if sync_id.is_empty() {
+                continue;
+            }
+            let project = tombstone
+                .project
+                .as_deref()
+                .map(normalize::project)
+                .unwrap_or_default();
+            result.prompt_tombstones_imported += tx.execute(
+                "INSERT OR IGNORE INTO prompt_deletions (sync_id, session_id, project, deleted_at)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    sync_id,
+                    tombstone.session_id,
+                    project,
+                    nonempty_or_now(&tombstone.deleted_at)
+                ],
             )? as i64;
         }
 
