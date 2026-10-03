@@ -20,7 +20,9 @@ import { spawn } from "node:child_process"
 import type { Plugin } from "@opencode-ai/plugin"
 
 /** Binary to invoke. Set LETEO_BIN when it is not on PATH. */
-const LETEO_BIN = process.env.LETEO_BIN ?? "leteo"
+function leteoBinary(): string {
+  return process.env.LETEO_BIN ?? "leteo"
+}
 
 /** Leteo's own MCP tools never count as project work. */
 const LETEO_TOOLS = new Set([
@@ -117,8 +119,11 @@ type HookEvent =
  * plugins on Node, where `Bun` is not defined — and a hook that throws on the
  * way to spawning is a hook that never runs. Node's `spawn` exists under both
  * runtimes, so this is the one API that works wherever the plugin is loaded.
+ *
+ * Exported for the contract test, which drives it with a binary that stops
+ * reading to prove the stdin error handler below holds.
  */
-function runHook(event: HookEvent, input: HookInput): Promise<HookOutput> {
+export function runHook(event: HookEvent, input: HookInput): Promise<HookOutput> {
   return new Promise((resolve) => {
     let settled = false
     let timer: ReturnType<typeof setTimeout> | undefined
@@ -131,7 +136,7 @@ function runHook(event: HookEvent, input: HookInput): Promise<HookOutput> {
 
     let child
     try {
-      child = spawn(LETEO_BIN, ["hook", event], { stdio: ["pipe", "pipe", "ignore"] })
+      child = spawn(leteoBinary(), ["hook", event], { stdio: ["pipe", "pipe", "ignore"] })
     } catch {
       resolve({})
       return
@@ -150,6 +155,14 @@ function runHook(event: HookEvent, input: HookInput): Promise<HookOutput> {
         finish({})
       }
     })
+    // A child that stops reading before the payload drains (a binary that
+    // rejects the subcommand, or one killed at the timeout below) closes its
+    // read end, and the write then emits `EPIPE`. Without a listener Node
+    // rethrows that as an uncaught exception and takes the host down — which is
+    // exactly what this function promises not to do. The synchronous try/catch
+    // around `end` cannot see it: stream errors arrive on a later tick. The
+    // close event still resolves with whatever the child printed.
+    child.stdin?.on("error", () => {})
     // A hook must never delay the user's turn; it is killed past this. The kill
     // closes the child, which resolves with whatever it managed to print.
     timer = setTimeout(() => {
@@ -307,9 +320,10 @@ export const Leteo: Plugin = async (ctx) => {
 //
 // OpenCode 1.x calls the `Leteo` factory above; 2.x calls `setup`. The adapter
 // binds the same four handlers onto 2.x's per-domain registrations and its
-// event stream and adds no behavior of its own. Its types are structural
-// because a 2.x host does not ship `@opencode-ai/plugin`, so importing the V1
-// `Plugin` type is not enough to describe what 2.x hands over.
+// event stream, translating 2.x's event, prompt and tool shapes into the ones
+// the V1 handlers already read. Its types are structural because a 2.x host
+// does not ship `@opencode-ai/plugin`, so importing the V1 `Plugin` type is not
+// enough to describe what 2.x hands over.
 
 type V2SystemPart = { type: "text"; text: string }
 type V2Registration = { dispose: () => Promise<void> }
@@ -352,28 +366,50 @@ function v2ToolResultText(result: any): string {
   return result?.output === undefined ? "" : JSON.stringify(result.output)
 }
 
-/** 2.x session events carry `data.sessionID`; the V1 handler reads `properties.info.id`. */
+/**
+ * The 2.x server is shared across locations, so an event may belong to another
+ * project's instance while the V1 plugin only ever saw its own. The location is
+ * read from both the envelope and the payload, because the two event kinds put
+ * it in different places, and a foreign event is rejected whichever carries it.
+ */
+function isForeign(event: any, directory: string): boolean {
+  const data = event?.data
+  return [event?.location?.directory, data?.location?.directory].some(
+    (location) => typeof location === "string" && location !== directory,
+  )
+}
+
+/**
+ * 2.x session events carry `data.sessionID`; the V1 handler reads
+ * `properties.info.id`.
+ */
 function v1SessionEvent(event: any, directory: string): any {
   const data = event?.data
   if (typeof data?.sessionID !== "string") return undefined
-  if (event.type === "session.created" || event.type === "session.updated") {
-    // The 2.x server is shared across locations; the V1 plugin only saw its own.
-    if (data.location?.directory && data.location.directory !== directory) return undefined
-    return {
-      type: event.type,
-      properties: { info: { id: data.sessionID, parentID: data.parentID } },
-    }
+  if (
+    event.type !== "session.created" &&
+    event.type !== "session.updated" &&
+    event.type !== "session.deleted"
+  ) {
+    return undefined
   }
+  if (isForeign(event, directory)) return undefined
   if (event.type === "session.deleted") {
     return { type: event.type, properties: { info: { id: data.sessionID } } }
   }
-  return undefined
+  return {
+    type: event.type,
+    properties: { info: { id: data.sessionID, parentID: data.parentID } },
+  }
 }
 
 /** 2.x admits each human prompt as a durable `user` inbox item. */
-function v2InboxPrompt(event: any, directory: string): { sessionID: string; text: string } | undefined {
+function v2InboxPrompt(
+  event: any,
+  directory: string,
+): { sessionID: string; text: string } | undefined {
   if (event?.type !== "session.inbox.enqueued") return undefined
-  if (event.location?.directory && event.location.directory !== directory) return undefined
+  if (isForeign(event, directory)) return undefined
   const data = event.data
   const item = data?.item
   if (typeof data?.sessionID !== "string" || !data.sessionID) return undefined

@@ -395,8 +395,10 @@ deadline, so every promise here is a promise about time as much as content.
    and `tool.execute.after` and subscribes to events, and no code path calls
    `Bun`. Unlike the bundles in §19 this is not a `BUNDLES` entry — `leteo setup`
    writes OpenCode's MCP config and instructions but not its hooks
-   (`hooks_path: None`) — so the plugin is the only route to lifecycle capture
-   and its own test is the only guard.
+   (`hooks_path: None`) — so the plugin is the only route to lifecycle capture.
+   Two guards hold it: its own contract test, which runs the entry points and the
+   hook path, and a Rust guard that reads the file so `cargo test` watches the
+   export too.
 
 ## Invariants
 
@@ -434,7 +436,8 @@ deadline, so every promise here is a promise about time as much as content.
   agent's registrations by
   `the_plugin_bundles_register_the_hooks_the_binary_writes`
 - `plugin/opencode/leteo.ts` — the OpenCode plugin, 1.x and 2.x from one file,
-  held to each contract by `plugin/opencode/leteo.test.ts` (`node --test`)
+  held to each contract by `plugin/opencode/leteo.test.ts` (`node --test`) and to
+  its export shape by `the_opencode_plugin_serves_both_majors_without_bun`
 - `src/hooks/tests.rs`
 
 ## Related

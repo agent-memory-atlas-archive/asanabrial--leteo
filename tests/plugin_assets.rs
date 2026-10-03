@@ -565,6 +565,12 @@ fn the_opencode_plugin_serves_both_majors_without_bun() {
         source.contains("node:child_process"),
         "the hook path must spawn through a runtime-neutral API"
     );
+    // A child that stops reading closes stdin and the write then emits EPIPE,
+    // which Node rethrows and the host dies on unless the stream handles it.
+    assert!(
+        source.contains("child.stdin?.on(\"error\""),
+        "the stdin stream must handle its own error, or a large payload to a child that stops reading crashes the host"
+    );
     // The doc comment names `Bun.spawn` to explain why it is gone; only a call
     // counts, so the check is for the call and not the word.
     assert!(
