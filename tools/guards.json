@@ -632,6 +632,30 @@
     "new": "    let _ = &carried_a_project;"
   },
   {
+    "name": "engram: a quarantined mutation is copied back onto the wire",
+    "file": "src/engram.rs",
+    "old": "        let filter = if quarantined {\n            \" WHERE disposition IS NULL OR disposition NOT IN ('quarantined', 'superseded')\"\n        } else {\n            \"\"\n        };",
+    "new": "        let filter = if quarantined {\n            \"\"\n        } else {\n            \"\"\n        };"
+  },
+  {
+    "name": "engram: the project fold leaves the losing spelling behind",
+    "file": "src/engram.rs",
+    "old": "UPDATE OR REPLACE main.{table} SET project = ?1 WHERE project = ?2",
+    "new": "UPDATE OR IGNORE main.{table} SET project = ?1 WHERE project = ?2"
+  },
+  {
+    "name": "engram: sync_mutations is copied before its foreign-key parent",
+    "file": "src/engram.rs",
+    "old": "    (\"sync_state\", \"sync_state\"),\n    (\"sync_mutations\", \"sync_mutations\"),",
+    "new": "    (\"sync_mutations\", \"sync_mutations\"),\n    (\"sync_state\", \"sync_state\"),"
+  },
+  {
+    "name": "engram: a table the adoption cannot carry is not reported",
+    "file": "src/engram.rs",
+    "old": "        else {\n            dropped.push(Dropped {\n                table: theirs,\n                columns: Vec::new(),\n            });\n            continue;\n        };",
+    "new": "        else {\n            continue;\n        };"
+  },
+  {
     "name": "count_observations: optional filter back to a disjunction",
     "file": "src/store/observations.rs",
     "old": "        narrowing.equals(\"project\", project.as_ref());\n        let sql = format!(\n            \"SELECT COUNT(*) FROM observations WHERE deleted_at IS NULL{}\",\n            narrowing.clauses()\n        );",

@@ -259,6 +259,34 @@ there from any provenance, and how it says when something has gone wrong.
    the one that measured it. The query lives in one constant so the guard can
    explain the statement that runs rather than a copy of it.
 
+14. **Adoption carries what it can and names what it cannot.** `leteo import
+    --from-engram` reads an Engram database and writes a Leteo one; the
+    translation between the two vocabularies is `src/engram.rs` and nowhere
+    else. A mapped table is copied with the columns both schemas share, in
+    dependency order — `sync_state` before `sync_mutations`, whose `target_key`
+    is a foreign key into it, and `INSERT OR IGNORE` ignores a duplicate but not
+    a missing parent. Engram rows it keeps out of transport stay out here too: a
+    `sync_mutations` row whose `disposition` is `quarantined` or `superseded` is
+    not copied, because Leteo's transport is every row with a null `acked_at`,
+    and copying one would offer a peer again what Engram had held back. That
+    column is read only where the source schema has it, since older Engram
+    databases predate it. Project names are folded to the spelling
+    `normalize::project` produces, with `UPDATE OR REPLACE` so two spellings
+    that collide on a unique project column leave one row rather than two. And
+    every source table Leteo has no counterpart for, and every source column it
+    does not read, is named in the adoption's `dropped` list rather than skipped
+    in silence, because a tombstone dropped here is a memory a peer can
+    resurrect.
+
+    What is reported and not carried today: Engram's hard-delete tombstone
+    tables — `sync_delete_tombstones` and the remote-floor table it keeps
+    beside it — and its prompt-source confirmations have no Leteo counterpart,
+    because Leteo infers resurrection rather than reproducing those tombstones.
+    `sync_mutations.disposition` and `user_prompts`' inbox identity —
+    `source_inbox_id` and the `local_creation_*` columns — are the columns it
+    does not read. All of them are named in `dropped`. The quarantine semantics
+    are the part carried across rather than reported.
+
 ## Invariants
 
 - Every full-text index has its triggers, and `FULL_TEXT_INDEXES` /
@@ -290,6 +318,7 @@ there from any provenance, and how it says when something has gone wrong.
 - `src/store/schema.rs` — the baseline, the migration list, the roll calls
 - `src/store/diagnostics.rs` — every check, and the two repairs
 - `migrations/*.sql` — the SQL, owned here and read from here
+- `src/engram.rs` — adoption, and the Engram-to-Leteo translation
 - `src/store/tests/schema.rs`, `src/store/tests/diagnostics.rs`
 
 ## Related

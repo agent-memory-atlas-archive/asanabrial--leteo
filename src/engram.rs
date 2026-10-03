@@ -23,14 +23,20 @@ const ENGRAM_PROMPTS: &str = "user_prompts";
 /// The only place that has to know both vocabularies. A Leteo table with no
 /// counterpart is simply left empty, so adding one obliges nobody to touch
 /// this list.
+///
+/// The order is the copy order, and a table that references another has to come
+/// after it: `sync_mutations.target_key` points at `sync_state`, and `INSERT OR
+/// IGNORE` does not defer a foreign key the way it ignores a duplicate, so the
+/// pair the other way round failed the whole adoption on the first Engram
+/// database that had actually synced.
 const TABLE_MAP: &[(&str, &str)] = &[
     ("sessions", "sessions"),
     ("observations", "observations"),
     (ENGRAM_PROMPTS, "prompts"),
     ("memory_relations", "memory_relations"),
     ("sync_chunks", "sync_chunks"),
-    ("sync_mutations", "sync_mutations"),
     ("sync_state", "sync_state"),
+    ("sync_mutations", "sync_mutations"),
     ("sync_enrolled_projects", "sync_enrolled_projects"),
     ("prompt_tombstones", "prompt_deletions"),
     ("sync_apply_deferred", "sync_deferred_mutations"),
@@ -66,6 +72,25 @@ pub struct Adoption {
     /// Counts read back from the adopted database. Absent on a dry run.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub adopted: Option<Counts>,
+    /// Source tables and columns the translation carried nothing for.
+    ///
+    /// Empty on a dry run, which writes nothing and so drops nothing. On a real
+    /// adoption it is the answer rule 5 asks for: a table Leteo has no
+    /// counterpart for, or a column it does not read, is named here rather than
+    /// left to be discovered when a peer resurrects a memory the source had
+    /// deleted.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub dropped: Vec<Dropped>,
+}
+
+/// A source table or column an adoption did not carry.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct Dropped {
+    /// The table, named the way the source names it.
+    pub table: String,
+    /// Columns the source had that Leteo has no counterpart for. Empty means
+    /// the whole table was left behind.
+    pub columns: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -173,6 +198,7 @@ pub fn adopt(source: &Path, target: &Path, dry_run: bool) -> Result<Adoption> {
             dry_run: true,
             found,
             adopted: None,
+            dropped: Vec::new(),
         });
     }
 
@@ -196,7 +222,7 @@ pub fn adopt(source: &Path, target: &Path, dry_run: bool) -> Result<Adoption> {
     }
     let translated = translate(&snapshot, target);
     let _ = std::fs::remove_file(&snapshot);
-    translated?;
+    let dropped = translated?;
 
     let adopted = read_counts(target)?;
     if adopted.observations != found.observations
@@ -221,11 +247,13 @@ pub fn adopt(source: &Path, target: &Path, dry_run: bool) -> Result<Adoption> {
         dry_run: false,
         found,
         adopted: Some(adopted),
+        dropped,
     })
 }
 
-/// Copies a snapshot's rows into a freshly migrated Leteo database.
-fn translate(snapshot: &Path, target: &Path) -> Result<()> {
+/// Copies a snapshot's rows into a freshly migrated Leteo database, and reports
+/// what it had no place for.
+fn translate(snapshot: &Path, target: &Path) -> Result<Vec<Dropped>> {
     // Opening the store builds Leteo's schema at its current version.
     let store = crate::store::Store::open(crate::store::StoreConfig::new(target.to_path_buf()))
         .with_context(|| format!("prepare {}", target.display()))?;
@@ -252,12 +280,27 @@ fn translate(snapshot: &Path, target: &Path) -> Result<()> {
             carried_a_project.push(*ours);
         }
         let names = columns.join(", ");
+        // Engram keeps a quarantined or superseded mutation out of transport,
+        // and Leteo's transport is every row whose `acked_at` is null. Copying
+        // them unchanged put them back on the wire: what Engram had held back
+        // was offered to a peer again, and a hard delete it had already
+        // resolved could be replayed. `disposition` is Engram's own column and
+        // is read only where it exists — older Engram schemas predate it, and
+        // the column is named here rather than interpolated from the file.
+        let quarantined =
+            *theirs == "sync_mutations" && has_column(connection, "engram", theirs, "disposition")?;
+        let filter = if quarantined {
+            " WHERE disposition IS NULL OR disposition NOT IN ('quarantined', 'superseded')"
+        } else {
+            ""
+        };
         connection
             .execute_batch(&format!(
-                "INSERT OR IGNORE INTO main.{ours} ({names}) SELECT {names} FROM engram.{theirs};"
+                "INSERT OR IGNORE INTO main.{ours} ({names}) SELECT {names} FROM engram.{theirs}{filter};"
             ))
             .map_err(|error| anyhow::anyhow!("copy {theirs} into {ours}: {error}"))?;
     }
+    let dropped = dropped_tables(connection)?;
     normalize_projects(connection, &carried_a_project)?;
 
     // The triggers only fire on writes made through them, so the index has to
@@ -267,7 +310,63 @@ fn translate(snapshot: &Path, target: &Path) -> Result<()> {
          INSERT INTO prompts_fts(prompts_fts) VALUES('rebuild');",
     )?;
     connection.execute_batch("DETACH DATABASE engram")?;
-    Ok(())
+    Ok(dropped)
+}
+
+/// Every source table or column the translation carried nothing for.
+///
+/// Read from the attached source and from Leteo's own schema, so the report is
+/// what the copy beside it actually left behind rather than a second guess at
+/// it. A table with no [`TABLE_MAP`] counterpart is reported whole; a mapped
+/// table reports the source columns Leteo does not read. Empty `columns` means
+/// the table was left behind entirely.
+fn dropped_tables(connection: &Connection) -> Result<Vec<Dropped>> {
+    let mut names: Vec<String> = connection
+        .prepare(
+            "SELECT name FROM engram.sqlite_master
+              WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
+        )?
+        .query_map([], |row| row.get(0))?
+        .collect::<Result<_, _>>()?;
+    names.sort();
+    let mut dropped = Vec::new();
+    for theirs in names {
+        // The name handed to `columns` is the constant `TABLE_MAP` matched on,
+        // never the string read out of the adopted file: a name that does not
+        // match a constant is reported whole and never looked up, so nothing
+        // another program wrote reaches SQL here.
+        let Some((mapped, ours)) = TABLE_MAP
+            .iter()
+            .find(|(source, _)| *source == theirs)
+            .map(|(source, ours)| (*source, *ours))
+        else {
+            dropped.push(Dropped {
+                table: theirs,
+                columns: Vec::new(),
+            });
+            continue;
+        };
+        let source = columns(connection, "engram", mapped)?;
+        let target = columns(connection, "main", ours)?;
+        if source.is_empty() || target.is_empty() {
+            dropped.push(Dropped {
+                table: theirs,
+                columns: Vec::new(),
+            });
+            continue;
+        }
+        let lost: Vec<String> = source
+            .into_iter()
+            .filter(|name| !target.contains(name))
+            .collect();
+        if !lost.is_empty() {
+            dropped.push(Dropped {
+                table: theirs,
+                columns: lost,
+            });
+        }
+    }
+    Ok(dropped)
 }
 
 /// Folds adopted project names into the spelling every query looks for.
@@ -290,10 +389,14 @@ fn translate(snapshot: &Path, target: &Path) -> Result<()> {
 /// So the fold happens here, at the one door rows come in by, rather than in a
 /// migration that would have to be written again for the next adoption.
 ///
-/// `UPDATE OR IGNORE` because two spellings may fold onto one another where the
-/// column is unique. Losing the duplicate is the intent: every surface that
-/// takes a project name normalises it, so Leteo has always treated `MyProject`
-/// and `myproject` as one project — it just could not read one of them.
+/// `UPDATE OR REPLACE`, not `OR IGNORE`, because two spellings may fold onto
+/// one another where the column is unique — `sync_enrolled_projects` holds one
+/// row per project. `OR IGNORE` skipped the conflicting row and left both
+/// spellings in place, which is the opposite of what the sentence here used to
+/// claim: every surface that takes a project name normalises it, so Leteo has
+/// always treated `MyProject` and `myproject` as one project, and the fold is
+/// where the duplicate stops being one. In a table whose project column is not
+/// unique there is no conflict to replace and this is an ordinary update.
 fn normalize_projects(connection: &Connection, tables: &[&str]) -> Result<()> {
     for table in tables {
         let spellings: Vec<String> = connection
@@ -309,7 +412,7 @@ fn normalize_projects(connection: &Connection, tables: &[&str]) -> Result<()> {
             }
             connection
                 .execute(
-                    &format!("UPDATE OR IGNORE main.{table} SET project = ?1 WHERE project = ?2"),
+                    &format!("UPDATE OR REPLACE main.{table} SET project = ?1 WHERE project = ?2"),
                     rusqlite::params![normalized, spelling],
                 )
                 .map_err(|error| anyhow::anyhow!("normalise {table}.project: {error}"))?;
@@ -318,25 +421,34 @@ fn normalize_projects(connection: &Connection, tables: &[&str]) -> Result<()> {
     Ok(())
 }
 
+/// The columns one schema's table has, in declaration order.
+///
+/// `PRAGMA <schema>.table_info` is the form that honours the schema. The
+/// table-valued `schema.pragma_table_info(...)` reads the main database whatever
+/// prefix it is given, which made every intersection return our own columns and
+/// ask Engram for ones it never had.
+fn columns(connection: &Connection, schema: &str, table: &str) -> Result<Vec<String>> {
+    let mut statement = connection.prepare(&format!("PRAGMA {schema}.table_info({table})"))?;
+    let names = statement
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(names)
+}
+
+fn has_column(connection: &Connection, schema: &str, table: &str, name: &str) -> Result<bool> {
+    Ok(columns(connection, schema, table)?
+        .iter()
+        .any(|column| column == name))
+}
+
 /// The columns a pair of tables share, or `None` when either side lacks one.
 fn shared_columns(
     connection: &Connection,
     theirs: &str,
     ours: &str,
 ) -> Result<Option<Vec<String>>> {
-    let columns = |schema: &str, table: &str| -> Result<Vec<String>> {
-        // `PRAGMA <schema>.table_info` is the form that honours the schema.
-        // The table-valued `schema.pragma_table_info(...)` reads the main
-        // database whatever prefix it is given, which made every intersection
-        // return our own columns and ask Engram for ones it never had.
-        let mut statement = connection.prepare(&format!("PRAGMA {schema}.table_info({table})"))?;
-        let names = statement
-            .query_map([], |row| row.get::<_, String>(1))?
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(names)
-    };
-    let theirs = columns("engram", theirs)?;
-    let ours = columns("main", ours)?;
+    let theirs = columns(connection, "engram", theirs)?;
+    let ours = columns(connection, "main", ours)?;
     if theirs.is_empty() || ours.is_empty() {
         return Ok(None);
     }
@@ -556,6 +668,107 @@ mod tests {
                 .unwrap();
             assert_eq!(spellings, vec![normalized.clone()], "{table}");
         }
+    }
+
+    #[test]
+    fn an_adoption_does_not_rearm_what_engram_had_quarantined() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("engram.db");
+        let target = temp.path().join("leteo.db");
+        engram_database_for(&source, 3, "MyProj");
+        {
+            let connection = Connection::open(&source).unwrap();
+            connection
+                .execute_batch(
+                    "ALTER TABLE user_prompts ADD COLUMN source_inbox_id TEXT;
+                     CREATE TABLE sync_state (
+                         target_key TEXT PRIMARY KEY,
+                         lifecycle TEXT NOT NULL DEFAULT 'idle',
+                         last_enqueued_seq INTEGER NOT NULL DEFAULT 0,
+                         last_acked_seq INTEGER NOT NULL DEFAULT 0,
+                         last_pulled_seq INTEGER NOT NULL DEFAULT 0,
+                         consecutive_failures INTEGER NOT NULL DEFAULT 0,
+                         updated_at TEXT NOT NULL DEFAULT (datetime('now')));
+                     INSERT INTO sync_state (target_key) VALUES ('peer');
+                     CREATE TABLE sync_mutations (
+                         seq INTEGER PRIMARY KEY AUTOINCREMENT,
+                         target_key TEXT NOT NULL,
+                         entity TEXT NOT NULL,
+                         entity_key TEXT NOT NULL,
+                         op TEXT NOT NULL,
+                         payload TEXT NOT NULL,
+                         source TEXT NOT NULL DEFAULT 'local',
+                         project TEXT NOT NULL DEFAULT '',
+                         occurred_at TEXT NOT NULL DEFAULT (datetime('now')),
+                         acked_at TEXT,
+                         disposition TEXT NOT NULL DEFAULT 'pending');
+                     INSERT INTO sync_mutations (target_key, entity, entity_key, op, payload, project, disposition)
+                         VALUES ('peer', 'observation', 'obs-1', 'upsert', '{}', 'MyProj', 'pending'),
+                                ('peer', 'observation', 'obs-2', 'upsert', '{}', 'MyProj', 'quarantined'),
+                                ('peer', 'observation', 'obs-3', 'delete', '{}', 'MyProj', 'superseded');
+                     CREATE TABLE sync_delete_tombstones (
+                         sync_id TEXT PRIMARY KEY, entity TEXT NOT NULL, entity_key TEXT NOT NULL,
+                         deleted_at TEXT NOT NULL DEFAULT (datetime('now')));
+                     INSERT INTO sync_delete_tombstones (sync_id, entity, entity_key)
+                         VALUES ('tomb-1', 'observation', 'obs-9');
+                     CREATE TABLE sync_enrolled_projects (project TEXT PRIMARY KEY,
+                         enrolled_at TEXT NOT NULL DEFAULT (datetime('now')));
+                     INSERT INTO sync_enrolled_projects (project) VALUES ('MyProj'), ('myproj');",
+                )
+                .unwrap();
+        }
+
+        let report = adopt(&source, &target, false).unwrap();
+        let connection = Connection::open(&target).unwrap();
+
+        // What Engram had held back must not be offered to a peer again. Leteo's
+        // transport is every row with a null `acked_at`, so a copied quarantine
+        // is a mutation put back on the wire.
+        let pending: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM sync_mutations WHERE acked_at IS NULL",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            pending, 1,
+            "only the mutation Engram was still sending may be pending"
+        );
+
+        // And the fold leaves one spelling, not the two the source held.
+        let enrolled: Vec<String> = connection
+            .prepare("SELECT project FROM sync_enrolled_projects ORDER BY project")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(
+            enrolled,
+            vec!["myproj".to_owned()],
+            "two spellings of one project must not survive the fold"
+        );
+
+        // And every table and column Leteo has no place for is named, rather
+        // than skipped in silence.
+        let dropped = &report.dropped;
+        assert!(
+            dropped
+                .iter()
+                .any(|item| item.table == "sync_delete_tombstones" && item.columns.is_empty()),
+            "a hard-delete tombstone table is reported whole: {dropped:?}"
+        );
+        assert!(
+            dropped.iter().any(|item| item.table == "sync_mutations"
+                && item.columns.iter().any(|name| name == "disposition")),
+            "the quarantine column is named: {dropped:?}"
+        );
+        assert!(
+            dropped.iter().any(|item| item.table == "user_prompts"
+                && item.columns.iter().any(|name| name == "source_inbox_id")),
+            "the prompt inbox identity is named: {dropped:?}"
+        );
     }
 
     #[test]
