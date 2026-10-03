@@ -860,12 +860,22 @@ fn a_remote_that_changed_makes_the_session_door_ask_too() {
         json!(["old-remote", "new-remote"]),
         "both sides are named"
     );
+    // `SessionStartParams` is `deny_unknown_fields` and has no
+    // `project_choice_reason` or `recovery_token`, so the instructions have to
+    // match what this door accepts. A token here would be a recovery no caller
+    // could send.
     assert!(
-        payload["recovery_token"]
+        payload.get("recovery_token").is_none(),
+        "the session door has no field for a token, so it must not demand one: {:?}",
+        payload.get("recovery_token")
+    );
+    assert!(
+        payload["recovery_instructions"]
             .as_str()
-            .is_some_and(|token| !token.is_empty()),
-        "and a token comes back, as on the write path: {:?}",
-        payload["recovery_token"]
+            .is_some_and(|instructions| instructions.contains("project=<choice>")
+                && instructions.contains("no recovery_token")),
+        "and it says the retry takes the project directly: {:?}",
+        payload["recovery_instructions"]
     );
 
     // An explicit project is the agent having chosen, and it still wins.
@@ -1071,6 +1081,91 @@ fn a_passive_capture_in_a_drifted_directory_keeps_the_project_whole() {
         .0;
     assert_eq!(captured.project_context.project, recorded);
     assert_eq!(captured.saved, 1);
+}
+
+/// A capture that names an existing session files under that session's project.
+///
+/// `passive_capture_project` resolves the drift for a capture that opens a
+/// fresh manual session, but an existing session already owns its project:
+/// handing `write_session` the recorded name instead would make the two
+/// disagree and refuse the capture with `session_project_mismatch`, dropping
+/// the learnings. So a named session that exists must be left to
+/// `write_session`, which returns the session's own project.
+#[test]
+fn a_passive_capture_naming_a_session_files_under_that_sessions_project() {
+    let (_temp, server) = test_server(McpOptions::default());
+    let detection = crate::project::detect_current_project();
+    let detected = detection.project.clone();
+    let recorded = "old-remote";
+    assert_ne!(detected, recorded, "the fixture needs a real drift");
+
+    {
+        let mut store = server.lock_store().unwrap();
+        // The drift: this directory's history is under another name.
+        store
+            .create_session("old", recorded, &detection.path)
+            .unwrap();
+        // The session the capture names, opened under the detected project.
+        store
+            .create_session("mine", &detected, &detection.path)
+            .unwrap();
+    }
+
+    let captured = server
+        .mem_capture_passive(Parameters(
+            serde_json::from_value(json!({
+                "content": "## Key Learnings\n- a named session owns its project",
+                "session_id": "mine",
+            }))
+            .unwrap(),
+        ))
+        .expect("a session that exists owns its project, so the capture must not be refused")
+        .0;
+    assert_eq!(
+        captured.project_context.project, detected,
+        "the capture files under the session's project, not the recorded drift"
+    );
+    assert_eq!(captured.saved, 1);
+}
+
+/// `mem_session_start` is published as "create a session, or return it
+/// unchanged if its identifier exists", and the drift gate must not stand in
+/// front of that: a second start with the same id in a drifted directory
+/// returns the session already opened rather than an ambiguity about a choice
+/// already made.
+#[test]
+fn a_repeated_session_start_in_a_drifted_directory_returns_the_session_unchanged() {
+    let (_temp, server) = test_server(McpOptions::default());
+    let detection = crate::project::detect_current_project();
+    let detected = detection.project.clone();
+    let recorded = "old-remote";
+    assert_ne!(detected, recorded, "the fixture needs a real drift");
+
+    {
+        let mut store = server.lock_store().unwrap();
+        store
+            .create_session("old", recorded, &detection.path)
+            .unwrap();
+        store
+            .create_session("s-repeat", recorded, &detection.path)
+            .unwrap();
+    }
+
+    let started = server
+        .mem_session_start(Parameters(
+            serde_json::from_value(json!({
+                "id": "s-repeat",
+                "directory": detection.path,
+            }))
+            .unwrap(),
+        ))
+        .expect("an existing session comes back unchanged, before the drift gate")
+        .0;
+    assert_eq!(started.session.id, "s-repeat");
+    assert_eq!(
+        started.session.project, recorded,
+        "the session that already exists is returned, not re-resolved under a drift"
+    );
 }
 
 #[test]

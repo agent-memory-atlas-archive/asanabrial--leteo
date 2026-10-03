@@ -634,10 +634,22 @@ impl LeteoMcpServer {
         Parameters(params): Parameters<SessionStartParams>,
     ) -> Result<Json<SessionResultOutput>, CallToolResult> {
         let requested_directory = params.directory.filter(|value| !value.trim().is_empty());
+        let mut store = self.lock_store()?;
+        // Published as "create a session, or return it unchanged if its
+        // identifier exists", and that idempotency has to come before the drift
+        // gate: a second start with the same id in a drifted directory returns
+        // the session already opened rather than an ambiguity about a choice
+        // already made. `create_session` is `INSERT OR IGNORE`, so this is the
+        // same row the gate would otherwise have kept the caller from reaching.
+        if let Ok(existing) = store.get_session(&params.id) {
+            return Ok(Json(SessionResultOutput {
+                session: existing.into(),
+                storage_truncation: None,
+            }));
+        }
         let detection = requested_directory
             .as_deref()
             .map_or_else(detect_current_project, detect_project);
-        let mut store = self.lock_store()?;
         let project = self.resolve_session_project(
             &store,
             params.project.or_else(|| self.default_project.clone()),
@@ -856,8 +868,13 @@ impl LeteoMcpServer {
         // Passive capture has no project to name and nobody to prompt, so a
         // drifted directory must not refuse it: the resolution files it under
         // the project that directory's history already uses, keeping the
-        // project whole. See `passive_capture_project`.
-        let project = self.passive_capture_project(&store, &detect_current_project())?;
+        // project whole. A capture that names an existing session instead files
+        // under that session's project. See `passive_capture_project`.
+        let project = self.passive_capture_project(
+            &store,
+            params.session_id.as_deref(),
+            &detect_current_project(),
+        )?;
         let context = self.write_session(
             &mut store,
             params.session_id,

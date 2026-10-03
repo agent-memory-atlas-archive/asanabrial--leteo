@@ -324,19 +324,26 @@ useful part out of a context window has failed even if every field is right.
    that session id inherits. When the sessions recorded in this exact directory
    name a project other than the one detection resolved to, the **silent** pick
    is refused with the same `ambiguous_project` error, the same candidate list —
-   the recorded names first, then the detected one — and the same recovery token
-   the ambiguous-directory case mints, with a message naming both and pointing
-   at `leteo projects consolidate`. An explicit `project` resolves the drift on
-   its own, with no reason and no token, exactly as an explicit project resolves
-   the session door: naming a side is the choice the ambiguity was asking for,
-   and the tools that share this path cannot all send a token — `mem_update`
-   carries neither a reason nor a token and `mem_capture_passive` carries no
-   project at all. `mem_capture_passive`, which cannot name a project and has
-   nobody to prompt, files under the directory's **recorded** project rather
-   than the detected name, so a passive capture keeps the project whole instead
-   of splitting it or failing. The lookup is a scan of `sessions` alone, folded
-   in Rust for the reason `same_directory` gives — including a symlinked
-   spelling, so macOS's `/var/...` is found from the `/private/var/...` detection
+   the recorded names first, then the detected one — and a message naming both
+   and pointing at `leteo projects consolidate`. The write path's refusal mints
+   the recovery token the ambiguous-directory case uses; the session door's does
+   not, because `SessionStartParams` is `deny_unknown_fields` and has no
+   `project_choice_reason` or `recovery_token`, and `SERVER_INSTRUCTIONS` already
+   tells the agent this door takes `project=<choice>` on its own. An explicit
+   `project` resolves the drift on its own, with no reason and no token, exactly
+   as an explicit project resolves the session door: naming a side is the choice
+   the ambiguity was asking for, and the tools that share this path cannot all
+   send a token — `mem_update` carries neither a reason nor a token and
+   `mem_capture_passive` carries no project at all. `mem_capture_passive`, which
+   cannot name a project and has nobody to prompt, files under the directory's
+   **recorded** project rather than the detected name, so a passive capture
+   keeps the project whole instead of splitting it or failing; a capture that
+   names an existing session instead files under that session's project, because
+   a session owns its project. `mem_session_start` likewise returns a session
+   that already exists unchanged, before the gate, so its published idempotency
+   holds under a drift. The lookup is a scan of `sessions` alone, folded in Rust
+   for the reason `same_directory` gives — including a symlinked spelling, so
+   macOS's `/var/...` is found from the `/private/var/...` detection
    canonicalizes to — and it is asked only before the silent pick returns a
    detected project. What is drift-only is the prompt: a directory whose
    recorded sessions agree with detection returns the detected project exactly
@@ -864,8 +871,12 @@ useful part out of a context window has failed even if every field is right.
   `a_remote_that_changed_makes_the_session_door_ask_too`, its agreeing half by
   `a_directory_whose_sessions_agree_is_not_asked_which_project`, its
   explicit-project half by `a_drifted_directory_lets_mem_update_move_a_memory`,
-  and its passive-capture half by
-  `a_passive_capture_in_a_drifted_directory_keeps_the_project_whole`
+  its passive-capture half by
+  `a_passive_capture_in_a_drifted_directory_keeps_the_project_whole`, its
+  named-session half by
+  `a_passive_capture_naming_a_session_files_under_that_sessions_project`, and
+  the session door's idempotency under a drift by
+  `a_repeated_session_start_in_a_drifted_directory_returns_the_session_unchanged`
 - `src/store/sessions.rs` — `recent_projects_in_directory`, the lookup the
   write path and the session-start hook share
 - `src/store/tests/diagnostics.rs` — the store-side project counts and the bound `mem_stats` applies

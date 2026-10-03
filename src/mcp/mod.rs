@@ -340,7 +340,12 @@ impl LeteoMcpServer {
     /// under the new name in silence. So the silent pick is intercepted here
     /// exactly as it is in [`Self::resolve_write_project`]: an explicit project
     /// and the process override win, and a detection that drifts is refused with
-    /// the same ambiguity, candidate list and recovery token.
+    /// the same ambiguity and candidate list. The refusal takes no recovery
+    /// token, unlike the write path's: `SessionStartParams` is
+    /// `deny_unknown_fields` and carries neither `project_choice_reason` nor
+    /// `recovery_token`, so `SERVER_INSTRUCTIONS` tells the agent this door takes
+    /// `project=<choice>` on its own. The free [`project_detection_error`], which
+    /// the genuine ambiguous-directory path already uses here, says exactly that.
     fn resolve_session_project(
         &self,
         store: &Store,
@@ -360,7 +365,7 @@ impl LeteoMcpServer {
         let project = normalize::project(&detection.project);
         if !project.is_empty() {
             if let Some(drifted) = self.recorded_directory_detection(store, detection)? {
-                return Err(self.project_detection_error(&drifted));
+                return Err(project_detection_error(&drifted));
             }
             return Ok(project);
         }
@@ -376,25 +381,37 @@ impl LeteoMcpServer {
     /// drop the learnings on the floor. Taking the detected name instead would
     /// split the project the directory's history is already under. So when the
     /// directory has drifted this returns the project that history uses, the
-    /// most recent one recorded there, and the detected project otherwise. The
-    /// process override still wins, and an ambiguous directory still refuses
-    /// exactly as before: `recorded_directory_detection` answers `None` when
-    /// there is nothing detected, and `write_session` then reports the
-    /// ambiguity.
+    /// most recent one recorded there; on every other path it returns `None` and
+    /// leaves the choice to [`Self::write_session`], including for a capture
+    /// that names an existing session, whose own project wins. The process
+    /// override still wins, and an ambiguous directory still refuses exactly as
+    /// before: `recorded_directory_detection` answers `None` when there is
+    /// nothing detected, and `write_session` then reports the ambiguity.
     fn passive_capture_project(
         &self,
         store: &Store,
+        session_id: Option<&str>,
         detection: &ProjectDetection,
     ) -> Result<Option<String>, CallToolResult> {
         if self.default_project.is_some() {
             return Ok(None);
         }
+        // An existing named session owns its project: `write_session` reads it
+        // and returns it unchanged, so passing the recorded name here would make
+        // the two disagree and refuse the capture with `session_project_mismatch`,
+        // dropping the learnings. A session that exists therefore leaves the
+        // choice to `write_session`.
+        if let Some(id) = session_id.filter(|id| !id.trim().is_empty())
+            && store.get_session(id).is_ok()
+        {
+            return Ok(None);
+        }
         let Some(drifted) = self.recorded_directory_detection(store, detection)? else {
             return Ok(None);
         };
-        // `available_projects` is the recorded projects newest first, then the
-        // detected one appended, so the first entry is the directory's own
-        // current name.
+        // `available_projects` is the recorded projects newest first, with the
+        // detected name appended last, so the first entry is the newest
+        // *recorded* name, not the directory's current one.
         Ok(drifted.available_projects.first().cloned())
     }
 
