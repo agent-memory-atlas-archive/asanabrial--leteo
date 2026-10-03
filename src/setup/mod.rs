@@ -692,6 +692,50 @@ pub fn setup(agent: &str, options: &SetupOptions) -> Result<SetupResult> {
     })
 }
 
+/// The stable link a package manager keeps, when the executable is a versioned one.
+///
+/// `setup` writes the running binary's path into every agent config. For a
+/// Homebrew install, `current_exe()` resolves through `bin/leteo` into
+/// `<prefix>/Cellar/leteo/<version>/bin/leteo`, and `brew upgrade` removes the
+/// versioned directory — after which every hook and the MCP server fail, and a
+/// hook that fails says nothing by design, so the memory simply stops being
+/// recorded. The stable `<prefix>/bin/leteo` link survives the upgrade, so it is
+/// what gets written.
+///
+/// mise and asdf have the same shape: `…/installs/<tool>/<version>/…` with a
+/// `…/shims/<tool>` link beside it. Both are recognised by the versioned
+/// directory and the link that sits next to it, and the link is preferred only
+/// when it is actually there, so an ordinary install keeps its canonical path.
+fn stable_package_path(executable: &Path) -> Option<PathBuf> {
+    let name = executable.file_name()?;
+    let components: Vec<_> = executable.components().collect();
+    let (root, link_dir) = versioned_package_root(&components)?;
+    let prefix: PathBuf = components[..root].iter().collect();
+    let candidate = prefix.join(link_dir).join(name);
+    candidate.exists().then_some(candidate)
+}
+
+/// Where a versioned package directory starts, and the link directory beside it.
+///
+/// The component after the marker is the tool and the one after that its
+/// version, so a path with nothing past the tool — a real directory somebody
+/// happened to name `Cellar` — is not one of these layouts.
+fn versioned_package_root(
+    components: &[std::path::Component<'_>],
+) -> Option<(usize, &'static str)> {
+    components
+        .iter()
+        .enumerate()
+        .find_map(|(index, component)| {
+            let versioned = components.len() > index + 2;
+            match (component.as_os_str().to_str(), versioned) {
+                (Some("Cellar"), true) => Some((index, "bin")),
+                (Some("installs"), true) => Some((index, "shims")),
+                _ => None,
+            }
+        })
+}
+
 /// Refuse to write a path that the package manager owns.
 ///
 /// `setup` writes the absolute path of the running binary into an agent's
@@ -920,6 +964,10 @@ impl SetupEnvironment {
         let executable = crate::project::remove_windows_verbatim_prefix(
             executable.canonicalize().unwrap_or(executable),
         );
+        // Canonicalization is what turns `bin/leteo` into the versioned Cellar
+        // path; this puts it back when the package manager left a stable link
+        // for exactly this reason.
+        let executable = stable_package_path(&executable).unwrap_or(executable);
 
         Ok(Self {
             platform,
@@ -1402,6 +1450,184 @@ pub fn hook_health(options: &SetupOptions) -> Vec<HookHealth> {
                 bundled,
                 issue,
             }
+        })
+        .collect()
+}
+
+/// A configured command whose executable is no longer on disk.
+///
+/// The companion to [`stable_package_path`]: that keeps a package upgrade from
+/// breaking the path, and this is how `doctor` notices when one already has. A
+/// hook that fails says nothing by design, so without this the memory simply
+/// stops being recorded and nothing anywhere says why.
+#[derive(Debug, Clone, Serialize)]
+pub struct MissingBinary {
+    pub agent: &'static str,
+    pub display_name: &'static str,
+    /// The configuration file that names the command.
+    pub config: PathBuf,
+    /// The executable it names, which is not there.
+    pub command: PathBuf,
+}
+
+/// Every configured Leteo command, across every supported agent, whose
+/// executable is missing.
+///
+/// Both surfaces are checked — the MCP server's `command` and the hooks' — for
+/// every agent, not only the ones that take hooks, because either one being
+/// gone breaks the install. Only absolute paths are checked: a wrapper like
+/// `npx` is resolved through `PATH` and is not this to judge.
+pub fn missing_binaries(options: &SetupOptions) -> Vec<MissingBinary> {
+    let Ok(environment) = SetupEnvironment::resolve(options) else {
+        return Vec::new();
+    };
+    supported_agents()
+        .iter()
+        .flat_map(|adapter| {
+            missing_binaries_for(adapter, &environment)
+                .into_iter()
+                .map(|(config, command)| MissingBinary {
+                    agent: adapter.slug,
+                    display_name: adapter.display_name,
+                    config,
+                    command,
+                })
+        })
+        .collect()
+}
+
+fn missing_binaries_for(
+    adapter: &AgentAdapter,
+    environment: &SetupEnvironment,
+) -> Vec<(PathBuf, PathBuf)> {
+    let paths = resolve_paths(adapter, environment);
+    let mut configs = vec![paths.mcp_config.clone()];
+    if let Some(hooks) = paths.hooks
+        && hooks != paths.mcp_config
+    {
+        configs.push(hooks);
+    }
+    configs
+        .into_iter()
+        .flat_map(|config| {
+            configured_commands(&config, adapter.config_format)
+                .into_iter()
+                .filter(|command| command.is_absolute() && !command.exists())
+                .map(move |command| (config.clone(), command))
+        })
+        .collect()
+}
+
+/// Every Leteo executable path a config names, in either the MCP or hooks shape.
+fn configured_commands(path: &Path, format: ConfigFormat) -> Vec<PathBuf> {
+    let Ok(text) = fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    match format {
+        ConfigFormat::Json(mcp_format) => json_configured_commands(&text, mcp_format),
+        ConfigFormat::CodexToml => toml_configured_commands(&text),
+        ConfigFormat::DshPatch => dsh_configured_commands(&text),
+    }
+}
+
+fn json_configured_commands(text: &str, mcp_format: McpFormat) -> Vec<PathBuf> {
+    let Ok(config) = serde_json::from_str::<Value>(text) else {
+        return Vec::new();
+    };
+    let mut commands = Vec::new();
+    if let Some(command) = servers_at(&config, mcp_format)
+        .and_then(|servers| servers.get(SERVER_NAME))
+        .and_then(|server| server.get("command"))
+        .and_then(Value::as_str)
+    {
+        commands.push(PathBuf::from(command));
+    }
+    if let Some(hooks) = config.get("hooks").and_then(Value::as_object) {
+        // ZCode nests its events one key deeper; Claude and the rest do not.
+        let events = hooks
+            .get("events")
+            .and_then(Value::as_object)
+            .unwrap_or(hooks);
+        for entries in events.values() {
+            let Some(entries) = entries.as_array() else {
+                continue;
+            };
+            for entry in entries {
+                let Some(handlers) = entry.get("hooks").and_then(Value::as_array) else {
+                    continue;
+                };
+                for handler in handlers {
+                    if let Some(command) = handler.get("command").and_then(Value::as_str)
+                        && runs_a_leteo_hook(command)
+                        && let Some(path) = hook_command_executable(command)
+                    {
+                        commands.push(path);
+                    }
+                }
+            }
+        }
+    }
+    commands
+}
+
+/// The executable a `… hook <slug>` command runs.
+///
+/// The path is quoted when it may hold a space and bare when it may not, which
+/// is how `setup` writes it; both come off here.
+fn hook_command_executable(command: &str) -> Option<PathBuf> {
+    let at = command.find(" hook ")?;
+    let before = command[..at].trim();
+    let before = before
+        .strip_prefix('"')
+        .and_then(|value| value.strip_suffix('"'))
+        .unwrap_or(before);
+    Some(PathBuf::from(before))
+}
+
+fn toml_configured_commands(text: &str) -> Vec<PathBuf> {
+    let mut commands = Vec::new();
+    let mut in_leteo_server = false;
+    for line in text.lines() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            in_leteo_server = line == "[mcp_servers.leteo]";
+            continue;
+        }
+        let Some(value) = line
+            .strip_prefix("command")
+            .and_then(|value| value.trim_start().strip_prefix('='))
+            .and_then(|value| toml_string_value(value.trim()))
+        else {
+            continue;
+        };
+        if runs_a_leteo_hook(&value) {
+            commands.extend(hook_command_executable(&value));
+        } else if in_leteo_server {
+            commands.push(PathBuf::from(value));
+        }
+    }
+    commands
+}
+
+/// A TOML basic string's content, for the bytes these commands carry.
+///
+/// `setup` writes the value with the same escaping a JSON string uses, so the
+/// two sequences that can appear — an escaped quote around a path with a space
+/// and an escaped backslash on Windows — are the two it undoes.
+fn toml_string_value(value: &str) -> Option<String> {
+    let inner = value.strip_prefix('"')?.strip_suffix('"')?;
+    Some(inner.replace("\\\"", "\"").replace("\\\\", "\\"))
+}
+
+fn dsh_configured_commands(text: &str) -> Vec<PathBuf> {
+    text.lines()
+        .filter_map(|line| {
+            line.trim()
+                .strip_prefix("command:")
+                .map(str::trim)
+                .and_then(|value| value.strip_prefix('\''))
+                .and_then(|value| value.strip_suffix('\''))
+                .map(|value| PathBuf::from(value.replace("''", "'")))
         })
         .collect()
 }

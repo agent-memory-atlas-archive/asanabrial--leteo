@@ -546,6 +546,119 @@ fn hook_commands_quote_an_executable_path_containing_spaces() {
 }
 
 #[test]
+fn setup_prefers_the_stable_link_a_package_manager_keeps() {
+    let temp = TempDir::new().unwrap();
+    // The canonical form of the temp directory, because canonicalization is
+    // what turns the stable link into the Cellar path in the first place, and
+    // on macOS `/var` is itself a symlink to `/private/var`.
+    let base = fs::canonicalize(temp.path()).unwrap();
+    let versioned = base
+        .join("Cellar")
+        .join("leteo")
+        .join("1.2.3")
+        .join("bin")
+        .join("leteo");
+    fs::create_dir_all(versioned.parent().unwrap()).unwrap();
+    fs::write(&versioned, b"binary").unwrap();
+    let link = base.join("bin").join("leteo");
+    fs::create_dir_all(link.parent().unwrap()).unwrap();
+    fs::write(&link, b"binary").unwrap();
+
+    let setup_options = SetupOptions {
+        install_hooks: true,
+        executable: Some(versioned.clone()),
+        ..options(&temp)
+    };
+    setup("claude-code", &setup_options).unwrap();
+
+    let paths = resolve_agent_paths("claude-code", &setup_options).unwrap();
+    let config = read_json(&paths.mcp_config);
+    assert_eq!(
+        config["mcpServers"]["leteo"]["command"].as_str(),
+        Some(link.to_str().unwrap()),
+        "`brew upgrade` removes the Cellar directory; the `bin` link survives it"
+    );
+    let hooks = read_json(&paths.hooks.unwrap());
+    let command = hooks["hooks"]["SessionStart"][0]["hooks"][0]["command"]
+        .as_str()
+        .expect("session start hook command");
+    assert!(
+        command.starts_with(&format!("\"{}\"", link.display())),
+        "the hooks name the stable link too: {command}"
+    );
+}
+
+#[test]
+fn a_non_package_install_keeps_its_canonical_path() {
+    let temp = TempDir::new().unwrap();
+    let executable = temp.path().join("bin").join("leteo");
+    fs::create_dir_all(executable.parent().unwrap()).unwrap();
+    fs::write(&executable, b"binary").unwrap();
+    let setup_options = SetupOptions {
+        executable: Some(executable.clone()),
+        ..options(&temp)
+    };
+    setup("claude-code", &setup_options).unwrap();
+
+    let config = read_json(
+        &resolve_agent_paths("claude-code", &setup_options)
+            .unwrap()
+            .mcp_config,
+    );
+    assert_eq!(
+        config["mcpServers"]["leteo"]["command"].as_str(),
+        executable.canonicalize().unwrap().to_str(),
+        "nothing about an ordinary install is rewritten"
+    );
+}
+
+#[test]
+fn doctor_reports_a_configured_command_whose_binary_is_gone() {
+    let temp = TempDir::new().unwrap();
+    let setup_options = options(&temp);
+    let missing = temp
+        .path()
+        .join("Cellar")
+        .join("leteo")
+        .join("1.0.0")
+        .join("bin")
+        .join("leteo");
+    let hooks = resolve_agent_paths("claude-code", &setup_options)
+        .unwrap()
+        .hooks
+        .expect("Claude Code has a hooks file");
+    write_fixture(
+        &hooks,
+        &format!(
+            r#"{{"hooks":{{"SessionStart":[{{"hooks":[{{"type":"command","command":"\"{}\" hook session-start"}}]}}]}}}}"#,
+            missing.display()
+        ),
+    );
+
+    let found = missing_binaries(&setup_options);
+    let claude = found
+        .iter()
+        .find(|item| item.agent == "claude-code")
+        .unwrap_or_else(|| panic!("Claude Code's missing binary is not reported: {found:?}"));
+    assert_eq!(claude.command, missing, "{claude:?}");
+    assert_eq!(
+        claude.config, hooks,
+        "the report names the file: {claude:?}"
+    );
+
+    // A binary that is there is not a finding, so the check is about absence
+    // rather than about a config having been read at all.
+    fs::create_dir_all(missing.parent().unwrap()).unwrap();
+    fs::write(&missing, b"binary").unwrap();
+    assert!(
+        missing_binaries(&setup_options)
+            .iter()
+            .all(|item| item.agent != "claude-code"),
+        "a present executable is not reported"
+    );
+}
+
+#[test]
 fn hooks_are_not_touched_unless_requested() {
     let temp = TempDir::new().unwrap();
     let setup_options = options(&temp);

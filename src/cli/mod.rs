@@ -680,6 +680,33 @@ pub async fn run(cli: Cli) -> Result<()> {
                     }
                 }
                 object.insert("agent_hooks".to_owned(), serde_json::to_value(&hooks)?);
+                // And whether the command each config names is still there. A
+                // package upgrade removes the versioned directory the path was
+                // written into, after which every hook and the MCP server fail
+                // silently — the same reason the hooks are checked above, one
+                // step further along.
+                let missing =
+                    crate::setup::missing_binaries(&crate::setup::SetupOptions::default());
+                if !missing.is_empty() {
+                    object.insert("healthy".to_owned(), serde_json::Value::Bool(false));
+                    if let Some(serde_json::Value::Array(existing)) = object.get_mut("issues") {
+                        existing.extend(missing.iter().map(|item| {
+                            serde_json::Value::String(format!(
+                                "{} is configured to run {}, which is not there; {} names \
+                                 it. Run `leteo setup {}` from a current install to write \
+                                 the right path.",
+                                item.display_name,
+                                item.command.display(),
+                                item.config.display(),
+                                item.agent
+                            ))
+                        }));
+                    }
+                }
+                object.insert(
+                    "missing_binaries".to_owned(),
+                    serde_json::to_value(&missing)?,
+                );
             }
             print_json(&output)?;
         }
