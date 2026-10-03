@@ -542,3 +542,33 @@ fn the_skill_says_which_tools_are_there_and_which_need_fetching() {
         }
     }
 }
+
+/// The OpenCode plugin serves both majors, and its hook path is Bun-free.
+///
+/// The plugin is a `.ts` file the Rust build would not otherwise read, and the
+/// failure it guards against — a plugin that loads on OpenCode 1.x but not 2.x —
+/// is invisible until somebody on 2.x notices memory stopped working, because
+/// nothing says a plugin did not load.
+#[test]
+fn the_opencode_plugin_serves_both_majors_without_bun() {
+    let source = std::fs::read_to_string(repository_root().join("plugin/opencode/leteo.ts"))
+        .expect("the OpenCode plugin exists");
+    assert!(
+        source.contains("server: Leteo"),
+        "the default export must carry the 1.x server factory"
+    );
+    assert!(
+        source.contains("setup: setupLeteoV2"),
+        "the default export must carry the 2.x setup entry"
+    );
+    assert!(
+        source.contains("node:child_process"),
+        "the hook path must spawn through a runtime-neutral API"
+    );
+    // The doc comment names `Bun.spawn` to explain why it is gone; only a call
+    // counts, so the check is for the call and not the word.
+    assert!(
+        !source.contains("Bun.spawn("),
+        "the plugin must not call a Bun-only API on the hook path"
+    );
+}

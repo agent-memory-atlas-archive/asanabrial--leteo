@@ -16,6 +16,7 @@
  * listening on the machine.
  */
 
+import { spawn } from "node:child_process"
 import type { Plugin } from "@opencode-ai/plugin"
 
 /** Binary to invoke. Set LETEO_BIN when it is not on PATH. */
@@ -111,22 +112,55 @@ type HookEvent =
 /**
  * Runs one hook. Failures are swallowed on purpose: memory is an assistant, not
  * a gate, and a missing binary must never break the user's session.
+ *
+ * `node:child_process` rather than `Bun.spawn`, because OpenCode 2.x loads
+ * plugins on Node, where `Bun` is not defined — and a hook that throws on the
+ * way to spawning is a hook that never runs. Node's `spawn` exists under both
+ * runtimes, so this is the one API that works wherever the plugin is loaded.
  */
-async function runHook(event: HookEvent, input: HookInput): Promise<HookOutput> {
-  try {
-    const child = Bun.spawn([LETEO_BIN, "hook", event], {
-      stdin: new TextEncoder().encode(JSON.stringify(input)),
-      stdout: "pipe",
-      stderr: "ignore",
+function runHook(event: HookEvent, input: HookInput): Promise<HookOutput> {
+  return new Promise((resolve) => {
+    let settled = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const finish = (output: HookOutput) => {
+      if (settled) return
+      settled = true
+      if (timer) clearTimeout(timer)
+      resolve(output)
+    }
+
+    let child
+    try {
+      child = spawn(LETEO_BIN, ["hook", event], { stdio: ["pipe", "pipe", "ignore"] })
+    } catch {
+      resolve({})
+      return
+    }
+
+    let stdout = ""
+    child.stdout?.setEncoding("utf8")
+    child.stdout?.on("data", (chunk: string) => {
+      stdout += chunk
     })
-    const timeout = setTimeout(() => child.kill(), HOOK_TIMEOUT_MS)
-    const stdout = await new Response(child.stdout).text()
-    clearTimeout(timeout)
-    await child.exited
-    return stdout.trim() ? (JSON.parse(stdout) as HookOutput) : {}
-  } catch {
-    return {}
-  }
+    child.on("error", () => finish({}))
+    child.on("close", () => {
+      try {
+        finish(stdout.trim() ? (JSON.parse(stdout) as HookOutput) : {})
+      } catch {
+        finish({})
+      }
+    })
+    // A hook must never delay the user's turn; it is killed past this. The kill
+    // closes the child, which resolves with whatever it managed to print.
+    timer = setTimeout(() => {
+      try {
+        child.kill()
+      } catch {}
+    }, HOOK_TIMEOUT_MS)
+    try {
+      child.stdin?.end(JSON.stringify(input))
+    } catch {}
+  })
 }
 
 function additionalContext(output: HookOutput): string {
@@ -268,3 +302,175 @@ export const Leteo: Plugin = async (ctx) => {
     },
   }
 }
+
+// ─── OpenCode 2.x adapter ────────────────────────────────────────────────────
+//
+// OpenCode 1.x calls the `Leteo` factory above; 2.x calls `setup`. The adapter
+// binds the same four handlers onto 2.x's per-domain registrations and its
+// event stream and adds no behavior of its own. Its types are structural
+// because a 2.x host does not ship `@opencode-ai/plugin`, so importing the V1
+// `Plugin` type is not enough to describe what 2.x hands over.
+
+type V2SystemPart = { type: "text"; text: string }
+type V2Registration = { dispose: () => Promise<void> }
+type V2Hook = (
+  name: string,
+  callback: (input: any) => Promise<void> | void,
+) => Promise<V2Registration>
+type V2Context = {
+  location: { directory: string }
+  event: { subscribe: (options?: { signal?: AbortSignal }) => AsyncIterable<any> }
+  session: { hook: V2Hook }
+  tool: { hook: V2Hook }
+}
+
+async function withSystemStrings(
+  system: V2SystemPart[],
+  run: (texts: string[]) => Promise<void>,
+): Promise<void> {
+  const texts = system.map((part) => part.text)
+  await run(texts)
+  texts.forEach((text, index) => {
+    if (index >= system.length) system.push({ type: "text", text })
+    else if (text !== system[index].text) system[index] = { ...system[index], text }
+  })
+}
+
+/** 2.x `Tool.Result.content` is `string | Content[]`; `subagent` returns a string. */
+function v2ToolResultText(result: any): string {
+  const text =
+    typeof result?.content === "string"
+      ? result.content
+      : Array.isArray(result?.content)
+        ? result.content
+            .filter((part: any) => part?.type === "text")
+            .map((part: any) => part.text ?? "")
+            .join("\n")
+        : ""
+  if (text) return text
+  if (typeof result?.output === "string") return result.output
+  return result?.output === undefined ? "" : JSON.stringify(result.output)
+}
+
+/** 2.x session events carry `data.sessionID`; the V1 handler reads `properties.info.id`. */
+function v1SessionEvent(event: any, directory: string): any {
+  const data = event?.data
+  if (typeof data?.sessionID !== "string") return undefined
+  if (event.type === "session.created" || event.type === "session.updated") {
+    // The 2.x server is shared across locations; the V1 plugin only saw its own.
+    if (data.location?.directory && data.location.directory !== directory) return undefined
+    return {
+      type: event.type,
+      properties: { info: { id: data.sessionID, parentID: data.parentID } },
+    }
+  }
+  if (event.type === "session.deleted") {
+    return { type: event.type, properties: { info: { id: data.sessionID } } }
+  }
+  return undefined
+}
+
+/** 2.x admits each human prompt as a durable `user` inbox item. */
+function v2InboxPrompt(event: any, directory: string): { sessionID: string; text: string } | undefined {
+  if (event?.type !== "session.inbox.enqueued") return undefined
+  if (event.location?.directory && event.location.directory !== directory) return undefined
+  const data = event.data
+  const item = data?.item
+  if (typeof data?.sessionID !== "string" || !data.sessionID) return undefined
+  if (item?.type !== "user" || typeof item.payload?.text !== "string") return undefined
+  return { sessionID: data.sessionID, text: item.payload.text.trim() }
+}
+
+// The 2.x event stream ends or throws when the server restarts; reconnect with
+// a bounded doubling delay that resets once events flow again.
+const V2_EVENT_RETRY_MIN_MS = 50
+const V2_EVENT_RETRY_MAX_MS = 5000
+
+function delayUnlessAborted(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal.aborted) return resolve()
+    const onAbort = () => {
+      clearTimeout(timer)
+      resolve()
+    }
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort)
+      resolve()
+    }, ms)
+    signal.addEventListener("abort", onAbort, { once: true })
+  })
+}
+
+async function setupLeteoV2(ctx: V2Context): Promise<() => Promise<void>> {
+  const hooks = await Leteo({ directory: ctx.location.directory } as any)
+
+  const abort = new AbortController()
+  const registrations: V2Registration[] = []
+  let listening: Promise<void> = Promise.resolve()
+  const cleanup = async () => {
+    abort.abort()
+    await Promise.all(registrations.map((registration) => registration.dispose()))
+    await listening
+  }
+
+  try {
+    // The protocol is re-injected on every message, which is what makes memory
+    // survive a compaction: the agent is told again how to use it.
+    registrations.push(
+      await ctx.session.hook("context", async (request) => {
+        await withSystemStrings(request.system, (system) =>
+          hooks["experimental.chat.system.transform"]({ sessionID: request.sessionID }, { system }),
+        )
+      }),
+    )
+
+    // 2.x renamed the 1.x `Task` delegation tool to `subagent`.
+    registrations.push(
+      await ctx.tool.hook("execute.after", async (call) => {
+        const tool = call.tool === "subagent" ? "Task" : call.tool
+        const output = call.status === "completed" ? v2ToolResultText(call.result) : ""
+        await hooks["tool.execute.after"]({ tool, sessionID: call.sessionID }, output)
+      }),
+    )
+
+    listening = (async () => {
+      let retryMs = V2_EVENT_RETRY_MIN_MS
+      while (!abort.signal.aborted) {
+        try {
+          for await (const event of ctx.event.subscribe({ signal: abort.signal })) {
+            if (abort.signal.aborted) break
+            // Every subscription opens with a server.connected handshake; only a
+            // real event proves the stream is healthy enough to reset the backoff.
+            if (event?.type !== "server.connected") retryMs = V2_EVENT_RETRY_MIN_MS
+            try {
+              const prompt = v2InboxPrompt(event, ctx.location.directory)
+              if (prompt) {
+                await hooks["chat.message"](
+                  { sessionID: prompt.sessionID },
+                  { parts: [{ type: "text", text: prompt.text }], message: {} },
+                )
+              }
+              const translated = v1SessionEvent(event, ctx.location.directory)
+              if (translated) await hooks.event({ event: translated })
+            } catch {
+              // One failing event must not stop lifecycle tracking.
+            }
+          }
+        } catch {
+          // Events missed while disconnected are lost; hooks still bind sessions lazily.
+        }
+        if (abort.signal.aborted) break
+        await delayUnlessAborted(retryMs, abort.signal)
+        retryMs = Math.min(retryMs * 2, V2_EVENT_RETRY_MAX_MS)
+      }
+    })()
+  } catch (cause) {
+    await cleanup()
+    throw cause
+  }
+
+  return cleanup
+}
+
+// OpenCode 1.x calls `server`; 2.x calls `setup`.
+export default { id: "leteo", server: Leteo, setup: setupLeteoV2 }

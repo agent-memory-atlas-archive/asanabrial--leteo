@@ -27,6 +27,15 @@ All notable changes to Leteo are documented in this file.
 
 ### Fixed
 
+- **The OpenCode plugin did not load on OpenCode 2.x.** It exported only the 1.x
+  `server` factory, so on 2.x — which calls `setup` — the plugin never loaded and
+  no lifecycle capture happened, silently. One file now serves both: the default
+  export carries `server` and `setup` over the same four handlers, and the hook
+  path spawns through `node:child_process` instead of `Bun.spawn`, because 2.x
+  runs plugins on Node where `Bun` is undefined. `plugin/opencode/leteo.test.ts`
+  holds the plugin to each major's contract, and a Rust guard reads the file so
+  `cargo test` watches it too (#120).
+
 - **An Engram 0.2.0 backup could not be imported.** Engram moved its direct backup
   to `0.2.0` in v3.0.0, and `leteo import` refused it with "unsupported export
   format 0.2.0; this build reads 0.1.0" — so the JSON fallback for migrating

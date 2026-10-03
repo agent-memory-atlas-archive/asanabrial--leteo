@@ -1,0 +1,9 @@
+{
+  "name": "leteo-opencode-plugin",
+  "private": true,
+  "type": "module",
+  "description": "Contract tests for the Leteo OpenCode plugin. Run `npm test` here.",
+  "scripts": {
+    "test": "node --test leteo.test.ts"
+  }
+}
