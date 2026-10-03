@@ -960,12 +960,13 @@ pub(super) struct SearchOutput {
     /// many matched. When more matched than were returned, the hint says so.
     pub(super) count: usize,
     pub(super) results: Vec<SearchResultOutput>,
-    /// Carried when nothing matched, or when only some of the words did.
+    /// Carried when nothing matched, when only some of the words did, or when a
+    /// term was read as another word to answer.
     ///
-    /// The wording is in [`NO_MATCH_HINT`] and [`PARTIAL_MATCH_HINT`]. Below
-    /// the blank line because everything above it is shipped to every client
-    /// that lists the tools, and an intra-doc link arrives there as brackets
-    /// around a name that resolves to nothing.
+    /// The wording is in [`NO_MATCH_HINT`], [`PARTIAL_MATCH_HINT`] and
+    /// [`corrected_terms_hint`]. Below the blank line because everything above
+    /// it is shipped to every client that lists the tools, and an intra-doc
+    /// link arrives there as brackets around a name that resolves to nothing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) hint: Option<String>,
 }

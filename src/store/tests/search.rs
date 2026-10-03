@@ -1763,3 +1763,42 @@ fn a_correction_needs_every_unknown_word_to_be_placed() {
         "one unplaceable word refuses the whole correction: {corrections:?}"
     );
 }
+
+/// A store whose unstemmed index is missing still searches.
+///
+/// The correction vocabulary is built over `observations_exact`, and neither
+/// `CREATE VIRTUAL TABLE IF NOT EXISTS ... USING fts5vocab` nor a store that
+/// could not build the index is an error — the read is where "no such fts5
+/// table" surfaces. That read has to fall through the way `fused_observations`
+/// already falls through a missing second index, not hard-fail the search.
+#[test]
+fn a_missing_unstemmed_index_does_not_fail_a_correction() {
+    let (_temp, mut store) = store();
+    store.create_session("s1", "leteo", "C:/repo").unwrap();
+    store
+        .add_observation(observation(
+            "s1",
+            "Fixed connection pool exhaustion under load",
+            "one pgxpool.Pool is built in main and injected",
+        ))
+        .unwrap();
+    store
+        .connection
+        .execute_batch("DROP TABLE observations_exact;")
+        .unwrap();
+
+    // The typo reaches the correction stage, whose vocabulary cannot be read.
+    // The search must still answer from the stemmed index, saying nothing about
+    // a correction it did not make.
+    let (found, _more, corrections) = store
+        .search_with_more_and_corrections("conection pool", SearchOptions::default())
+        .unwrap();
+    assert!(
+        corrections.is_empty(),
+        "nothing was corrected without a vocabulary: {corrections:?}"
+    );
+    assert!(
+        !found.is_empty(),
+        "the widened stage still answers from the stemmed index: {found:?}"
+    );
+}

@@ -1092,10 +1092,7 @@ pub fn fts_terms(query: &str) -> Vec<String> {
     let mut seen = std::collections::HashSet::new();
     strip_nul(query)
         .split_whitespace()
-        .map(|term| {
-            let escaped = term.trim_matches('"').replace('"', "\"\"");
-            format!("\"{escaped}\"")
-        })
+        .map(quote_fts_term)
         .filter(|term| seen.insert(term.to_lowercase()))
         .collect()
 }
@@ -1159,9 +1156,10 @@ pub fn fts_query_of(terms: &[String]) -> String {
 pub fn fts_prefix_query(query: &str) -> String {
     let mut terms = strip_nul(query)
         .split_whitespace()
-        .map(|term| term.trim_matches('"').replace('"', "\"\""))
-        .filter(|term| !term.is_empty())
-        .map(|term| format!("\"{term}\""))
+        .map(quote_fts_term)
+        // A token that was only quotes escapes to nothing, and quoting that
+        // yields `""`, which would open to `"*` rather than a prefix.
+        .filter(|term| term.len() > 2)
         .collect::<Vec<_>>();
     if let Some(last) = terms.last_mut() {
         last.push('*');

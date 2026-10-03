@@ -285,8 +285,8 @@ before any of it.
     connection, and a corrected query pays 20 to 30 ms for the scan of the
     21,241 terms near its length, the same order as the widened stage's own
     note. It is not a per-prompt cost: the strict pass answers almost every
-    prompt, and this stage is reached only when it came back empty with an
-    unknown word.
+    prompt, and this stage is reached only when the strict pass and the two
+    fragment stages above it all came back empty.
 
 ## Invariants
 

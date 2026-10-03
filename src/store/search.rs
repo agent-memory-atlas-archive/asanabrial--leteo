@@ -28,12 +28,12 @@ pub(super) const VOCAB_TABLE: &str = "fts_vocab";
 
 /// The most edits a corrected term may be from the word it is read as.
 ///
-/// One for a short word and two for a longer one, because two edits on five
-/// letters reaches most of the language. Measured on the benchmark's typo set:
-/// at two for every length, `pgxpo` — the *partial-word* query for `pgxpool` —
-/// is pulled to a real word before the prefix stage that was written for it
-/// runs, and the fragment stages stop being reachable; at one for five letters
-/// or fewer it is left alone and found the way it was meant to be.
+/// One for a short word and two for a longer one, because a second edit on five
+/// letters or fewer only widens the vocabulary scan: measured on the benchmark's
+/// typo set, allowing two edits on short words changes no kind's MRR. The
+/// budget bounds the scan rather than deciding which stage answers a fragment —
+/// this stage runs after the prefix and substring stages, so a partial word such
+/// as `pgxpo` is answered before a correction can reach it.
 const TYPO_SHORT_DISTANCE: usize = 1;
 const TYPO_LONG_DISTANCE: usize = 2;
 /// The length at or below which only [`TYPO_SHORT_DISTANCE`] applies.
@@ -568,7 +568,20 @@ impl Store {
             .iter()
             .map(|(_, asked)| asked.to_lowercase())
             .collect();
-        let nearest = self.nearest_vocabulary_words(&folded)?;
+        // The read is guarded as well as the build, because the build does not
+        // establish that the index is there: `CREATE VIRTUAL TABLE IF NOT
+        // EXISTS ... USING fts5vocab` returns without validating its target, so
+        // a store that never had `observations_exact` — or lost it to a
+        // half-finished upgrade — fails here, with "no such fts5 table", rather
+        // than at the `CREATE`. An unreadable vocabulary is not an error, the
+        // way an unreadable second index is not one in `fused_observations`.
+        let nearest = match self.nearest_vocabulary_words(&folded) {
+            Ok(nearest) => nearest,
+            Err(error) => {
+                tracing::debug!(%error, "the unstemmed vocabulary is unreadable; searching without correction");
+                return Ok(None);
+            }
+        };
         for ((index, asked), used) in unknown.into_iter().zip(nearest) {
             match used {
                 Some(used) => {
