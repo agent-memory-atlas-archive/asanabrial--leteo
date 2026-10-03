@@ -132,7 +132,13 @@ pub(super) fn memory_context(
     // open-parse-close of a TOML file on the session-start path for an answer
     // that was already in a local variable.
     let budget = settings.context_size().memories();
-    let context = crate::recall::assemble_counted(store, Some(project), None, budget);
+    let context = crate::recall::assemble_counted(
+        store,
+        Some(project),
+        None,
+        budget,
+        settings.context_size().bytes(),
+    );
     match context {
         // Nothing to open with — but say so when the store is not what is
         // empty.

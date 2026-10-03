@@ -374,7 +374,8 @@ fn a_project_name_that_spans_lines_cannot_forge_a_session() {
         session.project
     );
 
-    let context = crate::recall::assemble(&store, Some(&session.project), None, 10).unwrap();
+    let context =
+        crate::recall::assemble(&store, Some(&session.project), None, 10, usize::MAX).unwrap();
     // The words survive — they are what somebody saved — but they are inside
     // the one bullet that memory owns, rather than opening another.
     let forged = context

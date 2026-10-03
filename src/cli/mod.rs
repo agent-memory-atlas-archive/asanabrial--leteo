@@ -599,6 +599,7 @@ pub async fn run(cli: Cli) -> Result<()> {
                 read.project.as_deref(),
                 scope.as_deref(),
                 limit.unwrap_or_else(|| crate::recall::default_memories(&store)),
+                crate::recall::default_bytes(&store),
             )?;
             if context.trim().is_empty() {
                 say_where_it_is_empty(&store, &read);

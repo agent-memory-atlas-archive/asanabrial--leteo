@@ -185,6 +185,21 @@ useful part out of a context window has failed even if every field is right.
    above the ceiling to mean anything: with thirty pins nothing is cut and the
    assertion passes without watching a thing.
 
+   And a count is not a size. A memory count and per-line lengths bound how many
+   entries there are and how long each is, not how large the answer grows, so a
+   store whose rows are long outgrew every ceiling it had. Both surfaces that
+   open a context — `mem_context` and the session-start block — now carry a byte
+   budget from `ContextSize::bytes()`, one source: 15,000, 32,000 and 49,000
+   bytes for `slim`, `full` and `deep`, the measured sizes of the three blocks
+   (14.8, 31.4 and 48.0 KB above) rounded up, so the ceiling sits where the
+   three sizes already are and only a store that outgrows them is cut. The cut
+   is at an entry boundary and never mid-line, and what it leaves out is
+   counted: the block prints a line naming how many memories, prompts and
+   sessions it dropped, and the tool answers `memories_omitted`,
+   `prompts_omitted` and `sessions_omitted`. The newest work and the pinned
+   memories are dropped last, so a budget spends the oldest and least
+   informative entries first.
+
    And the lists nothing asks for. A budget is a parameter somebody passes;
    `mem_doctor` has none for its violations, because `PRAGMA foreign_key_check`
    answers one row per orphaned row and the tool carried every one of them: 300

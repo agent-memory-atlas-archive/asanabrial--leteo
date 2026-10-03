@@ -1198,7 +1198,7 @@ fn a_title_that_spans_lines_cannot_forge_a_second_memory() {
         "folded rather than cut, because the words are still what somebody saved"
     );
 
-    let context = crate::recall::assemble(&store, Some("leteo"), None, 10).unwrap();
+    let context = crate::recall::assemble(&store, Some("leteo"), None, 10, usize::MAX).unwrap();
     let forged = context
         .lines()
         .filter(|line| line.trim_start().starts_with("- #999"))
@@ -1221,7 +1221,7 @@ fn a_title_that_spans_lines_cannot_forge_a_second_memory() {
             ],
         )
         .unwrap();
-    let context = crate::recall::assemble(&store, Some("leteo"), None, 10).unwrap();
+    let context = crate::recall::assemble(&store, Some("leteo"), None, 10, usize::MAX).unwrap();
     let forged = context
         .lines()
         .filter(|line| line.trim_start().starts_with("- #998"))
@@ -2163,7 +2163,7 @@ fn the_pinned_list_has_a_ceiling_and_says_what_it_left_out() {
         "las más nuevas primero, que es el orden que ya tenía"
     );
 
-    let bloque = crate::recall::assemble(&store, Some("leteo"), None, 5).unwrap();
+    let bloque = crate::recall::assemble(&store, Some("leteo"), None, 5, usize::MAX).unwrap();
     assert!(
         bloque.contains("more pinned, not shown"),
         "el bloque avisa de lo que no enseña: {bloque}"
@@ -2235,7 +2235,7 @@ fn a_session_that_was_summarised_again_hands_back_only_the_last_one() {
         "la sesion con uno solo sigue estando"
     );
 
-    let bloque = crate::recall::assemble(&store, Some("leteo"), None, 10).unwrap();
+    let bloque = crate::recall::assemble(&store, Some("leteo"), None, 10, usize::MAX).unwrap();
     assert!(
         bloque.contains("la sesion reutilizada hizo en su vuelta 2"),
         "el bloque describe la sesion por su ultimo resumen: {bloque}"
@@ -2359,7 +2359,9 @@ fn the_size_somebody_chose_governs_the_pinned_memories_too() {
         crate::settings::ContextSize::Full,
         crate::settings::ContextSize::Deep,
     ] {
-        let block = crate::recall::assemble(&store, Some("leteo"), None, size.memories()).unwrap();
+        let block =
+            crate::recall::assemble(&store, Some("leteo"), None, size.memories(), usize::MAX)
+                .unwrap();
         assert!(
             block.contains("more pinned, not shown"),
             "{} leaves pins out and says so",

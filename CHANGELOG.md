@@ -6,6 +6,16 @@ All notable changes to Leteo are documented in this file.
 
 ### Changed
 
+- **The opening block and `mem_context` had no size bound.** They were bounded by a
+  memory count and by per-line lengths, which is not a byte bound: a store with long
+  rows grew the block without a ceiling, and the block is paid on every session and
+  after every compaction. Each `ContextSize` now carries a byte budget — 15,000,
+  32,000 and 49,000 bytes for `slim`, `full` and `deep`, the measured block sizes
+  rounded up — applied at an entry boundary and never mid-line. What it leaves out is
+  counted: the block prints how many memories, prompts and sessions it dropped, and
+  `mem_context` answers `memories_omitted`, `prompts_omitted` and `sessions_omitted`
+  (#114).
+
 - **Every tool reply carried its JSON twice; it now carries it once.** A reply with
   `structuredContent` also repeated the same JSON as text so that a client predating
   structured output still got an answer — half of every reply, paid in an agent's context.
