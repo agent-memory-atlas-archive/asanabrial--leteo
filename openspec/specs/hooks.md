@@ -381,6 +381,25 @@ deadline, so every promise here is a promise about time as much as content.
    command. Read for the command alone, that reports healthy — the same way
    Codex's untrusted hooks did before they got their own line.
 
+21. **The OpenCode plugin serves both majors from one file.** OpenCode 1.x loads
+   a plugin's `server` factory; 2.x loads `setup`, binds hooks through per-domain
+   registrations, and carries sessions on an event stream. The plugin at
+   `plugin/opencode/leteo.ts` exports both over the same four handlers —
+   `event`, `chat.message`, `tool.execute.after` and
+   `experimental.chat.system.transform` — so a 2.x host is not left with a plugin
+   that never loads and never says so. It spawns the binary through
+   `node:child_process` rather than `Bun.spawn`, because 2.x runs plugins on Node
+   where `Bun` is undefined. `plugin/opencode/leteo.test.ts` holds the plugin to
+   each major's contract: the default export carries `server` and `setup`, the
+   1.x factory binds its four hooks, the 2.x setup registers `session.context`
+   and `tool.execute.after` and subscribes to events, and no code path calls
+   `Bun`. Unlike the bundles in §19 this is not a `BUNDLES` entry — `leteo setup`
+   writes OpenCode's MCP config and instructions but not its hooks
+   (`hooks_path: None`) — so the plugin is the only route to lifecycle capture.
+   Two guards hold it: its own contract test, which runs the entry points and the
+   hook path, and a Rust guard that reads the file so `cargo test` watches the
+   export too.
+
 ## Invariants
 
 - Every event finishes inside its agent's patience even when the wait overruns.
@@ -416,6 +435,9 @@ deadline, so every promise here is a promise about time as much as content.
   `plugin/zcode/hooks/hooks.json` — the bundles, each guarded against its own
   agent's registrations by
   `the_plugin_bundles_register_the_hooks_the_binary_writes`
+- `plugin/opencode/leteo.ts` — the OpenCode plugin, 1.x and 2.x from one file,
+  held to each contract by `plugin/opencode/leteo.test.ts` (`node --test`) and to
+  its export shape by `the_opencode_plugin_serves_both_majors_without_bun`
 - `src/hooks/tests.rs`
 
 ## Related

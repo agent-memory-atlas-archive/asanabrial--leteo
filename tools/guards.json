@@ -108,6 +108,24 @@
     "new": "        for tombstone in data.prompt_tombstones.iter().take(0) {"
   },
   {
+    "name": "opencode: the plugin stops serving 2.x",
+    "file": "plugin/opencode/leteo.ts",
+    "old": "export default { id: \"leteo\", server: Leteo, setup: setupLeteoV2 }",
+    "new": "export default { id: \"leteo\", server: Leteo }"
+  },
+  {
+    "name": "opencode: a Bun-only spawn returns to the hook path",
+    "file": "plugin/opencode/leteo.ts",
+    "old": "child = spawn(leteoBinary(), [\"hook\", event], { stdio: [\"pipe\", \"pipe\", \"ignore\"] })",
+    "new": "child = Bun.spawn(leteoBinary(), [\"hook\", event], { stdio: [\"pipe\", \"pipe\", \"ignore\"] })"
+  },
+  {
+    "name": "opencode: the stdin error handler is dropped",
+    "file": "plugin/opencode/leteo.ts",
+    "old": "child.stdin?.on(\"error\", () => {})",
+    "new": "void 0"
+  },
+  {
     "name": "mcp: clamp notice suppressed",
     "file": "src/mcp/tools.rs",
     "old": "let clamped = params.limit.is_some_and(|asked| asked > cap) && results.len() >= cap;",

@@ -28,6 +28,20 @@ leteo setup opencode
 Restart OpenCode. `LETEO_BIN` overrides the binary when `leteo` is not on
 `PATH`.
 
+## Supported OpenCode versions
+
+One file serves both majors. OpenCode 1.x loads the `server` factory; 2.x loads
+`setup`, binds hooks through per-domain registrations, and carries sessions on an
+event stream. The same handlers serve both, and the hook path spawns the binary
+through `node:child_process` rather than `Bun.spawn`, so it runs wherever
+OpenCode does — 2.x plugins run on Node, where `Bun` is not defined.
+
+Each major's contract is held by a test:
+
+```bash
+cd plugin/opencode && node --test leteo.test.ts
+```
+
 ## What it does
 
 | OpenCode event | Command | Effect |
