@@ -90,6 +90,12 @@
     "new": "                .unwrap_or(0)\n                <= usize::MAX"
   },
   {
+    "name": "context: the reported count ignores the byte cut",
+    "file": "src/recall.rs",
+    "old": "            let named = shown.pinned + shown.detailed.len() + shown.listed.len();",
+    "new": "            let named = pinned.len() + observations.len();"
+  },
+  {
     "name": "mcp: clamp notice suppressed",
     "file": "src/mcp/tools.rs",
     "old": "let clamped = params.limit.is_some_and(|asked| asked > cap) && results.len() >= cap;",

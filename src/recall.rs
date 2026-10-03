@@ -140,7 +140,6 @@ pub fn assemble_counted(
     let summaries = store.session_summaries(&session_ids(&sessions))?;
     fold_session_summaries(&mut sessions, summaries);
     let prompts = store.recent_distinct_prompts(project, Some(RECENT_PROMPTS))?;
-    let listed = pinned.len() + observations.len();
     // What the graph says about every memory about to be listed. This is the
     // larger of the two surfaces that hand memories over — fifty of them at a
     // session opening against three on a prompt — so a memory a later one
@@ -155,17 +154,18 @@ pub fn assemble_counted(
     // more, so a store that cannot answer this costs the caveats rather than
     // the whole opening context — which is what `?` here would have cost.
     let caveats = store.caveats_for(&named).unwrap_or_default();
-    Ok((
-        format_context(
-            &sessions,
-            &prompts,
-            &pinned,
-            pinned_omitted,
-            &observations,
-            &caveats,
-            budget_bytes,
-        ),
-        listed,
+    // The count comes back with the text, from the same render, because the
+    // byte budget can drop memories: a count taken before the cut is a number
+    // the block does not carry, and this is the surface whose caller reports
+    // that number to a person (`hooks/context.rs`).
+    Ok(format_context_counted(
+        &sessions,
+        &prompts,
+        &pinned,
+        pinned_omitted,
+        &observations,
+        &caveats,
+        budget_bytes,
     ))
 }
 
@@ -271,8 +271,35 @@ pub fn format_context(
     caveats: &BTreeMap<String, Vec<Caveat>>,
     budget_bytes: usize,
 ) -> String {
+    format_context_counted(
+        sessions,
+        prompts,
+        pinned,
+        pinned_omitted,
+        observations,
+        caveats,
+        budget_bytes,
+    )
+    .0
+}
+
+/// [`format_context`], plus how many memories the block it built actually names.
+///
+/// The count and the text have to come out of the same render. The byte budget
+/// can drop memories, so counting them before the cut would report a number the
+/// block does not carry — the disagreement between what the agent reads and
+/// what the person is told that `hooks/context.rs` exists to prevent.
+pub fn format_context_counted(
+    sessions: &[SessionSummary],
+    prompts: &[Prompt],
+    pinned: &[Observation],
+    pinned_omitted: usize,
+    observations: &[Observation],
+    caveats: &BTreeMap<String, Vec<Caveat>>,
+    budget_bytes: usize,
+) -> (String, usize) {
     if sessions.is_empty() && prompts.is_empty() && pinned.is_empty() && observations.is_empty() {
-        return String::new();
+        return (String::new(), 0);
     }
 
     let detailed = DETAILED.min(observations.len());
@@ -298,7 +325,8 @@ pub fn format_context(
     loop {
         let rendered = render_context(&sections, &shown, budget_bytes);
         if rendered.len() <= budget_bytes || !shown.drop_one() {
-            return rendered;
+            let named = shown.pinned + shown.detailed.len() + shown.listed.len();
+            return (rendered, named);
         }
     }
 }
@@ -1231,11 +1259,26 @@ And the tests could not see it, because a small store scores near zero."
         }
 
         let budget = 2_000;
-        let (context, _) = assemble_counted(&store, Some("leteo"), None, 30, budget).unwrap();
+        let (context, named) = assemble_counted(&store, Some("leteo"), None, 30, budget).unwrap();
         assert!(
             context.len() <= budget,
             "the block is {} bytes against a {budget}-byte budget: {context}",
             context.len()
+        );
+        // The count and the block come from the same render. The hook that
+        // reports the number to a person reads this one, so it has to be what
+        // the block names and not what it was asked for.
+        let lines = context
+            .lines()
+            .filter(|line| line.starts_with("- #"))
+            .count();
+        assert_eq!(
+            named, lines,
+            "the count has to be what the block names, not what it dropped: {context}"
+        );
+        assert!(
+            named < 30,
+            "the oversized fixture has to make the count smaller than what was found: {context}"
         );
         assert!(
             context.contains(&format!("cut to {budget} bytes")),
