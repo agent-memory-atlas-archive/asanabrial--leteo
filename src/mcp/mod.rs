@@ -828,6 +828,15 @@ impl From<MatchMode> for SearchMode {
     }
 }
 
+/// How much of a body a tool preview carries, in **bytes**.
+///
+/// Bytes rather than characters because this is a bound on what an agent pays
+/// in context, and every other budget on this surface is bytes — the size guard
+/// weighs a reply in bytes and its bar is `ROOM`. The tool descriptions publish
+/// this same unit ("a 400-byte preview") and a test holds each of them to it,
+/// because a description that promised characters cut non-ASCII text shorter
+/// than it said: four hundred bytes of `cabaña` is under four hundred
+/// characters, and the agent was told it had been shown more than it had.
 pub(crate) const PREVIEW_BYTES: usize = 400;
 
 fn default_observation_type() -> String {
