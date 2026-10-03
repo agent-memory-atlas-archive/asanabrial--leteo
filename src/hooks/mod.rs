@@ -34,8 +34,8 @@ mod tests;
 use context::{memories_due, memory_context, pending_handover, project_memories, prompt_recall};
 use nudge::{SessionState, nudge_state_path, save_nudge, sweep_stale_nudges};
 use session::{
-    ensure_session, migrate_directory_project, resolve_directory, resolve_project,
-    resolve_session_id,
+    drifted_directory_projects, ensure_session, migrate_directory_project, resolve_directory,
+    resolve_project, resolve_session_id,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -406,6 +406,21 @@ pub fn run(store: &mut Store, event: HookEvent, input: &HookInput) -> Result<Hoo
     match event {
         HookEvent::SessionStart => {
             migrate_directory_project(store, &directory, &project, &mut outcome);
+            // A hook cannot ask which project the user meant, so the warning is
+            // how it tells the agent that this directory's history is under
+            // another name. It runs after `migrate_directory_project`, which
+            // already folds the one drift it can repair on its own — a
+            // repository that took its directory's name — so what is left to
+            // warn about is a remote that was renamed or pointed at a fork.
+            let drifted = drifted_directory_projects(store, &directory, &project);
+            if !drifted.is_empty() {
+                outcome.warnings.push(format!(
+                    "this directory's sessions were recorded under {}, and it now resolves to \
+                     {project:?}; ask the user which project this belongs to, or fold the two \
+                     together with `leteo projects consolidate`",
+                    drifted.join(", ")
+                ));
+            }
             ensure_session(store, &session_id, &project, &directory, &mut outcome);
             sweep_stale_nudges(store);
             let mut context = crate::setup::MEMORY_DIRECTIVE.to_owned();

@@ -311,6 +311,28 @@ useful part out of a context window has failed even if every field is right.
    not repeated: shown at every session opened in such a directory, it is the
    line that teaches somebody to skip the warnings.
 
+   **A directory whose sessions were recorded under another project does not
+   silently take the name detection now resolves to.** The name is derived from
+   `origin` on every call, so adding a remote to a repository named by its
+   directory, renaming the remote, or pointing it at a fork changes it, and the
+   next write used to be filed under the new name with nothing said — the
+   memories already recorded stayed under the old one, and the two halves of the
+   project could no longer see each other. Before the detected project is
+   returned, the write path asks `recent_projects_in_directory`; when the
+   sessions recorded in this exact directory name a project other than the one
+   detection resolved to, the write is refused with the same `ambiguous_project`
+   error, the same candidate list — the recorded names first, then the detected
+   one — and the same recovery token the ambiguous-directory case mints, with a
+   message naming both and pointing at `leteo projects consolidate`. The
+   lookup is a scan of `sessions` alone, folded in Rust for the reason
+   `same_directory` gives, and only a drift pays for it: a directory whose
+   recorded sessions agree with detection returns the detected project exactly
+   as before, with no prompt and no new fields. An explicit `project`, the
+   process override, and a requested name the store already holds all still win;
+   only the silent auto-pick is intercepted. The hook path cannot refuse or
+   prompt, so it says the same thing as a warning — [`hooks.md`](hooks.md) §2
+   carries that and the measured cost of the lookup.
+
 6. **A memory says which question it answers, or says nothing.** The link is a
    chain of three guesses, each with a guard: the prompt this process last
    recorded (same project and session), then the last prompt of the same
@@ -825,7 +847,11 @@ useful part out of a context window has failed even if every field is right.
 - `src/mcp/tools.rs` — the tool router and every handler
 - `src/mcp/output.rs` — the typed replies, the previews, the hints
 - `src/mcp/params.rs` — parameter parsing and the project gate
-- `src/mcp/tests.rs`
+- `src/mcp/tests.rs` — §5's drift refusal is held by
+  `a_remote_that_changed_makes_the_write_ask_which_project` and its agreeing
+  half by `a_directory_whose_sessions_agree_is_not_asked_which_project`
+- `src/store/sessions.rs` — `recent_projects_in_directory`, the lookup the
+  write path and the session-start hook share
 - `src/store/tests/diagnostics.rs` — the store-side project counts and the bound `mem_stats` applies
 - `tests/mcp_protocol.rs` — the wire surface, driven through the built binary
 

@@ -25,6 +25,57 @@ impl Store {
             .map_err(StoreError::from)
     }
 
+    /// The projects of sessions recorded in exactly this directory, most recent
+    /// first, excluding `exclude`.
+    ///
+    /// What a session-start hook and an MCP write ask before believing the
+    /// project detection derived from `origin` this time: a repository that
+    /// gained a remote, renamed it, or was pointed at a fork resolves to a new
+    /// name, and the sessions already recorded in this directory are the
+    /// evidence that it used to be another. Without the lookup the new name is
+    /// picked silently and the earlier memories stay under the old one.
+    ///
+    /// The directory comparison is in Rust rather than in SQL for the reason
+    /// [`same_directory`](crate::project::same_directory) gives: the same
+    /// directory is written with a trailing separator, with backslashes, and on
+    /// Windows with a different case, and SQLite's `LOWER` cannot fold any of
+    /// that the way the filesystem means it. So the row filter is only "has a
+    /// directory and a project at all"; the narrowing to this directory happens
+    /// here. The scan is over `sessions` alone, and a session row is one line,
+    /// not a body.
+    pub fn recent_projects_in_directory(
+        &self,
+        directory: &str,
+        exclude: &str,
+    ) -> Result<Vec<String>, StoreError> {
+        let exclude = normalize::project(exclude);
+        let mut statement = self.connection.prepare(
+            "SELECT project, directory, COALESCE(started_at, '')
+             FROM sessions
+             WHERE directory IS NOT NULL AND trim(directory) <> ''
+               AND project IS NOT NULL AND trim(project) <> ''
+             ORDER BY COALESCE(started_at, '') DESC, id DESC",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        let mut projects = Vec::new();
+        for row in rows {
+            let (project, recorded) = row?;
+            let project = normalize::project(&project);
+            if project.is_empty() || project == exclude {
+                continue;
+            }
+            if !crate::project::same_directory(&recorded, Path::new(directory)) {
+                continue;
+            }
+            if !projects.contains(&project) {
+                projects.push(project);
+            }
+        }
+        Ok(projects)
+    }
+
     pub fn create_session(
         &mut self,
         id: &str,

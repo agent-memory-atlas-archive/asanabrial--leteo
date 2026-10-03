@@ -277,6 +277,9 @@ impl LeteoMcpServer {
                 ));
             }
             if !detected.is_empty() {
+                if let Some(drifted) = self.recorded_directory_detection(store, detection)? {
+                    return Err(self.project_detection_error(&drifted));
+                }
                 return Ok((detected, detection.source.clone()));
             }
             return Err(self.project_detection_error(detection));
@@ -316,6 +319,58 @@ impl LeteoMcpServer {
             &detected,
             store.list_project_names().unwrap_or_default(),
         ))
+    }
+
+    /// The ambiguity a directory has when the project it now resolves to is not
+    /// the one its sessions were recorded under.
+    ///
+    /// `None` when nothing drifts, which is the ordinary case and must stay
+    /// free: a directory whose recorded sessions agree with detection returns
+    /// the detected project with no prompt and no new fields. When it does
+    /// drift, the value is shaped exactly like the ambiguity
+    /// `detection_from_children` produces — empty project, `SOURCE_AMBIGUOUS`,
+    /// the candidates in `available_projects` — so the existing error envelope
+    /// and recovery-token flow carry it without a second mechanism.
+    ///
+    /// The recorded projects come first because they are what the user is most
+    /// likely to mean; the detected name is appended because picking it is the
+    /// other way to resolve the drift. They are deduplicated, since a recorded
+    /// project that normalises to the detected one is not a second choice.
+    fn recorded_directory_detection(
+        &self,
+        store: &Store,
+        detection: &ProjectDetection,
+    ) -> Result<Option<ProjectDetection>, CallToolResult> {
+        let detected = normalize::project(&detection.project);
+        if detected.is_empty() {
+            return Ok(None);
+        }
+        let recorded = store
+            .recent_projects_in_directory(&detection.path, &detected)
+            .map_err(store_error)?;
+        if recorded.is_empty() {
+            return Ok(None);
+        }
+        let recorded_names = recorded.join(", ");
+        let mut available_projects = recorded;
+        if !available_projects
+            .iter()
+            .any(|project| project == &detected)
+        {
+            available_projects.push(detected.clone());
+        }
+        Ok(Some(ProjectDetection {
+            project: String::new(),
+            source: crate::project::SOURCE_AMBIGUOUS.to_owned(),
+            path: detection.path.clone(),
+            available_projects,
+            warning: None,
+            error_hint: Some(format!(
+                "this directory's sessions were recorded under {recorded_names}, but it now \
+                 resolves to {detected:?}; ask the user which project this belongs to. If the \
+                 two names are one project, `leteo projects consolidate` folds them together."
+            )),
+        }))
     }
 
     fn accept_ambiguous_choice(

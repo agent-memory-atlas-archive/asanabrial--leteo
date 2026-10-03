@@ -655,8 +655,12 @@ fn every_tool_declares_behavior_annotations() {
 fn explicit_projects_must_be_backed_by_known_context() {
     let (_temp, server) = test_server(McpOptions::default());
     let mut store = server.lock_store().unwrap();
+    // Recorded in another directory on purpose: a session under this project in
+    // *this* directory would make the directory drift, and the point of this
+    // test is the known-project path, not the drift gate that has its own test
+    // below.
     store
-        .create_session("known", "known-project", "C:/workspace")
+        .create_session("known", "known-project", "C:/elsewhere")
         .unwrap();
     let detection = ProjectDetection {
         project: "leteo".to_owned(),
@@ -723,6 +727,118 @@ fn explicit_projects_must_be_backed_by_known_context() {
         )
         .expect_err("blank projects are refused");
     assert_eq!(error_payload(&error)["error"]["code"], "invalid_project");
+}
+
+/// A directory whose sessions were recorded under another project does not
+/// silently take the name detection now resolves to.
+///
+/// Adding a remote to a repository named by its directory, renaming the remote,
+/// or pointing it at a fork changes what `origin` says, and Leteo used to file
+/// the next memory under the new name with nothing said — the earlier memories
+/// stayed under the old one, and the two halves of the project could no longer
+/// see each other. The ambiguity the directory already knows how to report is
+/// reused: the same error code, the same candidate list, the same recovery
+/// token. An agent that names a project explicitly has made the choice itself
+/// and is not stopped; only the silent pick is.
+#[test]
+fn a_remote_that_changed_makes_the_write_ask_which_project() {
+    let (_temp, server) = test_server(McpOptions::default());
+    let mut store = server.lock_store().unwrap();
+    store
+        .create_session("old", "old-remote", "C:/repo")
+        .unwrap();
+    let detection = ProjectDetection {
+        project: "new-remote".to_owned(),
+        source: crate::project::SOURCE_GIT_REMOTE.to_owned(),
+        path: "C:/repo".to_owned(),
+        available_projects: Vec::new(),
+        warning: None,
+        error_hint: None,
+    };
+
+    let error = server
+        .resolve_write_project(&store, None, &detection, ProjectChoice::default())
+        .expect_err("a silent pick would split the project in two");
+    let payload = error_payload(&error);
+    assert_eq!(payload["error"]["code"], "ambiguous_project");
+    assert_eq!(
+        payload["available_projects"],
+        json!(["old-remote", "new-remote"]),
+        "both names are offered: the recorded one first, then what it resolves to now"
+    );
+    assert!(
+        payload["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("projects consolidate")),
+        "and the message points at the command that folds them: {}",
+        payload["error"]["message"]
+    );
+    let token = payload["recovery_token"]
+        .as_str()
+        .expect("recovery token")
+        .to_owned();
+    assert!(!token.is_empty());
+
+    // An explicit project is the agent having made the choice, so it wins:
+    // naming the project the directory was recorded under is accepted on its
+    // own, and so is choosing the name detection now gives. Only the silent
+    // pick is refused.
+    assert_eq!(
+        server
+            .resolve_write_project(
+                &store,
+                Some("old-remote".to_owned()),
+                &detection,
+                ProjectChoice::default()
+            )
+            .unwrap(),
+        ("old-remote".to_owned(), SOURCE_KNOWN_PROJECT.to_owned())
+    );
+    assert_eq!(
+        server
+            .resolve_write_project(
+                &store,
+                Some("new-remote".to_owned()),
+                &detection,
+                ProjectChoice::default()
+            )
+            .unwrap(),
+        (
+            "new-remote".to_owned(),
+            crate::project::SOURCE_GIT_REMOTE.to_owned()
+        )
+    );
+}
+
+/// A directory whose sessions agree with detection is not asked about.
+///
+/// The interception is only for a drift; the ordinary case must pay no extra
+/// prompt and gain no new fields, which is the half a fix like this loses when
+/// the lookup is done and its emptiness is not checked.
+#[test]
+fn a_directory_whose_sessions_agree_is_not_asked_which_project() {
+    let (_temp, server) = test_server(McpOptions::default());
+    let mut store = server.lock_store().unwrap();
+    store.create_session("here", "leteo", "C:/repo").unwrap();
+    let detection = ProjectDetection {
+        project: "leteo".to_owned(),
+        source: crate::project::SOURCE_GIT_REMOTE.to_owned(),
+        path: "C:/repo".to_owned(),
+        available_projects: Vec::new(),
+        warning: None,
+        error_hint: None,
+    };
+
+    assert_eq!(
+        server
+            .resolve_write_project(&store, None, &detection, ProjectChoice::default())
+            .unwrap(),
+        (
+            "leteo".to_owned(),
+            crate::project::SOURCE_GIT_REMOTE.to_owned()
+        ),
+        "the recorded project is the detected one, so nothing is asked"
+    );
 }
 
 #[test]
