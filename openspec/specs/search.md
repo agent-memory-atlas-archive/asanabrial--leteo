@@ -78,9 +78,11 @@ before any of it.
    a 5,243-memory real store it adds about 3 ms to the query, against 0 ms for
    the strict pass, which is why no new index is added and no save latency
    changes. Over the benchmark's partial-word set the two stages take MRR from
-   0.231 to 0.923 — twelve of thirteen at rank one, against Engram's 0.923 —
-   and the one left is a query whose target memory never contains the word
-   asked for.
+   0.231 to 0.923 — twelve of thirteen at rank one — and the one left is a
+   query whose target memory never contains the word asked for. The
+   head-to-head against Engram on the same set is
+   [`docs/comparison-with-engram.md`](../../docs/comparison-with-engram.md);
+   its numbers are measured per run and are not restated here.
 
    **The final stage's floor is dimensionless, and that is not a defect to be
    tuned away.** It knows what an ordinary match looks like for this query; it
