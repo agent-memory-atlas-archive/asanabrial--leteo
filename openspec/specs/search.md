@@ -162,8 +162,14 @@ before any of it.
    reach across unless asked. The widening is asserted too, so a store that
    answers nothing cannot pass.
 
-9. **Deleted memories are never returned.** See
-   [`memory-model.md`](memory-model.md) §8.
+9. **Deleted memories are never returned, and neither are superseded ones.** A
+   deletion excludes the row ([`memory-model.md`](memory-model.md) §8); a judged
+   `supersedes` excludes the memory it points at, because it is out of date
+   rather than gone and reversing the verdict brings it back
+   ([`memory-model.md`](memory-model.md) §13). A pending relation hides nothing.
+   The exclusion is one clause, `not_superseded`, added to every stage rather
+   than restated, so a stage cannot list a memory the context beside it has
+   hidden.
 
 10. **A disjunction is bounded; a conjunction is not, in terms.** Any stage that
     joins a query's words with `OR` — the final stage above, `mode: any` from the

@@ -136,8 +136,8 @@ fn older_revisions_still_get_a_tool_list_without_the_cache_fields() {
                 .get("tools")
                 .and_then(|tools| tools.as_array())
                 .map(Vec::len),
-            Some(19),
-            "{revision} still lists the 19 agent tools"
+            Some(leteo::mcp::PROFILE_AGENT.len()),
+            "{revision} still lists the agent profile"
         );
     }
 }
@@ -145,8 +145,8 @@ fn older_revisions_still_get_a_tool_list_without_the_cache_fields() {
 #[test]
 fn the_cache_fields_are_the_only_change_the_tool_list_gains() {
     // The list itself is byte-identical between a new-revision session and an
-    // old one: same 19 tools, same names, same schemas, same descriptions.
-    // What changed is the envelope, and only the envelope.
+    // old one: same tools, same names, same schemas, same descriptions. What
+    // changed is the envelope, and only the envelope.
     let current = list_tools_at("2026-07-28");
     let legacy = list_tools_at("2025-06-18");
 
@@ -157,7 +157,10 @@ fn the_cache_fields_are_the_only_change_the_tool_list_gains() {
         serde_json::to_string(legacy_tools).expect("serialise legacy tool list"),
         "the added cache fields must not reach into the list itself"
     );
-    assert_eq!(current_tools.as_array().map(Vec::len), Some(19));
+    assert_eq!(
+        current_tools.as_array().map(Vec::len),
+        Some(leteo::mcp::PROFILE_AGENT.len())
+    );
 }
 
 #[test]
@@ -167,7 +170,7 @@ fn the_list_publishes_no_name_twice() {
         .get("tools")
         .and_then(|tools| tools.as_array())
         .expect("tool array");
-    assert_eq!(tools.len(), 19);
+    assert_eq!(tools.len(), leteo::mcp::PROFILE_AGENT.len());
     let names = tools
         .iter()
         .map(|tool| {
@@ -205,7 +208,7 @@ fn an_unknown_revision_falls_back_to_the_ceiling_and_gets_no_cache_fields() {
             .get("tools")
             .and_then(|tools| tools.as_array())
             .map(Vec::len),
-        Some(19)
+        Some(leteo::mcp::PROFILE_AGENT.len())
     );
 }
 

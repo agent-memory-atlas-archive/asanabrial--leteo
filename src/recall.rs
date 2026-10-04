@@ -896,7 +896,7 @@ mod tests {
     }
 
     #[test]
-    fn a_session_opening_marks_the_memories_a_later_one_overturned() {
+    fn a_session_opening_leaves_out_the_memories_a_later_one_overturned() {
         let temp = tempfile::tempdir().unwrap();
         let mut store =
             crate::store::Store::open(crate::store::StoreConfig::new(temp.path().join("c.db")))
@@ -928,7 +928,7 @@ mod tests {
             .save_relation(crate::memory::model::SaveRelationParams {
                 sync_id: crate::memory::normalize::sync_id("rel"),
                 source_id: newer.sync_id.clone(),
-                target_id: older.sync_id,
+                target_id: older.sync_id.clone(),
             })
             .unwrap();
         store
@@ -944,17 +944,28 @@ mod tests {
         let after = assemble(&store, Some("leteo"), None, 20, usize::MAX).unwrap();
 
         assert!(
-            after.contains(&format!(
-                "(superseded by #{}: We indent with spaces now)",
-                newer.id
-            )),
-            "the opening context hands over fifty memories and has to say which of them no longer \
-             hold: {after}"
+            !after.contains("We indent with tabs"),
+            "a memory a later one overturned is not listed at all: {after}"
         );
+        assert!(
+            !after.contains("superseded by"),
+            "and the context carries no caveat for a memory it did not list: {after}"
+        );
+        assert!(
+            after.contains("We indent with spaces now"),
+            "the memory that overtook it is the one that stands: {after}"
+        );
+
+        // It is hidden from the listing, not from a direct read: the caveat is
+        // still there for the id an agent may already hold.
         assert_eq!(
-            after.matches("superseded by").count(),
-            1,
-            "only the memory that was overturned, not the one that did it: {after}"
+            store
+                .caveats_for(std::slice::from_ref(&older.sync_id))
+                .unwrap()
+                .get(&older.sync_id)
+                .map(Vec::len),
+            Some(1),
+            "a fetch by id still says it was overturned"
         );
     }
 

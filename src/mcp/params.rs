@@ -166,6 +166,33 @@ pub(super) struct DeleteParams {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
+pub(super) struct ConsolidateParams {
+    /// The project the memories being replaced are expected to belong to. A
+    /// source filed under a different one is refused with `project_mismatch`
+    /// and nothing is written.
+    pub(super) expected_project: String,
+    /// Numeric observation identifiers of the memories this one replaces. Each
+    /// gets a judged `supersedes` relation from the new memory and stops
+    /// appearing in search and context. At least one is required.
+    #[schemars(length(min = 1))]
+    pub(super) source_ids: Vec<i64>,
+    /// Category of the replacement memory. One of: bugfix, decision, policy,
+    /// architecture, discovery, pattern, config, preference.
+    #[serde(rename = "type", default = "default_observation_type")]
+    pub(super) kind: String,
+    /// Short searchable title for the replacement memory.
+    pub(super) title: String,
+    /// Full body of the replacement memory.
+    pub(super) content: String,
+    /// Memory scope: project, personal, or global.
+    #[serde(default = "default_scope")]
+    pub(super) scope: String,
+    /// Stable key used to revise an evolving observation instead of inserting another.
+    pub(super) topic_key: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(super) struct SearchParams {
     /// Full-text query or an exact topic key containing a slash. At most 8192 bytes of raw query; a longer one is refused with `query_too_long` before it is tokenised.
     pub(super) query: String,

@@ -304,6 +304,16 @@ pub(super) struct DeleteOutput {
 }
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]
+pub(super) struct ConsolidateOutput {
+    pub(super) observation: ObservationOutput,
+    /// One judged `supersedes` relation per source, from the replacement to the
+    /// memory it replaced. Reversing one restores that source.
+    pub(super) relations: Vec<RelationOutput>,
+    /// The source ids that were replaced, in the order they were asked for.
+    pub(super) source_ids: Vec<i64>,
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(super) struct PinOutput {
     pub(super) id: i64,
     pub(super) sync_id: String,

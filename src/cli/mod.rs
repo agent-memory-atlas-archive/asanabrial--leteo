@@ -9,7 +9,10 @@ use clap::{Parser, Subcommand, ValueEnum};
 
 use crate::{
     AddObservation, AddPrompt, SearchMode, SearchOptions, Store, StoreConfig,
-    memory::model::{ListDeferredOptions, ListRelationsOptions, ProjectStats, ScanOptions},
+    memory::model::{
+        ConsolidateObservations, ListDeferredOptions, ListRelationsOptions, ProjectStats,
+        ScanOptions,
+    },
 };
 
 mod args;
@@ -424,6 +427,34 @@ pub async fn run(cli: Cli) -> Result<()> {
                 eprintln!("leteo save: {}", crate::mcp::UNFILED_KIND_HINT);
             }
             print_json(&saved)?;
+        }
+        Command::Consolidate {
+            source_ids,
+            r#type,
+            title,
+            content,
+            scope,
+            topic_key,
+        } => {
+            // The session carries no project assertion, the way `delete` makes
+            // none: a person named the ids, so no `expected_project` is passed.
+            // The replacement is filed where the sources are rather than where
+            // this command happens to be run from — see
+            // `Store::consolidate_observations`.
+            let session = resolve_write_session(&mut store, None, None)?;
+            let outcome = store.consolidate_observations(ConsolidateObservations {
+                session_id: session.id,
+                kind: r#type,
+                title,
+                content,
+                tool_name: None,
+                project: None,
+                scope,
+                topic_key,
+                source_ids,
+                expected_project: None,
+            })?;
+            print_json(&outcome)?;
         }
         Command::Search {
             query,

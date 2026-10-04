@@ -134,6 +134,7 @@ pub const MAX_QUERY_BYTES: usize = 8192;
 /// '')` where `Narrowing` writes `project =` was measured for an afternoon
 /// before anybody noticed the product never issues it.
 pub fn matching_observations_sql(index: &str, weights: &str) -> String {
+    let not_superseded = super::relations::not_superseded();
     format!(
         "SELECT o.id, o.type, bm25({index}, {weights}) AS rank
          FROM {index} fts CROSS JOIN observations o ON o.id = fts.rowid
@@ -141,6 +142,7 @@ pub fn matching_observations_sql(index: &str, weights: &str) -> String {
            AND (?2 IS NULL OR o.type = ?2)
            AND (?3 IS NULL OR LOWER(o.project) = ?3)
            AND (?4 IS NULL OR o.scope = ?4)
+           AND {not_superseded}
          ORDER BY rank LIMIT ?5"
     )
 }
@@ -197,6 +199,7 @@ pub const RERANK_STABILITY_SMOOTHING: f64 = 4.0;
 /// holds the two prefixes together instead of trusting this sentence.
 #[cfg(any(feature = "measure", test))]
 pub fn matching_observations_reranked_sql(index: &str, weights: &str) -> String {
+    let not_superseded = super::relations::not_superseded();
     format!(
         "SELECT o.id, o.type, bm25({index}, {weights}) AS rank
          FROM {index} fts CROSS JOIN observations o ON o.id = fts.rowid
@@ -204,6 +207,7 @@ pub fn matching_observations_reranked_sql(index: &str, weights: &str) -> String 
            AND (?2 IS NULL OR o.type = ?2)
            AND (?3 IS NULL OR LOWER(o.project) = ?3)
            AND (?4 IS NULL OR o.scope = ?4)
+           AND {not_superseded}
          ORDER BY rank * (1.0
            + {RERANK_PIN_WEIGHT} * o.pinned
            + {RERANK_RECENCY_WEIGHT} / (1.0 + (julianday('now') - julianday(
@@ -415,13 +419,15 @@ impl Store {
         // *first*, and that part was silently gone.
         let topic_key = crate::memory::normalize::topic_key(Some(query));
         if let Some(topic_key) = topic_key.filter(|key| key.contains('/')) {
+            let not_superseded = super::relations::not_superseded();
             let mut statement = self.connection.prepare(&format!(
-                "SELECT {OBSERVATION_COLUMNS} FROM observations
-                 WHERE topic_key = ?1 AND deleted_at IS NULL
-                   AND (?2 IS NULL OR type = ?2)
-                   AND (?3 IS NULL OR project = ?3)
-                   AND (?4 IS NULL OR scope = ?4)
-                 ORDER BY updated_at DESC LIMIT ?5"
+                "SELECT {OBSERVATION_COLUMNS} FROM observations o
+                 WHERE o.topic_key = ?1 AND o.deleted_at IS NULL
+                   AND (?2 IS NULL OR o.type = ?2)
+                   AND (?3 IS NULL OR o.project = ?3)
+                   AND (?4 IS NULL OR o.scope = ?4)
+                   AND {not_superseded}
+                 ORDER BY o.updated_at DESC LIMIT ?5"
             ))?;
             let rows = statement.query_map(
                 params![
@@ -932,15 +938,17 @@ impl Store {
         }
         let mut conditions = String::new();
         for index in 0..terms.len() {
-            conditions.push_str(&format!(" AND instr(lower(title), ?{}) > 0", index + 4));
+            conditions.push_str(&format!(" AND instr(lower(o.title), ?{}) > 0", index + 4));
         }
+        let not_superseded = super::relations::not_superseded();
         let sql = format!(
-            "SELECT id, type FROM observations
-              WHERE deleted_at IS NULL
-                AND (?1 IS NULL OR type = ?1)
-                AND (?2 IS NULL OR LOWER(project) = ?2)
-                AND (?3 IS NULL OR scope = ?3){conditions}
-              ORDER BY datetime(created_at) DESC, id DESC LIMIT ?{}",
+            "SELECT o.id, o.type FROM observations o
+              WHERE o.deleted_at IS NULL
+                AND (?1 IS NULL OR o.type = ?1)
+                AND (?2 IS NULL OR LOWER(o.project) = ?2)
+                AND (?3 IS NULL OR o.scope = ?3)
+                AND {not_superseded}{conditions}
+              ORDER BY datetime(o.created_at) DESC, o.id DESC LIMIT ?{}",
             terms.len() + 4
         );
         let mut values: Vec<rusqlite::types::Value> = vec![
@@ -1377,6 +1385,7 @@ impl Store {
 /// harness holding its own copy of the SQL measures a query the product does
 /// not issue. That has already cost an afternoon once.
 pub(crate) fn prompt_recall_sql() -> String {
+    let not_superseded = super::relations::not_superseded();
     format!(
         "SELECT o.id, ifnull(o.sync_id, '') AS sync_id, o.type, o.title,
                 bm25(observations_fts, {BM25_WEIGHTS}) AS rank
@@ -1385,6 +1394,7 @@ pub(crate) fn prompt_recall_sql() -> String {
            AND LOWER(o.project) = ?2
            AND o.type <> 'session_summary'
            AND trim(ifnull(o.title, '')) <> ''
+           AND {not_superseded}
          ORDER BY rank LIMIT ?3"
     )
 }

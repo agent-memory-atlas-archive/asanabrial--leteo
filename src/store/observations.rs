@@ -11,10 +11,11 @@ use super::*;
 /// SQLite narrows on `deleted_at`, which excludes almost nothing, and sorts
 /// what is left in a temporary B-tree.
 pub(super) fn unfiltered_page_sql(clause: &str) -> String {
+    let not_superseded = super::relations::not_superseded();
     format!(
-        "SELECT {OBSERVATION_COLUMNS} FROM observations
-         WHERE deleted_at IS NULL{clause}
-         ORDER BY datetime(created_at) DESC, id DESC LIMIT ? OFFSET ?"
+        "SELECT {OBSERVATION_COLUMNS} FROM observations o
+         WHERE o.deleted_at IS NULL AND {not_superseded}{clause}
+         ORDER BY datetime(o.created_at) DESC, o.id DESC LIMIT ? OFFSET ?"
     )
 }
 
@@ -26,10 +27,11 @@ pub(super) fn unfiltered_page_sql(clause: &str) -> String {
 /// nothing issues, and it made no difference to anything because the query it
 /// served does not exist.
 pub(crate) fn pinned_sql(clauses: &str) -> String {
+    let not_superseded = super::relations::not_superseded();
     format!(
-        "SELECT {OBSERVATION_COLUMNS} FROM observations
-         WHERE deleted_at IS NULL AND pinned = 1{clauses}
-         ORDER BY datetime(created_at) DESC, id DESC"
+        "SELECT {OBSERVATION_COLUMNS} FROM observations o
+         WHERE o.deleted_at IS NULL AND o.pinned = 1 AND {not_superseded}{clauses}
+         ORDER BY datetime(o.created_at) DESC, o.id DESC"
     )
 }
 
@@ -139,6 +141,39 @@ pub(super) fn reschedule_review(
     Ok(())
 }
 
+/// Writes one new memory, inside a caller's transaction.
+///
+/// The INSERT lived in `add_observation` alone until a second path needed to
+/// write a memory — `consolidate_observations`, which must insert the
+/// replacement in the same transaction as the relations that point at it. The
+/// column list, the review clock and the replication journal are one rule, so
+/// they are one function rather than two copies one edit apart.
+///
+/// The caller has already normalised through [`normalize::fields`] and refused
+/// what the store will not hold; this is the write and nothing else.
+fn insert_observation_tx(
+    tx: &Transaction<'_>,
+    session_id: &str,
+    tool_name: Option<&str>,
+    prompt_sync_id: Option<&str>,
+    fields: normalize::Fields,
+) -> Result<Observation, StoreError> {
+    let (kind, title, content, project, scope, topic_key, hash) = fields.into_parts();
+    let sync_id = normalize::sync_id("obs");
+    tx.execute(
+        "INSERT INTO observations
+         (sync_id, session_id, type, title, content, tool_name, project, scope, topic_key,
+          normalized_hash, prompt_sync_id, revision_count, duplicate_count, last_seen_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 1, 1, datetime('now'), datetime('now'))",
+        params![sync_id, session_id, kind, title, content, tool_name, project, scope, topic_key, hash, prompt_sync_id],
+    )?;
+    let id = tx.last_insert_rowid();
+    reschedule_review(tx, id, &kind, None)?;
+    let observation = get_observation_row(tx, id)?;
+    enqueue_observation(tx, &observation)?;
+    Ok(observation)
+}
+
 impl Store {
     pub fn timeline(
         &self,
@@ -234,7 +269,7 @@ impl Store {
     }
 
     pub fn add_observation(&mut self, input: AddObservation) -> Result<AddOutcome, StoreError> {
-        let (kind, title, content, project, scope, topic_key, hash) = normalize::fields(
+        let fields = normalize::fields(
             &input.kind,
             &input.title,
             &input.content,
@@ -242,13 +277,12 @@ impl Store {
             &input.scope,
             input.topic_key.as_deref(),
             self.config.max_observation_length,
-        )
-        .into_parts();
+        );
         // The door. Rejection is a rule, so it lives in `rules` and every entry
         // point gets the same answer — the empty-content check used to exist
         // only in the MCP adapter, which meant the CLI could write a memory
         // that recorded that something happened and not what.
-        if let Some(refusal) = crate::memory::rules::refuse(&title, &content) {
+        if let Some(refusal) = crate::memory::rules::refuse(fields.title(), fields.content()) {
             return Err(invalid_parameter(refusal.message()));
         }
         // An empty string would record a link to a prompt that does not exist.
@@ -261,14 +295,14 @@ impl Store {
 
         let tx = self.write_transaction()?;
         ensure_session_tx(&tx, &input.session_id)?;
-        if let Some(topic_key) = &topic_key {
+        if let Some(topic_key) = fields.topic_key() {
             let existing = tx
                 .query_row(
                     "SELECT id FROM observations
                      WHERE topic_key = ?1 AND ifnull(project, '') = ifnull(?2, '')
                        AND scope = ?3 AND deleted_at IS NULL
                      ORDER BY datetime(updated_at) DESC, datetime(created_at) DESC LIMIT 1",
-                    params![topic_key, project, scope],
+                    params![topic_key, fields.project(), fields.scope()],
                     |row| row.get::<_, i64>(0),
                 )
                 .optional()?;
@@ -281,9 +315,17 @@ impl Store {
                     "UPDATE observations SET type = ?1, title = ?2, content = ?3, tool_name = ?4,
                      topic_key = ?5, normalized_hash = ?6, revision_count = revision_count + 1,
                      last_seen_at = datetime('now'), updated_at = datetime('now') WHERE id = ?7",
-                    params![kind, title, content, input.tool_name, topic_key, hash, id],
+                    params![
+                        fields.kind(),
+                        fields.title(),
+                        fields.content(),
+                        input.tool_name,
+                        topic_key,
+                        fields.hash(),
+                        id
+                    ],
                 )?;
-                reschedule_review(&tx, id, &kind, Some(&previous_kind))?;
+                reschedule_review(&tx, id, fields.kind(), Some(&previous_kind))?;
                 let observation = get_observation_row(&tx, id)?;
                 enqueue_observation(&tx, &observation)?;
                 tx.commit()?;
@@ -302,7 +344,14 @@ impl Store {
                    AND scope = ?3 AND type = ?4 AND title = ?5 AND deleted_at IS NULL
                    AND datetime(created_at) >= datetime('now', ?6)
                  ORDER BY created_at DESC LIMIT 1",
-                params![hash, project, scope, kind, title, modifier.as_ref()],
+                params![
+                    fields.hash(),
+                    fields.project(),
+                    fields.scope(),
+                    fields.kind(),
+                    fields.title(),
+                    modifier.as_ref()
+                ],
                 |row| row.get::<_, i64>(0),
             )
             .optional()?;
@@ -321,15 +370,6 @@ impl Store {
             });
         }
 
-        let sync_id = normalize::sync_id("obs");
-        tx.execute(
-            "INSERT INTO observations
-             (sync_id, session_id, type, title, content, tool_name, project, scope, topic_key,
-              normalized_hash, prompt_sync_id, revision_count, duplicate_count, last_seen_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 1, 1, datetime('now'), datetime('now'))",
-            params![sync_id, input.session_id, kind, title, content, input.tool_name, project, scope, topic_key, hash, prompt_sync_id],
-        )?;
-        let id = tx.last_insert_rowid();
         // From the row's own `created_at`, through the one function that knows
         // this rule, rather than from a second reading of the clock.
         //
@@ -347,13 +387,121 @@ impl Store {
         //
         // Two clocks for one rule, which is the shape this crate keeps finding.
         // Now there is one, and it reads the value both sides already agree on.
-        reschedule_review(&tx, id, &kind, None)?;
-        let observation = get_observation_row(&tx, id)?;
-        enqueue_observation(&tx, &observation)?;
+        let observation = insert_observation_tx(
+            &tx,
+            &input.session_id,
+            input.tool_name.as_deref(),
+            prompt_sync_id,
+            fields,
+        )?;
         tx.commit()?;
         Ok(AddOutcome {
             kind: AddOutcomeKind::Inserted,
             observation,
+        })
+    }
+
+    /// Replaces several memories with one, recording a judged `supersedes`
+    /// relation to each source, in a single transaction.
+    ///
+    /// Engram's plan (#242) soft-deletes the sources and inserts a replacement.
+    /// Ours keeps the graph Leteo already has: the replacement is inserted once,
+    /// and each source gets a judged `supersedes` relation pointing at it. That
+    /// makes the merge traceable — the relation names both ends — and
+    /// reversible, because a re-verdict or a removal restores the source to
+    /// search and context. Nothing is deleted.
+    ///
+    /// One transaction around the whole thing, so criterion one holds: a source
+    /// in the wrong project, or one that does not exist, refuses before the
+    /// replacement row or any relation is written. Every source is read and
+    /// checked before the first write, so the failure the caller sees is the
+    /// one that stopped it rather than a half-merge.
+    pub fn consolidate_observations(
+        &mut self,
+        input: ConsolidateObservations,
+    ) -> Result<ConsolidateOutcome, StoreError> {
+        // A merge of nothing, and a merge that would record two relations to
+        // one memory, are caller mistakes rather than store ones. Refused
+        // before the transaction so nothing is opened for them.
+        if input.source_ids.is_empty() {
+            return Err(StoreError::ConsolidationSources {
+                reason: "source_ids is empty; a merge needs at least one memory to replace"
+                    .to_owned(),
+            });
+        }
+        let mut seen = BTreeSet::new();
+        for id in &input.source_ids {
+            if !seen.insert(*id) {
+                return Err(StoreError::ConsolidationSources {
+                    reason: format!("source_ids repeats observation {id}"),
+                });
+            }
+        }
+
+        // Read before the transaction, so the borrow of `self` for the budget
+        // and the borrow for the write do not overlap.
+        let max_length = self.config.max_observation_length;
+        let tx = self.write_transaction()?;
+        ensure_session_tx(&tx, &input.session_id)?;
+        // Every source, before any write: the replacement's project depends on
+        // them, and a refusal must leave the store exactly as it was.
+        let mut sources = Vec::with_capacity(input.source_ids.len());
+        for id in &input.source_ids {
+            let source = get_active_observation(&tx, *id)?;
+            assert_expected_project(
+                *id,
+                source.project.as_deref(),
+                input.expected_project.as_deref(),
+            )?;
+            sources.push(source);
+        }
+        // Where the replacement is filed. A caller that named a project means
+        // it; one acting on ids alone — the CLI — inherits the project of the
+        // first source, so a merge does not move the memories to whatever
+        // directory it happened to be run from.
+        let project = input
+            .project
+            .clone()
+            .or_else(|| sources.first().and_then(|source| source.project.clone()));
+        let fields = normalize::fields(
+            &input.kind,
+            &input.title,
+            &input.content,
+            project.as_deref(),
+            &input.scope,
+            input.topic_key.as_deref(),
+            max_length,
+        );
+        if let Some(refusal) = crate::memory::rules::refuse(fields.title(), fields.content()) {
+            return Err(invalid_parameter(refusal.message()));
+        }
+        let observation = insert_observation_tx(
+            &tx,
+            &input.session_id,
+            input.tool_name.as_deref(),
+            None,
+            fields,
+        )?;
+        // One judged `supersedes` per source, through the same path every other
+        // judged relation takes: the cross-project guard, the provenance and the
+        // replication journal are not re-decided here.
+        let mut relations = Vec::with_capacity(sources.len());
+        for source in &sources {
+            relations.push(super::relations::judge_relation_tx(
+                &tx,
+                &observation.sync_id,
+                &source.sync_id,
+                RELATION_SUPERSEDES,
+                None,
+                None,
+                None,
+            )?);
+        }
+        tx.commit()?;
+        Ok(ConsolidateOutcome {
+            observation,
+            relations,
+            sources: input.source_ids,
         })
     }
 
@@ -523,10 +671,11 @@ impl Store {
     /// The memories an opening block lists, and only those.
     ///
     /// [`recent_observations`](Self::recent_observations) answers with
-    /// everything and leaves the caller to drop what it cannot use, which meant
-    /// asking for four times the budget and hoping: pinned memories are listed
-    /// separately, session summaries are folded onto their sessions, and a
-    /// narrowed scope is filtered afterwards. Four times over is a guess, and
+    /// everything current and leaves the caller to drop what it cannot use,
+    /// which meant asking for four times the budget and hoping: pinned memories
+    /// are listed separately, session summaries are folded onto their sessions,
+    /// and a narrowed scope is filtered afterwards. Four times over is a guess,
+    /// and
     /// what a guess costs is either too much read or too little delivered —
     /// on a real store, 360KB of memory bodies fetched to show 175KB of them.
     ///
@@ -549,10 +698,12 @@ impl Store {
         narrowing.equals("project", project.as_ref());
         narrowing.equals("scope", scope.as_ref());
         let limit = narrowing.bind(&limit);
+        let not_superseded = super::relations::not_superseded();
         let mut statement = self.connection.prepare(&format!(
-            "SELECT {OBSERVATION_COLUMNS} FROM observations
-             WHERE deleted_at IS NULL AND pinned = 0 AND type <> '{summary}'{}
-             ORDER BY datetime(created_at) DESC, id DESC LIMIT ?{limit}",
+            "SELECT {OBSERVATION_COLUMNS} FROM observations o
+             WHERE o.deleted_at IS NULL AND o.pinned = 0 AND o.type <> '{summary}'
+               AND {not_superseded}{}
+             ORDER BY datetime(o.created_at) DESC, o.id DESC LIMIT ?{limit}",
             narrowing.clauses()
         ))?;
         let rows = statement.query_map(
@@ -603,15 +754,17 @@ impl Store {
         let holes = std::iter::repeat_n("?", session_ids.len())
             .collect::<Vec<_>>()
             .join(", ");
+        let not_superseded = super::relations::not_superseded();
         let mut statement = self.connection.prepare(&format!(
             "SELECT {OBSERVATION_COLUMNS} FROM (
-                 SELECT *, ROW_NUMBER() OVER (
-                            PARTITION BY session_id
-                            ORDER BY datetime(created_at) DESC, id DESC
+                 SELECT o.*, ROW_NUMBER() OVER (
+                            PARTITION BY o.session_id
+                            ORDER BY datetime(o.created_at) DESC, o.id DESC
                         ) AS place
-                   FROM observations
-                  WHERE deleted_at IS NULL AND type = '{summary}'
-                    AND session_id IN ({holes})
+                   FROM observations o
+                  WHERE o.deleted_at IS NULL AND o.type = '{summary}'
+                    AND o.session_id IN ({holes})
+                    AND {not_superseded}
              )
              WHERE place = 1
              ORDER BY datetime(created_at) DESC, id DESC"
@@ -659,10 +812,15 @@ impl Store {
         } else {
             format!(" AND type <> '{summary}'")
         };
+        // The sibling of `recent_memories`, and it listed a memory a later one
+        // had overtaken: the CLI `recent` command, the Obsidian view and the
+        // conflict scan all read this door. The lossless JSON export does not —
+        // it reads the tables directly — so nothing here reaches a backup.
+        let not_superseded = super::relations::not_superseded();
         let mut statement = self.connection.prepare(&format!(
-            "SELECT {OBSERVATION_COLUMNS} FROM observations
-             WHERE deleted_at IS NULL{without}{}
-             ORDER BY datetime(created_at) DESC, id DESC LIMIT ?{limit}",
+            "SELECT {OBSERVATION_COLUMNS} FROM observations o
+             WHERE o.deleted_at IS NULL AND {not_superseded}{without}{}
+             ORDER BY datetime(o.created_at) DESC, o.id DESC LIMIT ?{limit}",
             narrowing.clauses()
         ))?;
         let rows = statement.query_map(
@@ -725,12 +883,16 @@ impl Store {
         // nothing but punctuation leaves no terms at all, and `MATCH ''` is a
         // syntax error rather than a search that finds nothing.
         let fts = normalize::fts_prefix_query(query);
+        let not_superseded = super::relations::not_superseded();
         if fts.is_empty() {
             let (clause, values) = Self::project_clause(projects, "project");
             let bound: Vec<&dyn rusqlite::ToSql> =
                 values.iter().map(|v| v as &dyn rusqlite::ToSql).collect();
             let total = self.connection.query_row(
-                &format!("SELECT COUNT(*) FROM observations WHERE deleted_at IS NULL{clause}"),
+                &format!(
+                    "SELECT COUNT(*) FROM observations o
+                     WHERE o.deleted_at IS NULL AND {not_superseded}{clause}"
+                ),
                 bound.as_slice(),
                 |row| row.get(0),
             )?;
@@ -751,7 +913,8 @@ impl Store {
             &format!(
                 "SELECT COUNT(*)
                  FROM observations_fts fts CROSS JOIN observations o ON o.id = fts.rowid
-                 WHERE observations_fts MATCH ? AND o.deleted_at IS NULL{clause}"
+                 WHERE observations_fts MATCH ? AND o.deleted_at IS NULL
+                   AND {not_superseded}{clause}"
             ),
             bound.as_slice(),
             |row| row.get(0),
@@ -759,7 +922,8 @@ impl Store {
         let mut statement = self.connection.prepare(&format!(
             "SELECT {OBSERVATION_COLUMNS_JOINED}
              FROM observations_fts fts CROSS JOIN observations o ON o.id = fts.rowid
-             WHERE observations_fts MATCH ? AND o.deleted_at IS NULL{clause}
+             WHERE observations_fts MATCH ? AND o.deleted_at IS NULL
+               AND {not_superseded}{clause}
              ORDER BY bm25(observations_fts, {BM25_WEIGHTS})
              LIMIT ? OFFSET ?"
         ))?;

@@ -181,7 +181,10 @@ duties about what an answer explains.
    memories a prompt hint may name, the widened stages of a search. They were a
    third of the answer on two real projects, seven and eight of twenty.
    `--summaries` brings them back, and the count of what was held back is said
-   on stderr when there was any.
+   on stderr when there was any. A memory a judged `supersedes` points at is
+   left out of `recent` too, the way `search` and `context` already leave it
+   out — `--summaries` is about session summaries and does not bring it back
+   ([`memory-model.md`](memory-model.md) §13).
 
 10. **`leteo conflicts scan --dry-run` says what applying would do.** The same
     questions, the same numbers, the same cap — only the writes are withheld.
@@ -238,6 +241,17 @@ duties about what an answer explains.
    injects; the tool answers with the structured lists. What they must agree on
    is *which* memories, and they do: over the same store and budget, the same
    fifty in the same order.
+
+14. **`leteo consolidate` merges several memories into one, and files the
+    replacement where the sources are.** `leteo consolidate <ids…> --title …
+    --content …` writes the replacement and records a judged `supersedes`
+    relation to each source, in one transaction — the same store method
+    `mem_consolidate` calls, so the CLI and the tool cannot disagree about what
+    a merge is. It takes no project assertion: a person named the ids, and the
+    replacement is filed where the first source is rather than where the command
+    happened to be run from, so a merge does not move the family to the
+    directory's project. The reply is the same outcome the tool serialises, with
+    `sources` naming the ids that were replaced.
 
 ## Invariants
 

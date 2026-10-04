@@ -324,6 +324,59 @@ impl LeteoMcpServer {
     }
 
     #[tool(
+        name = "mem_consolidate",
+        description = "Replace several memories with one, recording a judged \
+                       `supersedes` relation from the new memory to each source so the \
+                       merge is traceable and reversible. Superseded sources stop \
+                       appearing in search and context; a source is still readable by id \
+                       with mem_get_observation. The replacement comes back as a 400-byte \
+                       preview marked `content_truncated`.",
+        annotations(
+            title = "Consolidate Memories",
+            read_only_hint = false,
+            destructive_hint = true,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
+    pub(super) fn mem_consolidate(
+        &self,
+        Parameters(params): Parameters<ConsolidateParams>,
+    ) -> Result<Json<ConsolidateOutput>, CallToolResult> {
+        let mut store = self.lock_store()?;
+        // The project the sources are asserted to be in is also where the
+        // replacement lands: a merge that filed the new memory somewhere else
+        // would split the family it just joined. `write_session` resolves it
+        // through the same door every other write takes.
+        let expected_project = params.expected_project.clone();
+        let context = self.write_session(
+            &mut store,
+            None,
+            Some(expected_project.clone()),
+            ProjectChoice::default(),
+        )?;
+        let outcome = store
+            .consolidate_observations(ConsolidateObservations {
+                session_id: context.id,
+                kind: params.kind,
+                title: params.title,
+                content: params.content,
+                tool_name: None,
+                project: Some(context.project),
+                scope: params.scope,
+                topic_key: params.topic_key,
+                source_ids: params.source_ids,
+                expected_project: Some(expected_project),
+            })
+            .map_err(store_error)?;
+        Ok(Json(ConsolidateOutput {
+            observation: ObservationOutput::from(outcome.observation).preview(),
+            relations: outcome.relations.into_iter().map(Into::into).collect(),
+            source_ids: outcome.sources,
+        }))
+    }
+
+    #[tool(
         name = "mem_search",
         description = "Search persistent observations by full-text query and optional \
                        filters. Answers about the current project unless you pass a \

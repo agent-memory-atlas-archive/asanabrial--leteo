@@ -13,14 +13,15 @@ use thiserror::Error;
 use crate::{
     memory::model::{
         AddObservation, AddOutcome, AddOutcomeKind, AddPrompt, Candidate, CandidateOptions, Caveat,
-        CaveatVerb, DeferredRow, DeleteProjectResult, DeleteSessionResult, DoctorCheck,
-        DoctorReport, ExportData, ForeignKeyViolation, ImportResult, IndexRebuild,
-        JudgeBySemanticParams, JudgeRelationParams, ListDeferredOptions, ListRelationsOptions,
-        Listing, MemoryRef, MergeResult, Observation, PassiveCapture, PassiveCaptureResult,
-        PendingPair, PendingSide, ProjectStats, Prompt, PruneResult, Relation, RelationListItem,
-        RelationStats, ReplayDeferredResult, SaveRelationParams, ScanOptions, ScanResult,
-        SearchMode, SearchOptions, SearchResult, Session, SessionSummary, Stats, SyncMutation,
-        SyncState, TimelineEntry, TimelineResult, UpdateObservation,
+        CaveatVerb, ConsolidateObservations, ConsolidateOutcome, DeferredRow, DeleteProjectResult,
+        DeleteSessionResult, DoctorCheck, DoctorReport, ExportData, ForeignKeyViolation,
+        ImportResult, IndexRebuild, JudgeBySemanticParams, JudgeRelationParams,
+        ListDeferredOptions, ListRelationsOptions, Listing, MemoryRef, MergeResult, Observation,
+        PassiveCapture, PassiveCaptureResult, PendingPair, PendingSide, ProjectStats, Prompt,
+        PruneResult, Relation, RelationListItem, RelationStats, ReplayDeferredResult,
+        SaveRelationParams, ScanOptions, ScanResult, SearchMode, SearchOptions, SearchResult,
+        Session, SessionSummary, Stats, SyncMutation, SyncState, TimelineEntry, TimelineResult,
+        UpdateObservation,
     },
     memory::normalize,
 };
@@ -512,6 +513,15 @@ pub enum StoreError {
         "observation {id} was deleted on {deleted_at}; its body is still readable with mem_get_observation, and saving the same thing again writes a new memory rather than restoring this one"
     )]
     ObservationDeleted { id: i64, deleted_at: String },
+    /// A merge was asked for with a source list it cannot act on.
+    ///
+    /// An empty list is a merge of nothing, and a repeated id would record two
+    /// `supersedes` relations to one memory — a graph that reads as two
+    /// separate merges. Its own code (`consolidation_sources`) rather than
+    /// `invalid_params`, so a caller can tell this apart from the field-level
+    /// refusals the protocol layer makes before the tool runs.
+    #[error("cannot consolidate: {reason}")]
+    ConsolidationSources { reason: String },
     #[error(
         "this database is at schema version {found}, but this build of Leteo understands {supported}; upgrade Leteo to open it"
     )]

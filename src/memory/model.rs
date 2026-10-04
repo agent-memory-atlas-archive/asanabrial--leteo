@@ -248,6 +248,45 @@ pub struct AddOutcome {
     pub observation: Observation,
 }
 
+/// One call that replaces several memories with a single new one.
+///
+/// Engram's plan soft-deletes the sources and inserts a replacement; Leteo does
+/// not. It inserts the replacement and records a judged `supersedes` relation
+/// to each source, so the merge is traceable — the graph says which memory
+/// overtook which — and reversible, because reversing a relation brings its
+/// source back into search and context. Nothing is deleted and nothing is lost.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConsolidateObservations {
+    pub session_id: String,
+    pub kind: String,
+    pub title: String,
+    pub content: String,
+    pub tool_name: Option<String>,
+    /// Where the replacement is filed. `None` means the project of the first
+    /// source, which is what a caller acting on ids alone — the command line —
+    /// wants: a merge must not move the memories to wherever it happened to be
+    /// run from.
+    pub project: Option<String>,
+    pub scope: String,
+    pub topic_key: Option<String>,
+    /// The memories being replaced, by the numeric id a caller holds.
+    pub source_ids: Vec<i64>,
+    /// The project every source is expected to belong to, refused when it does
+    /// not. `None` makes no assertion, the way the CLI and the TUI act on an id
+    /// a person chose rather than on an id copied out of a cross-project read.
+    pub expected_project: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ConsolidateOutcome {
+    pub observation: Observation,
+    /// One judged `supersedes` row per source, in the order the sources were
+    /// asked for.
+    pub relations: Vec<Relation>,
+    /// The sources that were replaced, in the order they were asked for.
+    pub sources: Vec<i64>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Candidate {
     pub id: i64,
