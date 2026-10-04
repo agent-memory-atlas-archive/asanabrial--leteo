@@ -25,8 +25,9 @@ env:
 # it against the head a publication just pushed, so a review binds CI evidence
 # to those exact bytes rather than to a build that may have moved. `main`
 # requires the checks below on the pull-request head, and only a `pull_request`
-# run populates that merge box (measured on #110: dispatch runs were absent
-# from `gh pr checks`), so a dispatch against a head this workflow already built
+# run populates that merge box (measured here: a `workflow_dispatch` run's
+# checks do not appear in `gh pr checks`), so a dispatch against a head this
+# workflow already built
 # skips its own copy rather than running the suite twice — `lane-guard` decides
 # that, and a dispatch against a commit no pull request covers runs in full.
 #
