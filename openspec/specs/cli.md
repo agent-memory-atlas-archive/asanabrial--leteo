@@ -143,10 +143,11 @@ duties about what an answer explains.
 6. **`leteo export` is this store written down, field for field.** Whatever an
    export contains, an import restores — including pinning
    ([`memory-model.md`](memory-model.md) §9), review dates, the prompt a memory
-   answers, and deletions. A backup that silently drops what somebody chose to
-   keep in front is a lossy backup, and counting rows cannot see that: the guard
-   populates every field a memory can carry, sends it through the JSON, and
-   compares the two memories whole.
+   answers, deletions, and the version history a content-changing write kept
+   ([`memory-model.md`](memory-model.md) §14). A backup that silently drops what
+   somebody chose to keep in front is a lossy backup, and counting rows cannot
+   see that: the guard populates every field a memory can carry, sends it
+   through the JSON, and compares the two memories whole.
 
    An import builds the full-text indexes once at the end rather than row by
    row: the triggers come off inside the same transaction and go back with a

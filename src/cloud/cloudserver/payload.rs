@@ -67,7 +67,7 @@ pub(super) fn validate_mutation_entries(entries: &[MutationEntry]) -> Result<(),
             || entry.entity_key.trim().is_empty()
             || !matches!(
                 entry.entity.as_str(),
-                "session" | "observation" | "prompt" | "relation"
+                "session" | "observation" | "observation_version" | "prompt" | "relation"
             )
         {
             return Err(ApiError::bad_request(format!(

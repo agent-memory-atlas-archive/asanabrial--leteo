@@ -35,12 +35,12 @@ pub(super) const BASELINE_NORMALIZE_SQL: &str =
 
 /// Every schema change after the baseline, in the order they must be applied.
 ///
-/// One entry, numbered 18, and it was empty until that one. Five numbered
-/// migrations were folded into the baseline before anything shipped: nothing in
-/// the wild had run them, so there was no history to preserve — only a history
-/// to invent. A database converges on the baseline by inspection rather than by
-/// replaying versions it never had, which is the only thing that could ever
-/// work for an Engram database anyway.
+/// Two entries, numbered 18 and 19. Five numbered migrations were folded into
+/// the baseline before anything shipped: nothing in the wild had run them, so
+/// there was no history to preserve — only a history to invent. A database
+/// converges on the baseline by inspection rather than by replaying versions it
+/// never had, which is the only thing that could ever work for an Engram
+/// database anyway.
 ///
 /// Append only from here. A *released* migration is never edited, because the
 /// databases that already ran it will not run it again — editing one changes
@@ -52,7 +52,8 @@ pub(super) const BASELINE_NORMALIZE_SQL: &str =
 ///   0001_baseline_normalize.sql  <- and the data rules that go with it
 ///   0001_baseline_after_the_tables.sql  <- everything else, folded back in
 ///   0018_review_clocks_in_calendar_months.sql  <- the first one after it
-///   0019_something.sql                  <- add here, and bump SCHEMA_VERSION
+///   0019_observation_versions.sql      <- the version history table
+///   0020_something.sql                  <- add here, and bump SCHEMA_VERSION
 /// ```
 ///
 /// The next number is 19 rather than 2 because 2 through 17 are spent history
@@ -70,16 +71,28 @@ pub(super) const BASELINE_NORMALIZE_SQL: &str =
 /// `SCHEMA_VERSION` is refused at `open`, by design, because from here on that
 /// means a newer build wrote it — and one stamped inside the pre-release band
 /// is refused too, for the different reason `LAST_PRE_RELEASE_VERSION` records.
-pub(super) const MIGRATIONS: &[(i32, Migration)] = &[(
-    18,
-    Migration::Rust(
-        REVIEW_CLOCKS_IN_CALENDAR_MONTHS,
-        review_clocks_in_calendar_months,
+pub(super) const MIGRATIONS: &[(i32, Migration)] = &[
+    (
+        18,
+        Migration::Rust(
+            REVIEW_CLOCKS_IN_CALENDAR_MONTHS,
+            review_clocks_in_calendar_months,
+        ),
     ),
-)];
+    (19, Migration::Sql(OBSERVATION_VERSIONS)),
+];
 
 pub(super) const REVIEW_CLOCKS_IN_CALENDAR_MONTHS: &str =
     include_str!("../../migrations/0018_review_clocks_in_calendar_months.sql");
+
+/// Migration 19: the table the previous version of a memory is kept in.
+///
+/// Pure SQL, and the first `Migration::Sql` after the variant was written for a
+/// step no SQL could express — which is why the `#[expect(dead_code)]` that
+/// used to guard the arm is gone rather than left permitting a lint that no
+/// longer fires.
+pub(super) const OBSERVATION_VERSIONS: &str =
+    include_str!("../../migrations/0019_observation_versions.sql");
 
 /// How a migration is carried out.
 ///
@@ -91,20 +104,11 @@ pub(super) const REVIEW_CLOCKS_IN_CALENDAR_MONTHS: &str =
 /// while the Rust skipped the blank and found the answer. One rule, one
 /// implementation, and the file keeps the prose explaining why.
 ///
-/// Constructed again as of migration 18, which is the `Rust` variant's second
-/// use and the reason the variant was kept while nothing used it. The parts
-/// that are not obvious, and that a rebuild would have had to rediscover: one
-/// transaction around the whole run, the stamp *after* the step rather than
-/// before, and a `Rust` arm for a rule the code already owns.
+/// Migration 18 was the `Rust` variant's second use and the reason the variant
+/// was kept while nothing used it; migration 19 is the first plain SQL step
+/// after it and constructs the `Sql` arm for the first time.
 pub(super) enum Migration {
-    // The half that is not carried yet. Migration 18 happens to be a `Rust`
-    // one, so this arm is unconstructed for the same reason the whole enum
-    // was until it existed — and it is `expect` rather than `allow` for the
-    // same reason too: the first migration that is plain SQL makes this
-    // constructed again and fails the build here, which is the reminder to
-    // delete the attribute. An `allow` would sit there permitting a lint that
-    // no longer fires.
-    #[expect(dead_code, reason = "the arm the first SQL migration uses")]
+    /// The documentation, and the SQL that does the work.
     Sql(&'static str),
     /// The documentation, and the step that does the work.
     Rust(&'static str, fn(&Connection) -> Result<(), rusqlite::Error>),
@@ -128,20 +132,21 @@ pub(super) enum Migration {
 /// numbered above all of them instead of re-stamping them down and colliding
 /// with the numbers a released build hands out.
 ///
-/// Migration 18 is that first one, so this is now 18. The paragraph above was
-/// written before it existed and turned out to be an instruction rather than a
+/// Migration 18 is that first one, and migration 19 — the version-history
+/// table — follows it, so this is now 19. The paragraph above was
+/// written before 18 existed and turned out to be an instruction rather than a
 /// description — and it undercounts what has to be cleared. Six numbers are
 /// history in the sense it means, but *seventeen* have been stamped on a real
 /// file: eleven more migrations, `0007` through `0017`, accumulated before
-/// anything shipped and were folded into the same baseline. Numbering this 7
+/// anything shipped and were folded into the same baseline. Numbering 18 as 7
 /// would have collided with one of them, and a development store already
 /// stamped 7 would have read as current and skipped the repair in silence. 18
-/// is above every number any file has carried.
+/// is above every number any file has carried, and 19 is above 18.
 ///
 /// What raising it past them does *not* do is make them migratable: see
 /// `LAST_PRE_RELEASE_VERSION` and the refusal in `migrate`. They stop being
 /// ambiguous and stay refused.
-pub(crate) const SCHEMA_VERSION: i32 = 18;
+pub(crate) const SCHEMA_VERSION: i32 = 19;
 
 /// The highest number stamped by the numbering that predates any release.
 ///

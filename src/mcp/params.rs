@@ -232,6 +232,10 @@ pub(super) struct GetObservationParams {
     /// Numeric observation identifier. Also accepted as `observation_id`.
     #[serde(alias = "observation_id")]
     pub(super) id: i64,
+    /// Include the titles and bodies earlier writes replaced, newest first.
+    /// Defaults to false. The versions come back whole, not previewed.
+    #[serde(default)]
+    pub(super) include_history: bool,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]

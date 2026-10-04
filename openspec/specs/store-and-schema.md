@@ -289,6 +289,28 @@ there from any provenance, and how it says when something has gone wrong.
     does not read. All of them are named in `dropped`. The quarantine semantics
     are the part carried across rather than reported.
 
+15. **Version history is a table, and both of its indexes have a job.** Migration
+    19 adds `observation_versions`, one row per superseded revision:
+    `observation_sync_id`, `revision`, `title`, `content`, and `replaced_at`. It
+    is keyed by the observation's `sync_id` rather than its local `id`, because
+    the row must survive replication ([`replication.md`](replication.md) §8). A
+    unique index on `(observation_sync_id, revision)` is what makes applying a
+    version idempotent — a replayed payload is an `INSERT OR IGNORE` that lands
+    once. The read is that pair newest revision first, served by
+    `idx_observation_versions_read` on `(observation_sync_id, revision DESC)`;
+    the unique index would answer it too, and the two are kept apart so the
+    idempotency the first exists for is not load-bearing on a read plan. No
+    full-text index carries a column of this table, so migration 19 needs no
+    rebuild, and it writes no existing column, so nothing else moves.
+
+    Retention is the newest `OBSERVATION_VERSION_RETENTION` per observation,
+    applied after every insert by
+    `store::observations::snapshot_observation_version_tx` on the local path and
+    the replicated one alike. It is a function rather than a trigger because one
+    number has to govern both paths and the tests that drive past it; the bound
+    itself and what a version is are in
+    [`memory-model.md`](memory-model.md) §14.
+
 ## Invariants
 
 - Every full-text index has its triggers, and `FULL_TEXT_INDEXES` /

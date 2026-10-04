@@ -6,9 +6,9 @@ lives in the database header and costs nothing to read.
 ## Adding a change
 
 1. Write a new file, numbered above the last one:
-   `migrations/0019_add_something.sql`. Above the *last*, which is 18 and not 1
+   `migrations/0020_add_something.sql`. Above the *last*, which is 19 and not 1
    — everything from 2 to 17 is spent history and is refused rather than
-   migrated, so the next free number is 19.
+   migrated, so the next free number is 20.
 2. Register it in `MIGRATIONS` in `src/store/schema.rs`.
 3. Bump `SCHEMA_VERSION` to the same number.
 
@@ -95,6 +95,12 @@ Nothing reads it, so nothing caught it.
 in Rust, because the rule it applies is one the code already owns and writing it
 in SQL is what caused the defect. The file explains the whole of it, including
 why the number is 18 and not 2 or 7.
+
+## Version 19 is the first plain-SQL migration after the baseline
+
+`0019_observation_versions.sql` adds the table a content-changing write keeps
+the replaced title and body in. It is the first `Migration::Sql` arm after the
+variant was written for a step no SQL could express, and the file is pure SQL.
 
 ## What catches a mistake, given there is no ORM
 

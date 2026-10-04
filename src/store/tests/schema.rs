@@ -101,6 +101,10 @@ fn every_shared_column_list_is_valid_sql_against_the_real_schema() {
             "SYNC_MUTATION_COLUMNS",
             format!("SELECT {SYNC_MUTATION_COLUMNS} FROM sync_mutations"),
         ),
+        (
+            "OBSERVATION_VERSION_COLUMNS",
+            format!("SELECT {OBSERVATION_VERSION_COLUMNS} FROM observation_versions"),
+        ),
     ] {
         store
             .connection

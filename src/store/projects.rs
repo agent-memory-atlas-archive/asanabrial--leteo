@@ -164,6 +164,7 @@ impl Store {
             observations: Vec::new(),
             prompts: Vec::new(),
             relations: Vec::new(),
+            observation_versions: Vec::new(),
             // Leteo writes `0.1.0`, which has no tombstones. The field exists
             // to read Engram 0.2.0's; producing them is not this build's job.
             prompt_tombstones: Vec::new(),
@@ -263,6 +264,32 @@ impl Store {
         };
         data.relations = relation_rows.collect::<Result<Vec<_>, _>>()?;
         drop(relation_statement);
+        // The version history of the memories this export holds. One whose
+        // memory stayed behind is left out with it: a version is only ever read
+        // through the memory it belongs to, so shipping one alone would be a
+        // row nothing can reach.
+        let version_sql = format!(
+            "SELECT observation_sync_id, revision, title, content, replaced_at
+               FROM observation_versions
+              WHERE observation_sync_id IN (SELECT sync_id FROM observations WHERE {0})
+              ORDER BY observation_sync_id, revision DESC",
+            match project {
+                Some(_) =>
+                    "ifnull(project, '') = ?1 OR \
+                            (ifnull(project, '') = '' AND session_id IN \
+                                (SELECT id FROM sessions WHERE project = ?1))",
+                None => "1 = 1",
+            }
+        );
+        let mut version_statement = self.connection.prepare(&version_sql)?;
+        let version_rows = match project {
+            Some(project) => {
+                version_statement.query_map([project], map_export_observation_version)?
+            }
+            None => version_statement.query_map([], map_export_observation_version)?,
+        };
+        data.observation_versions = version_rows.collect::<Result<Vec<_>, _>>()?;
+        drop(version_statement);
         // Nothing was written, so ending the snapshot either way is equivalent;
         // committing states the intent.
         snapshot.commit()?;

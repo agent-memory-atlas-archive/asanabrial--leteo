@@ -202,6 +202,29 @@ changes.
     more useful than an error. See [`mcp-tools.md`](mcp-tools.md) §19 and
     [`search.md`](search.md) §9.
 
+14. **A content-changing write keeps the title and body it replaced.** Saving
+    under a topic key that names an existing memory, or revising one with
+    `mem_update`, overwrites its text in place — and used to lose it, leaving
+    only `revision_count` as a mark that anything had happened. The replaced
+    title and body are now written to `observation_versions` inside the same
+    transaction as the write, keyed by the observation's `sync_id` and the
+    revision number being superseded, so a read hands the previous text back
+    byte for byte. `mem_get_observation` opens it with `include_history: true`
+    ([`mcp-tools.md`](mcp-tools.md) §20); the live memory is unchanged in every
+    other way.
+
+    **Only a change to the title or the body counts.** A write that moves the
+    project, the type, the scope or the topic key replaces no text and keeps no
+    version, nor does a re-save of the same words under one key or a
+    deduplicated save: none of those is a previous version anybody lost.
+    Restoring is an ordinary `mem_update` with the old text — there is no
+    separate undo, and nothing marks the live memory as unrevised.
+
+    **Retention is the newest twenty revisions of one observation.** The bound
+    is `store::OBSERVATION_VERSION_RETENTION`, applied on every insert by the
+    one function both write paths call, so the number here and the number
+    applied are the same, and the newest revisions are the ones that survive.
+
 ## Invariants
 
 - The list of types exists once, in `rules::KINDS`, the review windows once in
@@ -221,6 +244,12 @@ changes.
   results either side of a window change, which is the split append-only exists
   to prevent. A migration freezes what it needs; nothing else may. The guard
   that counts the baseline's three literals is what keeps that number honest.
+- **The version-history retention bound is one constant and one function.**
+  `store::OBSERVATION_VERSION_RETENTION` is applied by
+  `store::observations::snapshot_observation_version_tx` on the local write
+  path and the replicated one alike, and §14 names the same number. A second
+  copy — a `LIMIT` written into a query, or a bound on one path only — is the
+  defect the single function exists to prevent.
 - A title is one line, and no longer than a body. Both doors fold and bound it
   through `normalize::title`: saving folded and did not bound, updating did
   neither, so 200 KB went in and came back out of `mem_get_observation` from the

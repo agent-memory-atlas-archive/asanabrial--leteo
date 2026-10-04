@@ -69,6 +69,11 @@ pub(super) struct SaveOutput {
     /// which describes the reply's 400-byte preview.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) storage_truncation: Option<Truncation>,
+    /// Bytes of the body this save replaced, when it landed on an existing
+    /// topic key and changed its content. Absent on an insert, a deduplicated
+    /// save, and a change that kept the same text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) replaced_bytes: Option<usize>,
 }
 
 impl SaveOutput {
@@ -96,6 +101,7 @@ impl SaveOutput {
             judgment_id,
             candidates: candidates.into_iter().map(Into::into).collect(),
             storage_truncation: None,
+            replaced_bytes: value.replaced.map(|replaced| replaced.bytes),
         }
     }
 }
@@ -1098,6 +1104,41 @@ pub(super) struct ObservationResultOutput {
     /// than what was written.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) storage_truncation: Option<Truncation>,
+    /// Bytes of the body this update replaced, when it changed the title or
+    /// body. Absent for a read, and for a change that only moved metadata.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) replaced_bytes: Option<usize>,
+    /// Set when the replacement was under half the body it replaced, naming the
+    /// read that returns the previous text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) hint: Option<String>,
+    /// The titles and bodies earlier writes replaced, newest first. Empty
+    /// unless the read asked for history with include_history.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) versions: Vec<ObservationVersionOutput>,
+}
+
+/// One title and body a later write replaced.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub(super) struct ObservationVersionOutput {
+    /// The revision_count the live memory held before the write replaced it.
+    pub(super) revision: i64,
+    pub(super) title: String,
+    /// The previous body, whole rather than previewed.
+    pub(super) content: String,
+    /// When the write that replaced this version happened.
+    pub(super) replaced_at: String,
+}
+
+impl From<ObservationVersion> for ObservationVersionOutput {
+    fn from(value: ObservationVersion) -> Self {
+        Self {
+            revision: value.revision,
+            title: value.title,
+            content: value.content,
+            replaced_at: value.replaced_at,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]

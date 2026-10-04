@@ -14,14 +14,14 @@ use crate::{
     memory::model::{
         AddObservation, AddOutcome, AddOutcomeKind, AddPrompt, Candidate, CandidateOptions, Caveat,
         CaveatVerb, ConsolidateObservations, ConsolidateOutcome, DeferredRow, DeleteProjectResult,
-        DeleteSessionResult, DoctorCheck, DoctorReport, ExportData, ForeignKeyViolation,
-        ImportResult, IndexRebuild, JudgeBySemanticParams, JudgeRelationParams,
-        ListDeferredOptions, ListRelationsOptions, Listing, MemoryRef, MergeResult, Observation,
-        PassiveCapture, PassiveCaptureResult, PendingPair, PendingSide, ProjectStats, Prompt,
-        PruneResult, Relation, RelationListItem, RelationStats, ReplayDeferredResult,
-        SaveRelationParams, ScanOptions, ScanResult, SearchMode, SearchOptions, SearchResult,
-        Session, SessionSummary, Stats, SyncMutation, SyncState, TimelineEntry, TimelineResult,
-        UpdateObservation,
+        DeleteSessionResult, DoctorCheck, DoctorReport, ExportData, ExportObservationVersion,
+        ForeignKeyViolation, ImportResult, IndexRebuild, JudgeBySemanticParams,
+        JudgeRelationParams, ListDeferredOptions, ListRelationsOptions, Listing, MemoryRef,
+        MergeResult, Observation, ObservationVersion, PassiveCapture, PassiveCaptureResult,
+        PendingPair, PendingSide, ProjectStats, Prompt, PruneResult, Relation, RelationListItem,
+        RelationStats, ReplacedContent, ReplayDeferredResult, SaveRelationParams, ScanOptions,
+        ScanResult, SearchMode, SearchOptions, SearchResult, Session, SessionSummary, Stats,
+        SyncMutation, SyncState, TimelineEntry, TimelineResult, UpdateObservation, UpdateOutcome,
     },
     memory::normalize,
 };
@@ -169,6 +169,23 @@ const OBSERVATION_COLUMNS: &str = "id, ifnull(sync_id, '') AS sync_id, session_i
 /// full-text search has to qualify them. The aliases keep the result set
 /// identical to [`OBSERVATION_COLUMNS`], and a test holds the two in step.
 const OBSERVATION_COLUMNS_JOINED: &str = "o.id, ifnull(o.sync_id, '') AS sync_id, o.session_id, o.type, o.title, o.content, o.tool_name, o.project, o.scope, o.topic_key, o.revision_count, o.duplicate_count, o.last_seen_at, o.review_after, o.prompt_sync_id, o.pinned, o.created_at, o.updated_at, o.deleted_at";
+
+/// Every column an [`ObservationVersion`] is built from.
+const OBSERVATION_VERSION_COLUMNS: &str = "revision, title, content, replaced_at";
+
+/// How many superseded revisions one observation keeps.
+///
+/// A bound rather than all of them: a topic key is revised for the life of a
+/// project, and an unrevised store that keeps every intermediate body is a
+/// store that grows without anyone asking it to. Twenty is deep enough to walk
+/// back through a day's corrections — a real store's busiest topic key was
+/// rewritten a handful of times — and small enough that the retention rule is
+/// one the tests can drive past.
+///
+/// Applied on every insert by `store::observations::snapshot_observation_version_tx`,
+/// which both the local write path and the replicated one call, so the number
+/// governs both. Published in [`memory-model.md`](../../openspec/specs/memory-model.md).
+pub(crate) const OBSERVATION_VERSION_RETENTION: usize = 20;
 
 /// The narrowings a listing query applies, and the values they bind.
 ///

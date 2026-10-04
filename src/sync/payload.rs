@@ -114,6 +114,21 @@ pub(super) fn normalize_mutation_payload(
             let entity_key = body.sync_id.clone();
             encode_mutation_payload(&body).map(|payload| (payload, entity_key))
         }
+        "observation_version" => {
+            let mut body: ObservationVersionMutationPayload = decode_mutation_payload(payload)?;
+            body.sync_id = body.sync_id.trim().to_owned();
+            if body.sync_id.is_empty() {
+                return Err(invalid("observation version payload sync_id is required"));
+            }
+            if body.revision <= 0 {
+                return Err(invalid(
+                    "observation version payload revision must be positive",
+                ));
+            }
+            body.project = Some(project.to_owned());
+            let entity_key = body.sync_id.clone();
+            encode_mutation_payload(&body).map(|payload| (payload, entity_key))
+        }
         "prompt" => {
             let mut body: PromptMutationPayload = decode_mutation_payload(payload)?;
             body.sync_id = body.sync_id.trim().to_owned();
@@ -231,6 +246,19 @@ pub(super) struct ObservationMutationPayload {
     pub(super) deleted_at: Option<String>,
     #[serde(skip_serializing_if = "is_false")]
     pub(super) hard_delete: bool,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub(super) struct ObservationVersionMutationPayload {
+    pub(super) sync_id: String,
+    pub(super) revision: i64,
+    pub(super) title: String,
+    pub(super) content: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub(super) replaced_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) project: Option<String>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
