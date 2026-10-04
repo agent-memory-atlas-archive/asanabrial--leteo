@@ -22,10 +22,10 @@ use serde_json::json;
 use crate::{
     memory::model::{
         AddObservation, AddOutcome, AddOutcomeKind, AddPrompt, Candidate, CandidateOptions,
-        DoctorReport, ForeignKeyViolation, JudgeBySemanticParams, JudgeRelationParams, MergeResult,
-        Observation, PassiveCapture, PassiveCaptureResult, Prompt, Relation, SearchMode,
-        SearchOptions, SearchResult, Session, SessionSummary, Stats, TimelineEntry, TimelineResult,
-        UpdateObservation,
+        ConsolidateObservations, DoctorReport, ForeignKeyViolation, JudgeBySemanticParams,
+        JudgeRelationParams, MergeResult, Observation, PassiveCapture, PassiveCaptureResult,
+        Prompt, Relation, SearchMode, SearchOptions, SearchResult, Session, SessionSummary, Stats,
+        TimelineEntry, TimelineResult, UpdateObservation,
     },
     memory::normalize,
     project::{ProjectDetection, detect_current_project, detect_project},
@@ -35,6 +35,7 @@ use crate::{
 pub const PROFILE_AGENT: &[&str] = &[
     "mem_capture_passive",
     "mem_compare",
+    "mem_consolidate",
     "mem_context",
     "mem_current_project",
     "mem_doctor",
@@ -1065,6 +1066,7 @@ fn store_error(error: StoreError) -> CallToolResult {
         StoreError::SessionNotFound(_) => "session_not_found",
         StoreError::ObservationNotFound(_) => "observation_not_found",
         StoreError::ObservationDeleted { .. } => "observation_deleted",
+        StoreError::ConsolidationSources { .. } => error_code::CONSOLIDATION_SOURCES,
         StoreError::RelationNotFound(_) => "relation_not_found",
         StoreError::InvalidRelationVerb { .. } => "invalid_relation",
         StoreError::CrossProjectRelation { .. } => "cross_project_relation",
@@ -1098,6 +1100,7 @@ mod error_code {
     pub const AMBIGUOUS_PROJECT: &str = "ambiguous_project";
     pub const STORE_UNAVAILABLE: &str = "store_unavailable";
     pub const QUERY_TOO_LONG: &str = "query_too_long";
+    pub const CONSOLIDATION_SOURCES: &str = "consolidation_sources";
 }
 
 fn structured_error(code: &str, message: impl Into<String>) -> CallToolResult {

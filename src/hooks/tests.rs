@@ -688,8 +688,15 @@ fn memory(title: &str, content: &str) -> crate::memory::model::AddObservation {
     }
 }
 
+/// A memory a later one overturned is not handed over at all.
+///
+/// The hint reads the same `prompt_recall_sql` the search stages do, so the
+/// hiding rule reaches it too: a memory that is out of date is not a candidate
+/// for the three lines a prompt gets, and the memory that overtook it is. The
+/// caveat it used to carry is still there for a direct read by id, which is
+/// where an agent that already holds the memory looks.
 #[test]
-fn a_memory_a_later_one_overturned_is_handed_over_saying_so() {
+fn a_memory_a_later_one_overturned_is_not_handed_over() {
     let (temp, mut store) = store();
     let payload = input(temp.path());
     run(&mut store, HookEvent::SessionStart, &payload).unwrap();
@@ -760,12 +767,12 @@ fn a_memory_a_later_one_overturned_is_handed_over_saying_so() {
         .expect("the prompt still matches");
 
     assert!(
-        after.contains(&format!("(superseded by #{}", newer.id)),
-        "the agent has to be told the memory was overturned: {after}"
+        !after.contains(&format!("- #{}", answer.id)),
+        "a memory a later one overturned is not named by the hint: {after}"
     );
     assert!(
-        after.contains("We moved the storage engine to Postgres"),
-        "and by what, or the warning is not actionable: {after}"
+        after.contains(&format!("- #{}", newer.id)),
+        "the memory that overtook it is the one named: {after}"
     );
 }
 
@@ -1852,7 +1859,7 @@ fn the_hint_does_not_hand_the_same_conversation_the_same_memory_twice() {
     store
         .judge_relation(crate::memory::model::JudgeRelationParams {
             judgment_id: relation.sync_id,
-            relation: crate::store::RELATION_SUPERSEDES.to_owned(),
+            relation: crate::store::RELATION_CONFLICTS_WITH.to_owned(),
             marked_by_actor: "agent".to_owned(),
             marked_by_kind: "agent".to_owned(),
             ..Default::default()
@@ -1864,7 +1871,7 @@ fn the_hint_does_not_hand_the_same_conversation_the_same_memory_twice() {
         .additional_context
         .expect("a memory with something said against it is named again");
     assert!(
-        overturned.contains(&format!("(superseded by #{}", newer.id)),
+        overturned.contains(&format!("(conflicts with #{}", newer.id)),
         "and the reason it is named again is the caveat: {overturned}"
     );
 

@@ -56,6 +56,32 @@ const RELATION_JUDGEABLE: &str = "
                         AND ifnull(a.project, '') <> '' AND ifnull(b.project, '') <> ''
                         AND a.project <> b.project)";
 
+/// An observation a judged `supersedes` relation points at is out of date and
+/// does not surface in a listing.
+///
+/// The hiding rule, written once and read by every door that lists memories —
+/// the search stages, the prompt hint, the pinned and recent context, the
+/// session summaries and the two pages. One definition, because the alternative
+/// is what this codebase keeps finding: a rule applied at one door and not its
+/// sibling, so a memory search has just hidden is handed over by the context
+/// beside it.
+///
+/// The `o` alias is the caller's obligation: every statement that interpolates
+/// this must carry `observations o`. Built from the verb and status constants
+/// rather than a second copy of the words, so a hand-written `'supersedes'`
+/// here cannot come to name a verb the graph no longer stores.
+///
+/// A pending relation hides nothing. Only a verdict does, and reversing it —
+/// `mem_judge` changing the verb, or removing the row — restores the memory.
+pub(super) fn not_superseded() -> String {
+    format!(
+        "NOT EXISTS (SELECT 1 FROM memory_relations r \
+         WHERE r.judgment_status = '{JUDGMENT_STATUS_JUDGED}' \
+           AND r.relation = '{RELATION_SUPERSEDES}' \
+           AND r.target_id = o.sync_id)"
+    )
+}
+
 impl Store {
     /// Whether somebody has already ruled on this pair.
     ///
@@ -436,50 +462,16 @@ impl Store {
         );
 
         let tx = self.write_transaction()?;
-        let (source_project, target_project) =
-            validate_cross_project_guard(&tx, &input.source_id, &input.target_id)?;
-        let existing = tx
-            .query_row(
-                "SELECT sync_id FROM memory_relations
-                 WHERE (source_id = ?1 AND target_id = ?2)
-                    OR (source_id = ?2 AND target_id = ?1)
-                 ORDER BY id LIMIT 1",
-                params![input.source_id, input.target_id],
-                |row| row.get::<_, String>(0),
-            )
-            .optional()?;
-        let sync_id = existing.unwrap_or_else(|| normalize::sync_id("rel"));
-        let model = input.model.filter(|value| !value.trim().is_empty());
-        if get_relation_tx_optional(&tx, &sync_id)?.is_some() {
-            tx.execute(
-                "UPDATE memory_relations
-                 SET relation = ?1, judgment_status = 'judged', confidence = ?2,
-                     reason = ?3, marked_by_actor = 'leteo', marked_by_kind = 'system',
-                     marked_by_model = ?4, updated_at = datetime('now')
-                 WHERE sync_id = ?5",
-                params![input.relation, input.confidence, reasoning, model, sync_id],
-            )?;
-        } else {
-            tx.execute(
-                "INSERT INTO memory_relations
-                 (sync_id, source_id, target_id, relation, judgment_status, confidence,
-                  reason, marked_by_actor, marked_by_kind, marked_by_model,
-                  created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, 'judged', ?5, ?6, 'leteo', 'system', ?7,
-                         datetime('now'), datetime('now'))",
-                params![
-                    sync_id,
-                    input.source_id,
-                    input.target_id,
-                    input.relation,
-                    input.confidence,
-                    reasoning,
-                    model
-                ],
-            )?;
-        }
-        let relation = get_relation_tx(&tx, &sync_id)?;
-        enqueue_relation_if_enrolled(&tx, &relation, &source_project, &target_project)?;
+        let relation = judge_relation_tx(
+            &tx,
+            &input.source_id,
+            &input.target_id,
+            &input.relation,
+            input.confidence,
+            reasoning,
+            input.model.filter(|value| !value.trim().is_empty()),
+        )?;
+        let sync_id = relation.sync_id.clone();
         tx.commit()?;
         Ok(sync_id)
     }
@@ -752,4 +744,61 @@ impl Store {
         )?;
         Ok(stats)
     }
+}
+
+/// Records a judged relation between two memories, inside a caller's
+/// transaction.
+///
+/// Extracted from `judge_by_semantic` so that `mem_consolidate` writes its
+/// `supersedes` rows through the same path every other judged relation takes:
+/// the cross-project guard, the upsert of an existing pair, the
+/// `marked_by_actor` provenance, and the replication journal all in one place.
+/// A second hand-written INSERT here is how one relation write path comes to
+/// carry a rule the others do not.
+pub(super) fn judge_relation_tx(
+    tx: &Transaction<'_>,
+    source_id: &str,
+    target_id: &str,
+    relation: &str,
+    confidence: Option<f64>,
+    reasoning: Option<String>,
+    model: Option<String>,
+) -> Result<Relation, StoreError> {
+    let (source_project, target_project) = validate_cross_project_guard(tx, source_id, target_id)?;
+    let existing = tx
+        .query_row(
+            "SELECT sync_id FROM memory_relations
+             WHERE (source_id = ?1 AND target_id = ?2)
+                OR (source_id = ?2 AND target_id = ?1)
+             ORDER BY id LIMIT 1",
+            params![source_id, target_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+    let sync_id = existing.unwrap_or_else(|| normalize::sync_id("rel"));
+    if get_relation_tx_optional(tx, &sync_id)?.is_some() {
+        tx.execute(
+            "UPDATE memory_relations
+             SET relation = ?1, judgment_status = 'judged', confidence = ?2,
+                 reason = ?3, marked_by_actor = 'leteo', marked_by_kind = 'system',
+                 marked_by_model = ?4, updated_at = datetime('now')
+             WHERE sync_id = ?5",
+            params![relation, confidence, reasoning, model, sync_id],
+        )?;
+    } else {
+        tx.execute(
+            "INSERT INTO memory_relations
+             (sync_id, source_id, target_id, relation, judgment_status, confidence,
+              reason, marked_by_actor, marked_by_kind, marked_by_model,
+              created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, 'judged', ?5, ?6, 'leteo', 'system', ?7,
+                     datetime('now'), datetime('now'))",
+            params![
+                sync_id, source_id, target_id, relation, confidence, reasoning, model
+            ],
+        )?;
+    }
+    let recorded = get_relation_tx(tx, &sync_id)?;
+    enqueue_relation_if_enrolled(tx, &recorded, &source_project, &target_project)?;
+    Ok(recorded)
 }

@@ -45,6 +45,24 @@ pub enum Command {
         #[arg(long)]
         tool_name: Option<String>,
     },
+    /// Replace several memories with one, recording a judged `supersedes`
+    /// relation from the new memory to each source so the merge is traceable
+    /// and reversible.
+    Consolidate {
+        /// Observation ids to replace.
+        #[arg(required = true, num_args = 1..)]
+        source_ids: Vec<i64>,
+        #[arg(long, default_value = "manual")]
+        r#type: String,
+        #[arg(long)]
+        title: String,
+        #[arg(long)]
+        content: String,
+        #[arg(long, default_value = "project")]
+        scope: String,
+        #[arg(long)]
+        topic_key: Option<String>,
+    },
     Search {
         query: String,
         #[arg(long)]

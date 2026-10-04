@@ -252,16 +252,16 @@ they are.
 
 ## MCP
 
-A 22-tool MCP server over standard input/output, run directly or written into a
+A 23-tool MCP server over standard input/output, run directly or written into a
 client by `leteo setup`:
 
 ```powershell
 leteo mcp
 ```
 
-Run like that it offers all of them. Three of the twenty-two change or count
+Run like that it offers all of them. Three of the twenty-three change or count
 the whole store, and `leteo setup` leaves those out: what it writes into an
-agent is `--tools=agent`, the nineteen an agent reaches for while it works.
+agent is `--tools=agent`, the twenty an agent reaches for while it works.
 `--tools` picks a profile or a single tool, and `--project` fixes the project
 for the process.
 
@@ -298,11 +298,13 @@ leteo tui
 ```
 
 **Writing by hand.** Seldom needed, since the agent saves as it works — but a
-memory you want in your own words, and the session boundaries an agent would
-otherwise draw for you:
+memory you want in your own words, the session boundaries an agent would
+otherwise draw for you, and `consolidate`, which folds several memories into one
+and records what it replaced rather than deleting it:
 
 ```powershell
 leteo save "SQLite architecture" "One writer, many readers" --project leteo --type architecture
+leteo consolidate 12 13 --title "SQLite architecture" --content "One writer, many readers" --type architecture
 leteo session-start session-1 --project leteo
 leteo session-end session-1
 ```

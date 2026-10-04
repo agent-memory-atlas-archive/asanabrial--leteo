@@ -9,22 +9,23 @@ useful part out of a context window has failed even if every field is right.
 
 ## Behaviour
 
-1. **Twenty-two tools, one store, and `--tools` names which of them.** The
+1. **Twenty-three tools, one store, and `--tools` names which of them.** The
    profiles are `agent`, `admin` and `all`, and a single tool may be named
    instead. Anything else is refused at start-up with the profiles and the
-   twenty-two spelled out: an unknown name used to be kept as though it were a
+   twenty-three spelled out: an unknown name used to be kept as though it were a
    tool, so it matched nothing and every route was removed. `--tools=agnet`
    started a memory server with no memory tools on it, in silence, and
    `--tools=AGENT` did the same — and what an agent sees then is "Leteo's tools
    are missing", which the skill answers with "run `leteo setup` and restart".
    A typo sending somebody to reinstall an install that was fine.
 
-   Twenty-two tools. Writing: `mem_save`, `mem_update`,
+   Twenty-three tools. Writing: `mem_save`, `mem_update`,
    `mem_delete`, `mem_save_prompt`, `mem_session_start`, `mem_session_end`,
    `mem_session_summary`, `mem_capture_passive`, `mem_pin`, `mem_unpin`,
-   `mem_judge`, `mem_merge_projects`. Reading: `mem_search`, `mem_context`,
-   `mem_get_observation`, `mem_timeline`, `mem_review`, `mem_compare`,
-   `mem_stats`, `mem_doctor`, `mem_current_project`, `mem_suggest_topic_key`.
+   `mem_judge`, `mem_consolidate`, `mem_merge_projects`. Reading: `mem_search`,
+   `mem_context`, `mem_get_observation`, `mem_timeline`, `mem_review`,
+   `mem_compare`, `mem_stats`, `mem_doctor`, `mem_current_project`,
+   `mem_suggest_topic_key`.
 
    And every tool refuses a field it does not take, including the two that take
    none. A tool declared without a parameter type publishes
@@ -864,6 +865,19 @@ useful part out of a context window has failed even if every field is right.
     the one the store applied, read from the store rather than restated. The
     same bound governs `mem_capture_passive`, which stores each extracted
     learning through the same path, and the CLI write doors; neither reports it.
+
+19. **A merge replaces several memories with one and hides the sources.**
+    `mem_consolidate` inserts one replacement and records a judged `supersedes`
+    relation from it to every source, all in one transaction: a source in
+    another project, or one this store does not hold, refuses before the
+    replacement row or any relation is written. Nothing is deleted — the
+    relation names both ends, so the merge is traceable and reversible, and a
+    re-verdict restores a source to search and context
+    ([`memory-model.md`](memory-model.md) §13). The replacement lands in the
+    project the sources are asserted to be in, so a merge cannot split the
+    family it just joined. `source_ids` takes at least one id and refuses a
+    repeat; the reply carries the new memory, its relations, and the
+    `source_ids` it replaced.
 
 ## Invariants
 

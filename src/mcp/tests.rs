@@ -288,16 +288,17 @@ fn collect_formats(value: &serde_json::Value, found: &mut Vec<String>) {
 }
 
 #[test]
-fn exposes_exactly_twenty_two_tools_with_output_schemas() {
+fn exposes_exactly_twenty_three_tools_with_output_schemas() {
     let tools = LeteoMcpServer::router().list_all();
     let names: BTreeSet<_> = tools.iter().map(|tool| tool.name.as_ref()).collect();
 
-    assert_eq!(tools.len(), 22);
+    assert_eq!(tools.len(), 23);
     assert_eq!(
         names,
         BTreeSet::from([
             "mem_capture_passive",
             "mem_compare",
+            "mem_consolidate",
             "mem_context",
             "mem_current_project",
             "mem_delete",
@@ -622,8 +623,13 @@ fn every_tool_declares_behavior_annotations() {
         "mem_suggest_topic_key",
         "mem_timeline",
     ]);
-    let destructive =
-        BTreeSet::from(["mem_delete", "mem_merge_projects", "mem_save", "mem_update"]);
+    let destructive = BTreeSet::from([
+        "mem_consolidate",
+        "mem_delete",
+        "mem_merge_projects",
+        "mem_save",
+        "mem_update",
+    ]);
 
     for tool in &tools {
         let annotations = tool
@@ -2691,7 +2697,7 @@ fn saving_the_same_memory_again_asks_no_new_questions() {
 }
 
 #[test]
-fn the_context_says_which_of_its_memories_were_overturned() {
+fn the_context_leaves_out_the_memories_a_later_one_overturned() {
     let (_temp, server) = test_server(McpOptions::default());
     let (old, new) = {
         let mut store = server.lock_store().unwrap();
@@ -2747,19 +2753,13 @@ fn the_context_says_which_of_its_memories_were_overturned() {
             serde_json::from_value(json!({ "project": "leteo" })).unwrap(),
         ))
         .expect("the context is built");
-    let listed = context
-        .observations
-        .iter()
-        .find(|observation| observation.id == old.id)
-        .expect("the superseded memory is listed");
-    assert_eq!(
-        listed
-            .caveats
+    assert!(
+        context
+            .observations
             .iter()
-            .map(|caveat| (caveat.relation.as_str(), caveat.other_id))
-            .collect::<Vec<_>>(),
-        [("superseded_by", new.id)],
-        "a decision that was overturned was handed over as though it still held"
+            .all(|observation| observation.id != old.id),
+        "a decision that was overturned is not handed over as though it still held: {:?}",
+        context.observations
     );
     let current = context
         .observations
@@ -2767,6 +2767,22 @@ fn the_context_says_which_of_its_memories_were_overturned() {
         .find(|observation| observation.id == new.id)
         .expect("the newer memory is listed");
     assert!(current.caveats.is_empty());
+
+    // Hidden from the listing, not from a direct read: the caveat still reaches
+    // the id an agent may already be holding.
+    let Json(fetched) = server
+        .mem_get_observation(Parameters(GetObservationParams { id: old.id }))
+        .expect("a superseded memory is still readable by id");
+    assert_eq!(
+        fetched
+            .observation
+            .caveats
+            .iter()
+            .map(|caveat| (caveat.relation.as_str(), caveat.other_id))
+            .collect::<Vec<_>>(),
+        [("superseded_by", new.id)],
+        "a fetch by id still says what overturned it"
+    );
 }
 
 /// The crate-implementation word a published description carries, if it carries
@@ -3051,7 +3067,7 @@ fn the_other_tools_spelling_of_an_identifier_is_accepted() {
 }
 
 #[test]
-fn a_superseded_memory_is_flagged_in_search_results_too() {
+fn a_superseded_memory_is_left_out_of_search_results() {
     let (_temp, server) = test_server(McpOptions::default());
     let (old, new) = {
         let mut store = server.lock_store().unwrap();
@@ -3103,22 +3119,18 @@ fn a_superseded_memory_is_flagged_in_search_results_too() {
         serde_json::from_value(json!({ "query": "ornitorrincos", "all_projects": true })).unwrap();
     let out = server.mem_search(Parameters(params)).unwrap().0;
 
-    let found = out
-        .results
-        .iter()
-        .find(|result| result.observation.id == old.id)
-        .expect("the superseded memory is in the results");
-    assert_eq!(
-        found.observation.caveats.len(),
-        1,
-        "a search result has to carry what the graph says about it"
+    assert!(
+        out.results
+            .iter()
+            .all(|result| result.observation.id != old.id),
+        "a memory a later one overturned is not a search result: {:?}",
+        out.results
     );
-    assert_eq!(found.observation.caveats[0].other_id, new.id);
     let newer = out
         .results
         .iter()
         .find(|result| result.observation.id == new.id)
-        .expect("both are in the results");
+        .expect("the newer decision is the one that stands");
     assert!(
         newer
             .observation
@@ -3127,6 +3139,13 @@ fn a_superseded_memory_is_flagged_in_search_results_too() {
             .all(|caveat| caveat.relation != "superseded_by"),
         "the newer decision still holds"
     );
+
+    // Hidden from search, not from a direct read.
+    let Json(fetched) = server
+        .mem_get_observation(Parameters(GetObservationParams { id: old.id }))
+        .expect("a superseded memory is still readable by id");
+    assert_eq!(fetched.observation.caveats.len(), 1);
+    assert_eq!(fetched.observation.caveats[0].other_id, new.id);
 }
 
 #[test]
@@ -3568,6 +3587,15 @@ fn the_mutating_tools_refuse_a_missing_expected_project() {
             "mem_unpin",
             serde_json::from_value::<PinParams>(json!({ "id": 1 })).err(),
         ),
+        (
+            "mem_consolidate",
+            serde_json::from_value::<ConsolidateParams>(json!({
+                "source_ids": [1],
+                "title": "t",
+                "content": "c",
+            }))
+            .err(),
+        ),
     ] {
         let error = error.unwrap_or_else(|| panic!("{tool} parsed without expected_project"));
         assert!(
@@ -3578,8 +3606,14 @@ fn the_mutating_tools_refuse_a_missing_expected_project() {
 }
 
 #[test]
-fn the_four_mutating_tools_publish_expected_project_as_required() {
-    for name in ["mem_update", "mem_delete", "mem_pin", "mem_unpin"] {
+fn the_mutating_tools_publish_expected_project_as_required() {
+    for name in [
+        "mem_update",
+        "mem_delete",
+        "mem_pin",
+        "mem_unpin",
+        "mem_consolidate",
+    ] {
         let tool = LeteoMcpServer::router()
             .list_all()
             .into_iter()
@@ -4019,6 +4053,7 @@ fn the_descriptions_publish_the_preview_length_the_code_cuts_at() {
         "mem_save_prompt",
         "mem_judge",
         "mem_session_end",
+        "mem_consolidate",
     ] {
         assert!(
             LeteoMcpServer::router().list_all().iter().any(|tool| {
@@ -4032,7 +4067,7 @@ fn the_descriptions_publish_the_preview_length_the_code_cuts_at() {
         );
     }
     assert_eq!(
-        saying, 8,
+        saying, 9,
         "a tool started or stopped previewing and the list above did not move"
     );
 }
@@ -4220,12 +4255,14 @@ fn the_warning_against_a_memory_is_in_the_same_place_everywhere() {
         ))
         .unwrap()
         .0;
-    let found = searched
-        .results
-        .iter()
-        .find(|result| result.observation.id == older.id)
-        .expect("the superseded memory is in the results");
-    assert_eq!(found.observation.caveats.len(), 1, "mem_search");
+    assert!(
+        searched
+            .results
+            .iter()
+            .all(|result| result.observation.id != older.id),
+        "mem_search hands back no superseded memory to warn about: {:?}",
+        searched.results
+    );
 
     let read = server
         .mem_get_observation(Parameters(
@@ -6202,7 +6239,7 @@ fn every_tool_refuses_a_field_it_does_not_take() {
         lenient.is_empty(),
         "these publish a schema that welcomes fields they ignore: {lenient:?}"
     );
-    assert_eq!(examined, 22, "the whole surface was examined");
+    assert_eq!(examined, 23, "the whole surface was examined");
 }
 
 #[test]
@@ -6861,5 +6898,132 @@ fn the_review_queue_says_how_much_of_itself_this_page_is_not() {
     assert!(
         listed.due_omitted > 0,
         "the ceiling is below the queue here"
+    );
+}
+
+/// One call replaces several memories and hides them from every listing.
+#[test]
+fn consolidating_through_the_tool_merges_and_hides_the_sources() {
+    let (_temp, server) = test_server(McpOptions {
+        default_project: Some("leteo".to_owned()),
+        ..McpOptions::default()
+    });
+    let (first, second) = {
+        let mut store = server.lock_store().unwrap();
+        store.create_session("s1", "leteo", "C:/repo").unwrap();
+        let save = |store: &mut Store, title: &str, body: &str| {
+            store
+                .add_observation(crate::memory::model::AddObservation {
+                    session_id: "s1".to_owned(),
+                    kind: "decision".to_owned(),
+                    title: title.to_owned(),
+                    content: body.to_owned(),
+                    tool_name: None,
+                    project: Some("leteo".to_owned()),
+                    scope: "project".to_owned(),
+                    topic_key: None,
+                    prompt_sync_id: None,
+                })
+                .unwrap()
+                .observation
+        };
+        (
+            save(
+                &mut store,
+                "Old duplicate one",
+                "the mergeword appears in the first",
+            ),
+            save(
+                &mut store,
+                "Old duplicate two",
+                "the mergeword appears in the second",
+            ),
+        )
+    };
+
+    let Json(outcome) = server
+        .mem_consolidate(Parameters(
+            serde_json::from_value(json!({
+                "expected_project": "leteo",
+                "source_ids": [first.id, second.id],
+                "type": "decision",
+                "title": "The merged decision",
+                "content": "the mergeword appears once now",
+            }))
+            .unwrap(),
+        ))
+        .expect("a merge the caller asked for");
+    assert_eq!(outcome.relations.len(), 2);
+    assert_eq!(outcome.source_ids, vec![first.id, second.id]);
+    assert_eq!(outcome.observation.title, "The merged decision");
+    for relation in &outcome.relations {
+        assert_eq!(relation.relation, "supersedes");
+        assert_eq!(relation.judgment_status, "judged");
+        assert_eq!(relation.source_id, outcome.observation.sync_id);
+    }
+
+    let Json(found) = server
+        .mem_search(Parameters(
+            serde_json::from_value(json!({ "query": "mergeword", "all_projects": true })).unwrap(),
+        ))
+        .unwrap();
+    assert!(
+        found.results.iter().all(|result| {
+            result.observation.id != first.id && result.observation.id != second.id
+        }),
+        "a superseded source is not a search result: {:?}",
+        found.results
+    );
+    assert!(
+        found
+            .results
+            .iter()
+            .any(|result| result.observation.id == outcome.observation.id),
+        "the replacement is: {:?}",
+        found.results
+    );
+
+    let Json(context) = server
+        .mem_context(Parameters(
+            serde_json::from_value(json!({ "project": "leteo" })).unwrap(),
+        ))
+        .unwrap();
+    assert!(
+        context
+            .observations
+            .iter()
+            .all(|observation| observation.id != first.id && observation.id != second.id),
+        "the context leaves the sources out: {:?}",
+        context.observations
+    );
+
+    let Json(read) = server
+        .mem_get_observation(Parameters(GetObservationParams { id: first.id }))
+        .unwrap();
+    assert_eq!(read.observation.caveats.len(), 1);
+    assert_eq!(read.observation.caveats[0].relation, "superseded_by");
+    assert_eq!(read.observation.caveats[0].other_id, outcome.observation.id);
+}
+
+#[test]
+fn a_merge_with_no_sources_is_refused_by_name() {
+    let (_temp, server) = test_server(McpOptions {
+        default_project: Some("leteo".to_owned()),
+        ..McpOptions::default()
+    });
+    let Err(error) = server.mem_consolidate(Parameters(
+        serde_json::from_value(json!({
+            "expected_project": "leteo",
+            "source_ids": [],
+            "title": "t",
+            "content": "c",
+        }))
+        .unwrap(),
+    )) else {
+        panic!("a merge of nothing is refused");
+    };
+    assert_eq!(
+        error_payload(&error)["error"]["code"],
+        "consolidation_sources"
     );
 }

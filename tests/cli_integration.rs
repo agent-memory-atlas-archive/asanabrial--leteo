@@ -1730,3 +1730,75 @@ fn every_surface_that_opens_a_context_names_the_size_that_was_configured() {
         "--limit outranks the setting"
     );
 }
+
+/// `leteo consolidate` folds several memories into one and hides the sources.
+///
+/// The command passes no `expected_project`, the way `delete` makes no
+/// assertion: a person named the ids. The replacement is filed where the
+/// sources are, so the search that finds it is the search that used to find
+/// them.
+#[test]
+fn the_consolidate_command_merges_and_hides_the_sources() {
+    let temp = tempfile::tempdir().expect("create CLI test directory");
+    let database = temp.path().join("consolidate.db");
+
+    let first = run_json(
+        leteo(&database)
+            .arg("save")
+            .arg("Old duplicate one")
+            .arg("the mergeword appears in the first")
+            .arg("--project")
+            .arg("alpha")
+            .arg("--type")
+            .arg("decision"),
+    );
+    let first_id = first["observation"]["id"].as_i64().expect("an id");
+    let second = run_json(
+        leteo(&database)
+            .arg("save")
+            .arg("Old duplicate two")
+            .arg("the mergeword appears in the second")
+            .arg("--project")
+            .arg("alpha")
+            .arg("--type")
+            .arg("decision"),
+    );
+    let second_id = second["observation"]["id"].as_i64().expect("an id");
+
+    let merged = run_json(
+        leteo(&database)
+            .arg("consolidate")
+            .arg(first_id.to_string())
+            .arg(second_id.to_string())
+            .arg("--title")
+            .arg("The merged decision")
+            .arg("--content")
+            .arg("the mergeword appears once now")
+            .arg("--type")
+            .arg("decision"),
+    );
+    assert_eq!(merged["relations"].as_array().map(Vec::len), Some(2));
+    assert_eq!(merged["sources"], json!([first_id, second_id]));
+
+    let found = run_json(
+        leteo(&database)
+            .arg("search")
+            .arg("mergeword")
+            .arg("--all-projects"),
+    );
+    let results = found.as_array().expect("search output is an array");
+    let ids: Vec<i64> = results
+        .iter()
+        .map(|result| result["id"].as_i64().expect("an id"))
+        .collect();
+    assert!(
+        !ids.contains(&first_id) && !ids.contains(&second_id),
+        "the sources are hidden from search: {found}"
+    );
+    assert!(
+        results
+            .iter()
+            .any(|result| result["title"] == json!("The merged decision")),
+        "the replacement is found: {found}"
+    );
+}

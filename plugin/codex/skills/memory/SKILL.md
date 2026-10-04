@@ -18,7 +18,7 @@ are present from the first message — no `ToolSearch` needed.
 - `mem_get_observation`, `mem_timeline`, `mem_suggest_topic_key`, `mem_update`
 - `mem_session_start`, `mem_session_end`, `mem_save_prompt`
 - `mem_current_project`, `mem_pin`, `mem_unpin`, `mem_review`
-- `mem_judge`, `mem_compare`, `mem_capture_passive`, `mem_doctor`
+- `mem_judge`, `mem_consolidate`, `mem_compare`, `mem_capture_passive`, `mem_doctor`
 
 Only the three that change or count the whole store are deferred; reach for
 `ToolSearch` when you need one: `mem_stats`, `mem_delete`, `mem_merge_projects`.
@@ -149,6 +149,15 @@ when it is not. A side marked `(deleted since this pair was proposed)` is a
 memory removed since — nothing is left to contradict, so `not_conflict` closes
 that pair in one call. A trailing line counting pairs `mem_judge` cannot settle
 is not work and not yours: leave it and say nothing.
+
+## WHEN SEVERAL MEMORIES ARE ONE
+
+When the same fact was saved more than once and no single memory is the one to
+keep, `mem_consolidate` writes one replacement and records a judged `supersedes`
+relation from it to every source in a single transaction. The sources stop
+appearing in search and context but stay readable by id with
+`mem_get_observation`. For a single better revision, `mem_update` or a new save
+under the same `topic_key` is the smaller move.
 
 ## WHEN A MEMORY COMES ROUND FOR A REREAD
 

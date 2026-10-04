@@ -3,6 +3,7 @@
 use super::*;
 use tempfile::TempDir;
 
+mod consolidate;
 mod diagnostics;
 mod observations;
 mod projects;

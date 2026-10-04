@@ -183,6 +183,25 @@ changes.
     still warns the memory it overturned, on all six surfaces that show one, and
     tidying a proposal away must not take a real warning with it.
 
+13. **A judged `supersedes` marks its target out of date, and hides it from every
+    listing.** The relation is what carries the fact: the replacement names the
+    memory it replaces, so a merge is traceable and reversible. A memory a
+    judged `supersedes` points at is left out of every door that lists live
+    memories — the search stages, the prompt hint, the pinned and recent
+    context, the raw recent listing the CLI, the Obsidian view and the conflict
+    scan read, the session summaries and the two pages — by one rule,
+    `not_superseded`, interpolated into each query rather than restated, so a
+    memory one surface has hidden cannot be handed over by the surface beside
+    it. A *pending* relation hides nothing: only a verdict does, and a pair still
+    waiting is a proposal ([`mcp-tools.md`](mcp-tools.md) §7). Reversing the verdict —
+    `mem_judge` changing the verb or removing the row — restores the memory to
+    every list, because nothing was deleted and no column was set.
+    `mem_get_observation` still hands a superseded memory over, with the caveat
+    attached, for the reason §8 gives about a deleted one: an id in an agent's
+    hand usually came from an older context, and "this was replaced by #id" is
+    more useful than an error. See [`mcp-tools.md`](mcp-tools.md) §19 and
+    [`search.md`](search.md) §9.
+
 ## Invariants
 
 - The list of types exists once, in `rules::KINDS`, the review windows once in
