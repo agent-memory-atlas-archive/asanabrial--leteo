@@ -128,14 +128,28 @@ impl LeteoMcpServer {
         let refiled = asked_scope
             .filter(|asked| !crate::memory::normalize::SCOPES.contains(&asked.as_str()))
             .map(|asked| crate::mcp::output::refiled_scope_hint(&asked));
+        // Computed before the outcome is consumed by `SaveOutput::new`, and
+        // reported beside the other hints rather than instead of them: a save
+        // can shrink a body and be filed under an unknown type in one call.
+        let shrink = outcome
+            .replaced
+            .filter(|replaced| replaced.shrunk)
+            .map(|replaced| crate::memory::model::shrink_hint(replaced.bytes));
         let stored_bytes = outcome.observation.content.len();
         let mut saved = SaveOutput::new(outcome, candidates, context.envelope);
         saved.storage_truncation =
             crate::mcp::output::storage_truncation(content_cut, stored_bytes);
-        saved.hint = match (unfiled.then(|| UNFILED_KIND_HINT.to_owned()), refiled) {
-            (Some(kind), Some(scope)) => Some(format!("{kind} {scope}")),
-            (kind, scope) => kind.or(scope),
-        };
+        let mut hints = Vec::new();
+        if unfiled {
+            hints.push(UNFILED_KIND_HINT.to_owned());
+        }
+        if let Some(scope) = refiled {
+            hints.push(scope);
+        }
+        if let Some(shrink) = shrink {
+            hints.push(shrink);
+        }
+        saved.hint = (!hints.is_empty()).then(|| hints.join(" "));
         Ok(Json(saved))
     }
 
@@ -176,8 +190,8 @@ impl LeteoMcpServer {
         let content_cut = params.content.as_deref().and_then(|content| {
             crate::memory::normalize::cut_length(content, store.max_observation_length())
         });
-        let observation = store
-            .update_observation(
+        let outcome = store
+            .update_observation_with_replaced(
                 params.id,
                 Some(params.expected_project.as_str()),
                 UpdateObservation {
@@ -191,18 +205,24 @@ impl LeteoMcpServer {
             )
             .map_err(store_error)?;
         let caveats = store
-            .caveats_for(std::slice::from_ref(&observation.sync_id))
+            .caveats_for(std::slice::from_ref(&outcome.observation.sync_id))
             .unwrap_or_default()
-            .remove(&observation.sync_id)
+            .remove(&outcome.observation.sync_id)
             .unwrap_or_default();
         drop(store);
 
-        let stored_bytes = observation.content.len();
-        let mut observation = ObservationOutput::from(observation).preview();
+        let replaced = outcome.replaced;
+        let stored_bytes = outcome.observation.content.len();
+        let mut observation = ObservationOutput::from(outcome.observation).preview();
         observation.caveats = caveats.into_iter().map(Into::into).collect();
         Ok(Json(ObservationResultOutput {
             observation,
             storage_truncation: crate::mcp::output::storage_truncation(content_cut, stored_bytes),
+            replaced_bytes: replaced.map(|replaced| replaced.bytes),
+            hint: replaced
+                .filter(|replaced| replaced.shrunk)
+                .map(|replaced| crate::memory::model::shrink_hint(replaced.bytes)),
+            versions: Vec::new(),
         }))
     }
 
@@ -478,7 +498,8 @@ impl LeteoMcpServer {
         description = "Get one complete observation by its numeric identifier, with its \
                        full body — unlike mem_search and mem_context, which preview it. \
                        Reads `state`: a memory that has been deleted is still returned \
-                       here and says so.",
+                       here and says so. Set include_history for the titles and bodies \
+                       earlier writes replaced, newest first.",
         annotations(
             title = "Get Observation",
             read_only_hint = true,
@@ -493,6 +514,13 @@ impl LeteoMcpServer {
     ) -> Result<Json<ObservationResultOutput>, CallToolResult> {
         let store = self.lock_store()?;
         let observation = store.get_observation(params.id).map_err(store_error)?;
+        let versions = if params.include_history {
+            store
+                .observation_versions(&observation.sync_id)
+                .map_err(store_error)?
+        } else {
+            Vec::new()
+        };
         let caveats = store
             .caveats_for(std::slice::from_ref(&observation.sync_id))
             .unwrap_or_default()
@@ -505,6 +533,9 @@ impl LeteoMcpServer {
         Ok(Json(ObservationResultOutput {
             observation,
             storage_truncation: None,
+            replaced_bytes: None,
+            hint: None,
+            versions: versions.into_iter().map(Into::into).collect(),
         }))
     }
 

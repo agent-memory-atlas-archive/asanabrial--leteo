@@ -137,6 +137,29 @@ impl Store {
             )? as i64;
         }
 
+        // The version history of the memories just restored. Applied through the
+        // same helper the live and replicated paths use, so the retention bound
+        // and the idempotent identity stay one implementation rather than a
+        // third copy that can drift.
+        for version in &data.observation_versions {
+            if version.observation_sync_id.trim().is_empty() || version.revision <= 0 {
+                continue;
+            }
+            let title = normalize::title(&version.title, max_length);
+            let content =
+                normalize::truncate_content(normalize::strip_private(&version.content), max_length);
+            let replaced_at = nonempty_or_now(&version.replaced_at);
+            result.observation_versions_imported +=
+                crate::store::observations::snapshot_observation_version_tx(
+                    &tx,
+                    version.observation_sync_id.trim(),
+                    version.revision,
+                    &title,
+                    &content,
+                    &replaced_at,
+                )? as i64;
+        }
+
         for prompt in &data.prompts {
             let sync_id = if prompt.sync_id.trim().is_empty() {
                 normalize::sync_id("prompt")

@@ -174,6 +174,54 @@ fn insert_observation_tx(
     Ok(observation)
 }
 
+/// Records the title and body a content-changing write replaced, and keeps only
+/// the newest [`OBSERVATION_VERSION_RETENTION`] of them.
+///
+/// One implementation for both write paths. The local door calls it with the
+/// row it is about to overwrite; the replicated door calls it with the bytes a
+/// peer's payload already carries, so the two machines hold the same version
+/// rather than each snapshotting its own idea of the previous text.
+///
+/// `INSERT OR IGNORE` against the `(observation_sync_id, revision)` unique index
+/// is what makes applying a payload twice harmless: the second attempt is a
+/// no-op rather than a duplicate row. The return is the rows that insert
+/// actually added, which is how an import counts what it restored; the retention
+/// delete that follows is not part of it.
+pub(super) fn snapshot_observation_version_tx(
+    tx: &Transaction<'_>,
+    observation_sync_id: &str,
+    revision: i64,
+    title: &str,
+    content: &str,
+    replaced_at: &str,
+) -> Result<usize, StoreError> {
+    if observation_sync_id.is_empty() {
+        return Ok(0);
+    }
+    let inserted = tx.execute(
+        "INSERT OR IGNORE INTO observation_versions
+         (observation_sync_id, revision, title, content, replaced_at)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![observation_sync_id, revision, title, content, replaced_at],
+    )?;
+    // The oldest row past the bound names the cut: `revision` only grows for
+    // one observation, so everything at or below it is older than the newest N.
+    // The subquery answers NULL while the observation holds fewer than N
+    // versions, and `<= NULL` deletes nothing.
+    tx.execute(
+        "DELETE FROM observation_versions
+          WHERE observation_sync_id = ?1
+            AND revision <= (
+                SELECT revision FROM observation_versions
+                 WHERE observation_sync_id = ?1
+                 ORDER BY revision DESC
+                 LIMIT 1 OFFSET ?2
+            )",
+        params![observation_sync_id, OBSERVATION_VERSION_RETENTION as i64],
+    )?;
+    Ok(inserted)
+}
+
 impl Store {
     pub fn timeline(
         &self,
@@ -307,10 +355,46 @@ impl Store {
                 )
                 .optional()?;
             if let Some(id) = existing {
-                let previous_kind: String =
-                    tx.query_row("SELECT type FROM observations WHERE id = ?1", [id], |row| {
-                        row.get(0)
-                    })?;
+                // Everything the replaced revision held, read in one go and
+                // before the UPDATE overwrites it: the snapshot keeps the old
+                // title and body, and the reply reports the size of the body it
+                // replaced. Neither can be read back afterwards.
+                let (
+                    previous_sync_id,
+                    previous_kind,
+                    previous_title,
+                    previous_content,
+                    previous_revision,
+                ): (String, String, String, String, i64) = tx.query_row(
+                    "SELECT sync_id, type, title, content, revision_count
+                           FROM observations WHERE id = ?1",
+                    [id],
+                    |row| {
+                        Ok((
+                            row.get::<_, Option<String>>(0)?.unwrap_or_default(),
+                            row.get(1)?,
+                            row.get(2)?,
+                            row.get(3)?,
+                            row.get(4)?,
+                        ))
+                    },
+                )?;
+                // The count moves for every save under the key, but a version
+                // is kept only when the text actually changes — a re-save of
+                // the same words is not a previous version anybody lost.
+                let content_changed =
+                    previous_title != fields.title() || previous_content != fields.content();
+                let replaced_at = content_changed.then(crate::timestamp::now);
+                if let Some(replaced_at) = &replaced_at {
+                    snapshot_observation_version_tx(
+                        &tx,
+                        &previous_sync_id,
+                        previous_revision,
+                        &previous_title,
+                        &previous_content,
+                        replaced_at,
+                    )?;
+                }
                 tx.execute(
                     "UPDATE observations SET type = ?1, title = ?2, content = ?3, tool_name = ?4,
                      topic_key = ?5, normalized_hash = ?6, revision_count = revision_count + 1,
@@ -327,11 +411,33 @@ impl Store {
                 )?;
                 reschedule_review(&tx, id, fields.kind(), Some(&previous_kind))?;
                 let observation = get_observation_row(&tx, id)?;
+                if let Some(replaced_at) = &replaced_at {
+                    // The version follows the observation's own enrolment:
+                    // whatever project would carry the memory carries what it
+                    // replaced.
+                    enqueue_observation_version(
+                        &tx,
+                        &observation.sync_id,
+                        previous_revision,
+                        &previous_title,
+                        &previous_content,
+                        replaced_at,
+                        observation.project.as_deref().unwrap_or_default(),
+                    )?;
+                }
                 enqueue_observation(&tx, &observation)?;
                 tx.commit()?;
+                let replaced = replaced_at.map(|_| ReplacedContent {
+                    bytes: previous_content.len(),
+                    shrunk: crate::memory::model::content_shrank(
+                        previous_content.len(),
+                        fields.content().len(),
+                    ),
+                });
                 return Ok(AddOutcome {
                     kind: AddOutcomeKind::Revised,
                     observation,
+                    replaced,
                 });
             }
         }
@@ -367,6 +473,7 @@ impl Store {
             return Ok(AddOutcome {
                 kind: AddOutcomeKind::Deduplicated,
                 observation,
+                replaced: None,
             });
         }
 
@@ -398,6 +505,7 @@ impl Store {
         Ok(AddOutcome {
             kind: AddOutcomeKind::Inserted,
             observation,
+            replaced: None,
         })
     }
 
@@ -509,16 +617,64 @@ impl Store {
         get_observation_row(&self.connection, id)
     }
 
+    /// The titles and bodies a later write replaced, newest first.
+    ///
+    /// Keyed by the observation's `sync_id` rather than by its local `id`: a
+    /// version is stored against the identifier that survives replication, so
+    /// the read does not depend on which machine wrote the row. Bytes come back
+    /// exactly as stored; a caller wanting the live memory reads
+    /// [`Store::get_observation`].
+    pub fn observation_versions(
+        &self,
+        observation_sync_id: &str,
+    ) -> Result<Vec<ObservationVersion>, StoreError> {
+        let mut statement = self.connection.prepare(&format!(
+            "SELECT {OBSERVATION_VERSION_COLUMNS} FROM observation_versions
+              WHERE observation_sync_id = ?1
+              ORDER BY revision DESC"
+        ))?;
+        let rows = statement.query_map([observation_sync_id], map_observation_version)?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(StoreError::from)
+    }
+
+    /// Revises a memory, returning it alone.
+    ///
+    /// The caller that has to report what was replaced — `mem_update`, whose
+    /// reply names the size of the body it overwrote — takes
+    /// [`update_observation_with_replaced`](Self::update_observation_with_replaced)
+    /// instead; everything else reads the observation and no more.
     pub fn update_observation(
         &mut self,
         id: i64,
         expected_project: Option<&str>,
         input: UpdateObservation,
     ) -> Result<Observation, StoreError> {
+        self.update_observation_with_replaced(id, expected_project, input)
+            .map(|outcome| outcome.observation)
+    }
+
+    /// Revises a memory and reports the text the revision replaced.
+    ///
+    /// The read of the old title and body happens inside the write transaction,
+    /// so a concurrent writer cannot slip between what is replaced and what is
+    /// recorded as the version of it.
+    pub fn update_observation_with_replaced(
+        &mut self,
+        id: i64,
+        expected_project: Option<&str>,
+        input: UpdateObservation,
+    ) -> Result<UpdateOutcome, StoreError> {
         let max_length = self.config.max_observation_length;
         let tx = self.write_transaction()?;
         let current = get_active_observation(&tx, id)?;
         assert_expected_project(id, current.project.as_deref(), expected_project)?;
+        // The text before the update, for the snapshot and the reply alike:
+        // once the UPDATE has run the row holds the new words and there is no
+        // second read that gets the old ones back.
+        let previous_title = current.title.clone();
+        let previous_content = current.content.clone();
+        let previous_revision = current.revision_count;
 
         // Every field normalises what the caller supplied and leaves what it
         // did not. `kind` was the exception: an update could write back the
@@ -562,6 +718,23 @@ impl Store {
             .unwrap_or(current.topic_key);
         let hash = normalize::normalized_hash(&content);
 
+        // A metadata-only change is out of the history's scope: nothing a
+        // reader could call the previous version was lost when only the type,
+        // project, scope or topic key moved. The title or the body is what a
+        // version keeps.
+        let content_changed = previous_title != title || previous_content != content;
+        let replaced_at = content_changed.then(crate::timestamp::now);
+        if let Some(replaced_at) = &replaced_at {
+            snapshot_observation_version_tx(
+                &tx,
+                &current.sync_id,
+                previous_revision,
+                &previous_title,
+                &previous_content,
+                replaced_at,
+            )?;
+        }
+
         let changed = tx.execute(
             "UPDATE observations
              SET type = ?1, title = ?2, content = ?3, project = ?4, scope = ?5,
@@ -592,6 +765,17 @@ impl Store {
             observation.project.as_deref().unwrap_or_default(),
         )?;
         enqueue_observation(&tx, &observation)?;
+        if let Some(replaced_at) = &replaced_at {
+            enqueue_observation_version(
+                &tx,
+                &observation.sync_id,
+                previous_revision,
+                &previous_title,
+                &previous_content,
+                replaced_at,
+                observation.project.as_deref().unwrap_or_default(),
+            )?;
+        }
         // A memory that walked out of a replicated project leaves a ghost
         // behind unless somebody says so.
         //
@@ -631,7 +815,14 @@ impl Store {
             )?;
         }
         tx.commit()?;
-        Ok(observation)
+        let replaced = replaced_at.map(|_| ReplacedContent {
+            bytes: previous_content.len(),
+            shrunk: crate::memory::model::content_shrank(previous_content.len(), content.len()),
+        });
+        Ok(UpdateOutcome {
+            observation,
+            replaced,
+        })
     }
 
     /// How many live memories the store holds outside one project, up to `cap`.

@@ -426,6 +426,15 @@ pub async fn run(cli: Cli) -> Result<()> {
             if !crate::memory::rules::is_searchable_kind(&saved.observation.kind) {
                 eprintln!("leteo save: {}", crate::mcp::UNFILED_KIND_HINT);
             }
+            // The same sentence the tool answers with, on the channel a person
+            // reads: the JSON reply already carries `replaced`, and a shrink is
+            // easier to catch before it scrolls past than inside it.
+            if let Some(replaced) = saved.replaced.filter(|replaced| replaced.shrunk) {
+                eprintln!(
+                    "leteo save: {}",
+                    crate::memory::model::shrink_hint(replaced.bytes)
+                );
+            }
             print_json(&saved)?;
         }
         Command::Consolidate {

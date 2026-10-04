@@ -879,6 +879,20 @@ useful part out of a context window has failed even if every field is right.
     repeat; the reply carries the new memory, its relations, and the
     `source_ids` it replaced.
 
+20. **A version-changing write says so, and a read can ask for the versions.**
+    `mem_save` and `mem_update` answer `replaced_bytes`, the size of the body
+    they overwrote, whenever they changed one; a replacement under half that
+    size also carries a `hint` naming `mem_get_observation` with
+    `include_history`. `include_history` is a new `mem_get_observation`
+    parameter, default false, and when true the reply carries `versions`: the
+    titles and bodies earlier writes replaced, newest revision first, each the
+    previous text whole rather than previewed. The threshold and the retention
+    bound are both one constant ([`memory-model.md`](memory-model.md) §14); the
+    store decides whether a write shrank and both surfaces read the decision,
+    so the tool and the command line cannot disagree about what counts as one.
+    Restoring is an ordinary `mem_update` with the old text; there is no restore
+    tool.
+
 ## Invariants
 
 - Titles printed into anything an agent reads are folded to a single line and

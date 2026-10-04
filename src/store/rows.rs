@@ -111,6 +111,29 @@ pub(super) fn map_observation(row: &rusqlite::Row<'_>) -> rusqlite::Result<Obser
     })
 }
 
+pub(super) fn map_observation_version(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<ObservationVersion> {
+    Ok(ObservationVersion {
+        revision: row.get("revision")?,
+        title: row.get("title")?,
+        content: row.get("content")?,
+        replaced_at: row.get("replaced_at")?,
+    })
+}
+
+pub(super) fn map_export_observation_version(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<ExportObservationVersion> {
+    Ok(ExportObservationVersion {
+        observation_sync_id: row.get("observation_sync_id")?,
+        revision: row.get("revision")?,
+        title: row.get("title")?,
+        content: row.get("content")?,
+        replaced_at: row.get("replaced_at")?,
+    })
+}
+
 pub(super) fn map_relation(row: &rusqlite::Row<'_>) -> rusqlite::Result<Relation> {
     Ok(Relation {
         id: row.get("id")?,

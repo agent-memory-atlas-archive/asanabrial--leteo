@@ -2771,7 +2771,10 @@ fn the_context_leaves_out_the_memories_a_later_one_overturned() {
     // Hidden from the listing, not from a direct read: the caveat still reaches
     // the id an agent may already be holding.
     let Json(fetched) = server
-        .mem_get_observation(Parameters(GetObservationParams { id: old.id }))
+        .mem_get_observation(Parameters(GetObservationParams {
+            id: old.id,
+            include_history: false,
+        }))
         .expect("a superseded memory is still readable by id");
     assert_eq!(
         fetched
@@ -3142,7 +3145,10 @@ fn a_superseded_memory_is_left_out_of_search_results() {
 
     // Hidden from search, not from a direct read.
     let Json(fetched) = server
-        .mem_get_observation(Parameters(GetObservationParams { id: old.id }))
+        .mem_get_observation(Parameters(GetObservationParams {
+            id: old.id,
+            include_history: false,
+        }))
         .expect("a superseded memory is still readable by id");
     assert_eq!(fetched.observation.caveats.len(), 1);
     assert_eq!(fetched.observation.caveats[0].other_id, new.id);
@@ -4611,7 +4617,10 @@ fn the_seven_tools_that_had_no_test_of_their_own_answer_what_they_promise() {
         .unwrap();
     assert_eq!(soft.status, "soft_deleted");
     let Json(found) = server
-        .mem_get_observation(Parameters(GetObservationParams { id: second }))
+        .mem_get_observation(Parameters(GetObservationParams {
+            id: second,
+            include_history: false,
+        }))
         .unwrap();
     assert_eq!(
         found.observation.state, "deleted",
@@ -6998,7 +7007,10 @@ fn consolidating_through_the_tool_merges_and_hides_the_sources() {
     );
 
     let Json(read) = server
-        .mem_get_observation(Parameters(GetObservationParams { id: first.id }))
+        .mem_get_observation(Parameters(GetObservationParams {
+            id: first.id,
+            include_history: false,
+        }))
         .unwrap();
     assert_eq!(read.observation.caveats.len(), 1);
     assert_eq!(read.observation.caveats[0].relation, "superseded_by");
@@ -7026,4 +7038,127 @@ fn a_merge_with_no_sources_is_refused_by_name() {
         error_payload(&error)["error"]["code"],
         "consolidation_sources"
     );
+}
+
+/// A revision made through the tool surface is readable back, byte for byte,
+/// and only when it was asked for.
+#[test]
+fn mem_get_observation_returns_the_versions_it_was_asked_for() {
+    let (_temp, server) = test_server(McpOptions {
+        default_project: Some("leteo".to_owned()),
+        ..McpOptions::default()
+    });
+    {
+        let mut store = server.lock_store().unwrap();
+        store
+            .create_session("history", "leteo", "C:/workspace")
+            .unwrap();
+    }
+
+    let first_body = "el cuerpo original, con acentos: ñ";
+    let saved = server
+        .mem_save(Parameters(
+            serde_json::from_value(json!({
+                "session_id": "history",
+                "title": "Versión original",
+                "content": first_body,
+                "topic_key": "architecture/history",
+            }))
+            .unwrap(),
+        ))
+        .unwrap()
+        .0;
+    let id = saved.observation.id;
+
+    let revised = server
+        .mem_save(Parameters(
+            serde_json::from_value(json!({
+                "session_id": "history",
+                "title": "Versión revisada",
+                "content": "el cuerpo nuevo, con acentos: ñ",
+                "topic_key": "architecture/history",
+            }))
+            .unwrap(),
+        ))
+        .unwrap()
+        .0;
+    assert_eq!(
+        revised.replaced_bytes,
+        Some(first_body.len()),
+        "the save reply reports the size it replaced"
+    );
+    assert!(
+        revised.hint.is_none(),
+        "a similar-size revision is no shrink"
+    );
+
+    let without = server
+        .mem_get_observation(Parameters(
+            serde_json::from_value(json!({ "id": id })).unwrap(),
+        ))
+        .unwrap()
+        .0;
+    assert!(
+        without.versions.is_empty(),
+        "the history is opt-in and absent by default"
+    );
+
+    let with = server
+        .mem_get_observation(Parameters(
+            serde_json::from_value(json!({ "id": id, "include_history": true })).unwrap(),
+        ))
+        .unwrap()
+        .0;
+    assert_eq!(with.versions.len(), 1);
+    assert_eq!(with.versions[0].revision, 1);
+    assert_eq!(with.versions[0].title, "Versión original");
+    assert_eq!(
+        with.versions[0].content.as_bytes(),
+        first_body.as_bytes(),
+        "the previous body is byte-identical"
+    );
+    assert!(!with.versions[0].replaced_at.is_empty());
+}
+
+/// `mem_update` reports the body it replaced and names the read that returns it.
+#[test]
+fn mem_update_reports_the_body_it_replaced_and_calls_out_a_shrink() {
+    let (_temp, server) = test_server(McpOptions {
+        default_project: Some("leteo".to_owned()),
+        ..McpOptions::default()
+    });
+    {
+        let mut store = server.lock_store().unwrap();
+        store
+            .create_session("shrink", "leteo", "C:/workspace")
+            .unwrap();
+    }
+
+    let long = "a".repeat(400);
+    let saved = server
+        .mem_save(Parameters(
+            serde_json::from_value(json!({
+                "session_id": "shrink",
+                "title": "Grande",
+                "content": long,
+            }))
+            .unwrap(),
+        ))
+        .unwrap()
+        .0;
+    let updated = server
+        .mem_update(Parameters(
+            serde_json::from_value(json!({
+                "id": saved.observation.id,
+                "expected_project": "leteo",
+                "content": "b".repeat(5),
+            }))
+            .unwrap(),
+        ))
+        .unwrap()
+        .0;
+    assert_eq!(updated.replaced_bytes, Some(400));
+    let hint = updated.hint.expect("a shrink is called out");
+    assert!(hint.contains("400"), "{hint}");
+    assert!(hint.contains("include_history"), "{hint}");
 }

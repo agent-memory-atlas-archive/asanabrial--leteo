@@ -23,9 +23,9 @@ use crate::{
     memory::model::{
         AddObservation, AddOutcome, AddOutcomeKind, AddPrompt, Candidate, CandidateOptions,
         ConsolidateObservations, DoctorReport, ForeignKeyViolation, JudgeBySemanticParams,
-        JudgeRelationParams, MergeResult, Observation, PassiveCapture, PassiveCaptureResult,
-        Prompt, Relation, SearchMode, SearchOptions, SearchResult, Session, SessionSummary, Stats,
-        TimelineEntry, TimelineResult, UpdateObservation,
+        JudgeRelationParams, MergeResult, Observation, ObservationVersion, PassiveCapture,
+        PassiveCaptureResult, Prompt, Relation, SearchMode, SearchOptions, SearchResult, Session,
+        SessionSummary, Stats, TimelineEntry, TimelineResult, UpdateObservation,
     },
     memory::normalize,
     project::{ProjectDetection, detect_current_project, detect_project},

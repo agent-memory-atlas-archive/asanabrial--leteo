@@ -90,6 +90,21 @@ this describes what happens when it does not have to.
    decision somebody reread would fall due again the moment any peer touched it,
    and again the time after that — and the suite had nothing on it.
 
+8. **A version travels with the memory it belongs to.** The title and body a
+   content-changing write replaced are queued as an `observation_version`
+   mutation from the two snapshot points, under the observation's own project
+   enrolment — never replicated without its memory, nor into a project nobody
+   enrolled. The payload carries the bytes and the replacement timestamp rather
+   than letting each side compute them, so both machines hold the same version
+   instead of each snapshotting its own idea of the previous text. Applying one
+   is idempotent: the unique index on `(observation_sync_id, revision)` makes a
+   replayed or twice-delivered payload a no-op, and the receiving store applies
+   the same retention as the origin. Snapshotting happens only on the write that
+   replaces text, never on arrival, so a peer applying an observation upsert
+   invents no version — both machines keep exactly the versions the origin
+   recorded. See [`memory-model.md`](memory-model.md) §14 and
+   [`store-and-schema.md`](store-and-schema.md) §15.
+
 ## Known gaps
 
 - **There is no client half of the chunked export protocol.** The server speaks

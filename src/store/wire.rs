@@ -59,6 +59,24 @@ pub(super) struct SyncObservationPayload {
     pub(super) hard_delete: bool,
 }
 
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub(super) struct SyncObservationVersionPayload {
+    /// The observation this version belongs to, by the identifier that survives
+    /// replication. Named `sync_id` rather than `observation_sync_id` so it
+    /// matches the key every other entity's payload carries.
+    pub(super) sync_id: String,
+    /// The `revision_count` the live row held before the write that replaced it.
+    pub(super) revision: i64,
+    pub(super) title: String,
+    pub(super) content: String,
+    /// The moment of replacement. Carried so both machines store the same
+    /// string: a value each side generated would disagree.
+    pub(super) replaced_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) project: Option<String>,
+}
+
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 struct SyncPromptPayload {
@@ -138,6 +156,20 @@ pub(super) fn apply_sync_mutation_tx(
                 return apply_observation_delete_tx(tx, payload);
             }
             apply_observation_upsert_tx(tx, payload, max_content_bytes)
+        }
+        "observation_version" => {
+            let mut payload: SyncObservationVersionPayload =
+                decode_sync_payload(&mutation.payload)?;
+            if payload.sync_id.trim().is_empty() {
+                payload.sync_id = mutation.entity_key.trim().to_owned();
+            }
+            // A version is only ever written, never removed: the row a later
+            // write replaced is the row this one keeps, and there is nothing a
+            // delete could name.
+            if operation != crate::sync::OP_UPSERT {
+                return Ok(());
+            }
+            apply_observation_version_upsert_tx(tx, payload, max_content_bytes)
         }
         "prompt" => {
             let mut payload: SyncPromptPayload = decode_sync_payload(&mutation.payload)?;
@@ -361,6 +393,46 @@ fn apply_observation_upsert_tx(
         |row| row.get(0),
     )?;
     crate::store::observations::reschedule_review(tx, id, &kind, previous_kind.as_deref())?;
+    Ok(())
+}
+
+/// Records the version a peer sent.
+///
+/// The title and body go through the same two normalisers a local write used on
+/// its way in — redaction and the length bound — because a payload is a door
+/// like any other, and the `[REDACTED]` promise covers the journal a replica
+/// replays: without this a peer could store a `<private>` span the local path
+/// can never write and hand it back through `include_history`. Both normalisers
+/// are idempotent, so the bytes an honest origin already redacted and bounded
+/// come back unchanged and the two stores still hold the same version — which
+/// is why this is not the "second opinion" the note here once feared. The unique
+/// index on `(observation_sync_id, revision)` plus `INSERT OR IGNORE` is what
+/// makes a repeated payload a no-op.
+fn apply_observation_version_upsert_tx(
+    tx: &Transaction<'_>,
+    payload: SyncObservationVersionPayload,
+    max_content_bytes: usize,
+) -> Result<(), StoreError> {
+    if payload.sync_id.trim().is_empty() || payload.revision <= 0 {
+        return Err(invalid_parameter(
+            "observation version payload requires sync_id and a positive revision",
+        ));
+    }
+    let replaced_at = if payload.replaced_at.trim().is_empty() {
+        sqlite_now()
+    } else {
+        payload.replaced_at
+    };
+    let title = normalize::title(&payload.title, max_content_bytes);
+    let content = normalize::stored_content(&payload.content, max_content_bytes).0;
+    crate::store::observations::snapshot_observation_version_tx(
+        tx,
+        payload.sync_id.trim(),
+        payload.revision,
+        &title,
+        &content,
+        &replaced_at,
+    )?;
     Ok(())
 }
 
@@ -796,6 +868,47 @@ pub(super) fn enqueue_observation(
         crate::sync::OP_UPSERT,
         &travelling,
         observation.project.as_deref().unwrap_or_default(),
+    )
+}
+
+/// Queues one superseded version, under the observation's own enrolment.
+///
+/// The project is the one the memory is filed in, resolved by the item that
+/// owns the version, so a version is never replicated without the memory it
+/// belongs to or into a project nobody enrolled. An empty project means the
+/// memory could not be attributed to one, and — exactly as `enqueue_observation`
+/// does — the version is queued anyway rather than dropped in silence.
+pub(super) fn enqueue_observation_version(
+    tx: &Transaction<'_>,
+    observation_sync_id: &str,
+    revision: i64,
+    title: &str,
+    content: &str,
+    replaced_at: &str,
+    project: &str,
+) -> Result<(), StoreError> {
+    if observation_sync_id.is_empty() {
+        return Ok(());
+    }
+    let payload = SyncObservationVersionPayload {
+        sync_id: observation_sync_id.to_owned(),
+        revision,
+        title: title.to_owned(),
+        content: content.to_owned(),
+        replaced_at: replaced_at.to_owned(),
+        project: None,
+    };
+    // The entity key is the observation rather than the pair: a version is a
+    // property of that memory, and the revision inside the payload is what
+    // tells two of them apart on apply. The unique index, not this key, is what
+    // makes the apply idempotent.
+    enqueue_mutation(
+        tx,
+        "observation_version",
+        observation_sync_id,
+        crate::sync::OP_UPSERT,
+        &payload,
+        project,
     )
 }
 

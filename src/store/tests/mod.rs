@@ -13,6 +13,7 @@ mod replication;
 mod schema;
 mod search;
 mod sessions;
+mod versions;
 
 /// A store whose default test project replicates.
 ///
@@ -158,6 +159,17 @@ const EXPECTED_COLUMNS: &[(&str, &[&str])] = &[
             "project",
             "occurred_at",
             "acked_at",
+        ],
+    ),
+    (
+        "observation_versions",
+        &[
+            "id",
+            "observation_sync_id",
+            "revision",
+            "title",
+            "content",
+            "replaced_at",
         ],
     ),
 ];

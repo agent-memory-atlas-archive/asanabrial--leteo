@@ -242,10 +242,106 @@ pub enum AddOutcomeKind {
     Deduplicated,
 }
 
+/// What a content-changing write replaced, and whether the replacement shrank.
+///
+/// Carried on the write outcome rather than computed by each reply, so the
+/// threshold is decided once and every door that answers a write reads the same
+/// answer — including the CLI, which serialises the outcome directly.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReplacedContent {
+    /// Bytes of the body this write overwrote.
+    pub bytes: usize,
+    /// Whether the new body is under [`SHRINK_THRESHOLD_PERCENT`] of the one it
+    /// replaced, which a reply calls out.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub shrunk: bool,
+}
+
+/// How far a body must shrink before a write calls it out, as a percentage of
+/// the body it replaced.
+///
+/// A revision that replaces a paragraph with a sentence is the ordinary way a
+/// memory is corrected and costs nothing to miss; a revision that replaces a
+/// page with a line is usually a paste that went wrong or a caller that sent
+/// the wrong id, and the reply should say so while the old text is still
+/// readable. Half is the boundary the issue names.
+pub const SHRINK_THRESHOLD_PERCENT: usize = 50;
+
+/// Whether `new_bytes` is under [`SHRINK_THRESHOLD_PERCENT`] of `replaced_bytes`.
+///
+/// The one place the rule is applied. Multiplication is done in `u128` because
+/// a body may be tens of kilobytes and a caller may hold a much longer one
+/// before the storage bound cuts it.
+pub fn content_shrank(replaced_bytes: usize, new_bytes: usize) -> bool {
+    replaced_bytes > 0
+        && (new_bytes as u128) * 100 < (replaced_bytes as u128) * SHRINK_THRESHOLD_PERCENT as u128
+}
+
+/// What to say when a write replaced a body with something far shorter.
+///
+/// A revision that turns a page into a line is usually a paste that went wrong
+/// or a caller acting on the wrong id, and it is worth saying while the
+/// previous text is still readable. One function, so the tool reply and the
+/// command line say the same thing; whether to say it at all is
+/// [`content_shrank`], decided by the store.
+pub fn shrink_hint(replaced_bytes: usize) -> String {
+    format!(
+        "This replaced {replaced_bytes} bytes with under half as many. Read the previous version with mem_get_observation include_history if that was not intended."
+    )
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AddOutcome {
     pub kind: AddOutcomeKind,
     pub observation: Observation,
+    /// The text this save replaced, when it landed on an existing topic key and
+    /// changed its content. Absent on an insert, a metadata-only revision, and
+    /// a deduplicated save.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replaced: Option<ReplacedContent>,
+}
+
+/// One `mem_update`, and what it replaced.
+///
+/// The observation alone was enough while an update could not lose text. Now
+/// that it can, the reply needs the size of what was overwritten, and the store
+/// is the only place that knows it — the read happens inside the same
+/// transaction as the write.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct UpdateOutcome {
+    pub observation: Observation,
+    /// The text this update replaced, when it changed the title or body. Absent
+    /// for a metadata-only change, which is out of the version history's scope.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replaced: Option<ReplacedContent>,
+}
+
+/// The title and body a later write replaced, as a read hands them back.
+///
+/// Byte-identical to what was stored: this is the previous version, not a
+/// summary of it. Keyed by the revision it supersedes, so `revision` is the
+/// `revision_count` the live row carried before the change that replaced it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ObservationVersion {
+    pub revision: i64,
+    pub title: String,
+    pub content: String,
+    pub replaced_at: String,
+}
+
+/// One superseded revision as an export carries it, tagged with the memory it
+/// belongs to.
+///
+/// The store's own [`ObservationVersion`] does not carry the owning id because
+/// every read already knows which memory it asked about; an export does not, so
+/// the owner travels beside the version rather than being inferred.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ExportObservationVersion {
+    pub observation_sync_id: String,
+    pub revision: i64,
+    pub title: String,
+    pub content: String,
+    pub replaced_at: String,
 }
 
 /// One call that replaces several memories with a single new one.
@@ -703,6 +799,15 @@ pub struct ExportData {
     /// far.
     #[serde(default, deserialize_with = "nullable_sequence")]
     pub relations: Vec<Relation>,
+    /// The version history, which used to be left behind.
+    ///
+    /// `leteo export` is this store written down ([`cli.md`](../../openspec/specs/cli.md)
+    /// §6), and a table added to the store and left out of the export is the
+    /// same lossy backup pinning once was: history replicates but would not
+    /// survive a backup and restore. The field is `default`, so an Engram or
+    /// older-Leteo export without it reads back with no versions.
+    #[serde(default, deserialize_with = "nullable_sequence")]
+    pub observation_versions: Vec<ExportObservationVersion>,
     /// Prompt tombstones, which Engram 0.2.0 added.
     ///
     /// Leteo writes `0.1.0`, which has no tombstones, so this is
@@ -746,6 +851,9 @@ pub struct ImportResult {
     /// Prompt tombstones carried into `prompt_deletions` from an Engram 0.2.0
     /// backup. Zero for a 0.1.0 export, which has none.
     pub prompt_tombstones_imported: i64,
+    /// Superseded revisions restored into `observation_versions`. Zero for an
+    /// export written before the table existed.
+    pub observation_versions_imported: i64,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
