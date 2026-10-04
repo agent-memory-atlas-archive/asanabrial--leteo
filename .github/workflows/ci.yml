@@ -4,6 +4,11 @@ on:
   pull_request:
   push:
     branches: [main]
+  # Estigia dispatches this against the exact head a publication just pushed,
+  # once per publication epoch, so a review can bind CI evidence to those bytes
+  # instead of to a build that may have moved. `lane-guard` below keeps a
+  # dispatch on a pull request's own head from building it a second time.
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -15,6 +20,16 @@ env:
   CARGO_PROFILE_TEST_DEBUG: "0"
   CARGO_TERM_COLOR: always
 
+# CI runs on a pull request's own head, on `main` after a merge, and on
+# `workflow_dispatch`. The dispatch is the **publication lane**: Estigia starts
+# it against the head a publication just pushed, so a review binds CI evidence
+# to those exact bytes rather than to a build that may have moved. `main`
+# requires the checks below on the pull-request head, and only a `pull_request`
+# run populates that merge box (measured on #110: dispatch runs were absent
+# from `gh pr checks`), so a dispatch against a head this workflow already built
+# skips its own copy rather than running the suite twice — `lane-guard` decides
+# that, and a dispatch against a commit no pull request covers runs in full.
+#
 # Every job below gates a merge, and none of them is report-only. `main`
 # requires one status check for every matrix leg and one for every job that is
 # not a matrix, with `enforce_admins` on, so a red one blocks the pull request
@@ -88,7 +103,51 @@ env:
 # matrix leg means adding a context yourself — see the note on `unit-tests` for
 # what happens when the list and the workflow disagree.
 jobs:
+  # A publication dispatches this workflow against the head it just pushed, so
+  # a review binds CI evidence to those bytes. A pull request's head is already
+  # built by the `pull_request` run — which is the run that populates the merge
+  # box — so a dispatch there must not build it a second time. This job answers
+  # whether one exists; every job below waits on it. A dispatch against a
+  # commit no pull request covers finds none and runs the suite, which is the
+  # case the lane exists for.
+  lane-guard:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    outputs:
+      skip: ${{ steps.decide.outputs.skip }}
+    steps:
+      - id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # The pull request run is created within seconds of the push that
+          # preceded this dispatch, so it is usually already listed. Poll
+          # rather than race it, and read past the default page size so a busy
+          # head cannot hide the run being looked for.
+          count=0
+          for _ in $(seq 1 6); do
+            count=$(gh run list \
+              --repo "${{ github.repository }}" \
+              --commit "${{ github.sha }}" \
+              --event pull_request \
+              --limit 100 \
+              --json databaseId --jq 'length')
+            if [ "$count" -gt 0 ]; then break; fi
+            sleep 10
+          done
+          echo "pull_request runs on ${{ github.sha }}: $count"
+          if [ "$count" -gt 0 ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
   unit-tests:
+    needs: [lane-guard]
+    if: always() && needs.lane-guard.outputs.skip != 'true'
     # Renaming this job renames the checks that branch protection requires, and
     # a matrix renames them whether you ask or not: GitHub appends the matrix
     # values, so `Unit Tests` became `Unit Tests (ubuntu-latest)` and its
@@ -203,6 +262,8 @@ jobs:
   # must be re-counted whenever a test is added is the same trap as a hard-coded
   # leg count. `cargo test -- --ignored` is the list.
   cloud-tests:
+    needs: [lane-guard]
+    if: always() && needs.lane-guard.outputs.skip != 'true'
     name: Cloud Tests
     runs-on: ubuntu-latest
     services:
@@ -248,6 +309,8 @@ jobs:
   # below names a platform, so what it produces of `docker/Dockerfile` is the
   # amd64 half; `container-image-arm64` builds the other one.
   container-images:
+    needs: [lane-guard]
+    if: always() && needs.lane-guard.outputs.skip != 'true'
     name: Container Images
     runs-on: ubuntu-latest
     steps:
@@ -350,6 +413,8 @@ jobs:
   # Nothing is pushed from here either. The release remains the only thing that
   # publishes.
   container-image-arm64:
+    needs: [lane-guard]
+    if: always() && needs.lane-guard.outputs.skip != 'true'
     name: Container Image (arm64)
     runs-on: ubuntu-22.04-arm
     steps:
@@ -381,6 +446,8 @@ jobs:
   # It is printed and left alone. Stock `python3` is all it needs, and the store
   # is created in a temporary directory the script owns.
   search-quality:
+    needs: [lane-guard]
+    if: always() && needs.lane-guard.outputs.skip != 'true'
     name: Search Quality
     runs-on: ubuntu-latest
     steps:
