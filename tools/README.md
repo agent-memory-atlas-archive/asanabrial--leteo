@@ -228,26 +228,25 @@ is adopted with `leteo import --from-engram`, and both engines are asked the
 same queries through their own MCP `mem_search`. Ids survive adoption, so one
 answer key serves both.
 
+One command runs the load and both benchmarks and rewrites the comparison page
+from what it measured:
+
 ```bash
-export ENGRAM_BIN=/path/to/engram LETEO_BIN=target/release/leteo
-export BENCH_STATE=$(mktemp -d)        # every store lives here, never in HOME
-python3 tools/engram-bench/load_engram.py
-sh tools/engram-bench/load_leteo.sh
-python3 tools/engram-bench/bench_search.py   # hit@1, hit@5, MRR per query kind
-ENGRAM_SRC=/path/to/engram-checkout python3 tools/engram-bench/bench_cost.py
+cargo build --release
+LETEO_BIN=target/release/leteo python3 tools/engram-bench/compare.py
 ```
+
+It regenerates [`docs/comparison-with-engram.md`](../docs/comparison-with-engram.md),
+which carries the measured Engram version, the Leteo commit and the per-kind
+numbers. The numbers live there rather than here, where they were dated prose
+and drifted; the individual scripts (`load_engram.py`, `load_leteo.sh`,
+`bench_search.py`, `bench_any.py`, `bench_cost.py`) still run on their own, and
+`compare.py` skips a step it cannot run and says so.
 
 `bench_cost.py` needs an Engram source checkout because Engram's
 session-start hook is a shell script in its tree, not part of its binary.
 `bench_any.py` reruns Engram with its opt-in `match_mode: "any"`, which agents
 only get if they ask for it.
-
-Measured on 2026-10-02 against Engram v3.0.0 and Leteo 3400f80: overall MRR
-0.266 for Engram against 0.707 for Leteo. Leteo led on every query kind but
-one — partial words (`storyb`, `pgxpo`), where Engram scored 0.923 against
-Leteo's 0.231, because Engram indexes trigrams and Leteo indexes words and
-stems. That gap is closed: a prefix stage and a title-substring stage now score
-0.923 on the same set, and `floors.json` holds it there.
 
 Two limits to keep in view before quoting any of it. The corpus and queries are
 synthetic and were written knowing how both engines search, so paraphrases

@@ -4,9 +4,11 @@ Local-first persistent memory for coding agents. A single Rust binary over one
 SQLite database: agents save what they learn and find it again in a later
 session, on the same machine, with no service in between.
 
-It is a reimplementation of [Engram](https://github.com/engram-design/engram)
-and can adopt an Engram database in place — see `NOTICE` for the attribution
-that stays.
+It is a reimplementation of
+[Engram](https://github.com/Gentleman-Programming/engram) and can adopt an
+Engram database in place — see `NOTICE` for the attribution that stays. A
+measured comparison is in
+[`docs/comparison-with-engram.md`](../docs/comparison-with-engram.md).
 
 ## What the binary is
 
