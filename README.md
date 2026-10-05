@@ -158,9 +158,9 @@ instead, including work that has not been released yet, ask for the repository:
 
 Search by meaning, for a question that shares no word with the memory it wants,
 reads a 13 MB model that lives in a file beside the binary and not inside it. The
-Docker images carry it. Every other install -- the install scripts, `cargo
-install`, a build from source, a package manager -- fetches it once, from the files
-committed at the tag of its own version:
+release archives, the install scripts, the npm wrapper and the Docker images carry
+it. Every other install -- `cargo install`, a build from source, a package that left
+it out -- fetches it once, from the files committed at the tag of its own version:
 
 ```bash
 leteo model install                      # downloads the model of this version, checks it

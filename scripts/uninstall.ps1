@@ -151,6 +151,11 @@ foreach ($own in @('leteo.exe', 'uninstall.ps1')) {
         Remove-Item -Force $path -ErrorAction SilentlyContinue
     }
 }
+# The model the installer put beside the binary, by name.
+foreach ($own in @('config.json', 'model.safetensors', 'tokenizer.json.gz')) {
+    Remove-Item -Force (Join-Path (Join-Path $installDir 'model') $own) -ErrorAction SilentlyContinue
+}
+Remove-Item -Force (Join-Path $installDir 'model') -ErrorAction SilentlyContinue
 if ((Test-Path $installDir) -and -not (Get-ChildItem -Force $installDir)) {
     Remove-Item -Force $installDir -ErrorAction SilentlyContinue
 } elseif (Test-Path $installDir) {

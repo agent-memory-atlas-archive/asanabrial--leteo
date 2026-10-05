@@ -10,8 +10,9 @@ All notable changes to Leteo are documented in this file.
   puts it there.** A 13 MB static embedding model, verified against SHA-256s the
   binary was built with before a byte of it is used, found through one ordered list
   (`LETEO_MODEL_DIR`, beside the executable, `../share/leteo/model`, the data
-  directory). The Docker images carry it; every other install fetches it with
-  `leteo model install` from the files committed at the tag of its own version (or
+  directory). Every release archive and the Docker images carry it; every other
+  install fetches it with `leteo model install` from the files committed at the
+  tag of its own version (or
   `--from <directory>` with no network), which `leteo setup` runs, after the agent is
   configured, when it finds none. `leteo doctor` reports
   whether the model is verified, missing or wrong. The binary grows by 50 KB for
@@ -28,7 +29,7 @@ All notable changes to Leteo are documented in this file.
   2,028 LLM-generated questions that do not use their target's words it adds .101 MRR
   [.088, .114]. The model is the file the entry above describes; a binary that cannot verify it
   searches by words only, and `doctor` says why. The model runtime adds 1.5 MB to
-  the binary; memory while it runs is in `search.md` §15. Turn it off with `"semantic_search": false`
+  the binary, which CI bounds at 20 MB; memory while it runs is in `search.md` §15. Turn it off with `"semantic_search": false`
   in `settings.json`. Basque is the weak language: the model was not trained on it
   (#124).
 

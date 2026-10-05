@@ -218,7 +218,7 @@ function cacheDirectory() {
   }
 }
 
-async function fetchBinary(version, target, destination) {
+async function fetchBinary(version, target, installDir) {
   const packageName = `leteo-${version}-${target.triple}`;
   const archiveName = `${packageName}.${target.archive}`;
   // Overridable for the same reason the shell scripts allow it: an internal
@@ -255,7 +255,11 @@ async function fetchBinary(version, target, destination) {
   // Unpack beside the destination and rename into place, so two `npx leteo`
   // processes racing on a cold cache cannot leave a half-written binary that
   // the loser then executes.
-  const staging = fs.mkdtempSync(path.join(path.dirname(destination), "staging-"));
+  //
+  // The binary and the semantic search model go into one directory, renamed in
+  // whole: the binary looks for `model/` beside itself, and a binary copied out
+  // alone would search by words only without saying why.
+  const staging = fs.mkdtempSync(path.join(path.dirname(installDir), "staging-"));
   try {
     const archivePath = path.join(staging, archiveName);
     fs.writeFileSync(archivePath, archive);
@@ -266,13 +270,20 @@ async function fetchBinary(version, target, destination) {
       fail(`${archiveName} did not contain ${packageName}/${target.exe}`);
     }
     fs.chmodSync(unpacked, 0o755);
+    const ready = path.join(staging, "ready");
+    fs.mkdirSync(ready);
+    fs.renameSync(unpacked, path.join(ready, target.exe));
+    const model = path.join(staging, packageName, "model");
+    if (fs.existsSync(model)) {
+      fs.renameSync(model, path.join(ready, "model"));
+    }
     // Another process may have finished first — two MCP clients starting at
     // once on a cold cache is an ordinary Tuesday. Its copy came through the
     // same checksum, so it is the same bytes, and on Windows renaming over a
     // binary that process is already executing fails with EPERM. Leaving the
     // winner alone is both correct and the only thing that works.
-    if (!fs.existsSync(destination)) {
-      fs.renameSync(unpacked, destination);
+    if (!fs.existsSync(installDir)) {
+      fs.renameSync(ready, installDir);
     }
   } finally {
     fs.rmSync(staging, { recursive: true, force: true });
@@ -287,13 +298,11 @@ async function main() {
   // overrides it for the same reason the scripts allow it.
   const tag = process.env.LETEO_VERSION || `v${version}`;
 
-  const binary = path.join(
-    cacheDirectory(),
-    `${tag}-${target.triple}-${target.exe}`,
-  );
+  const installDir = path.join(cacheDirectory(), `${tag}-${target.triple}`);
+  const binary = path.join(installDir, target.exe);
 
   if (!fs.existsSync(binary)) {
-    await fetchBinary(tag, target, binary);
+    await fetchBinary(tag, target, installDir);
   }
 
   const result = spawnSync(binary, process.argv.slice(2), { stdio: "inherit" });

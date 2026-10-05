@@ -97,6 +97,18 @@ try {
     New-Item -ItemType Directory -Force -Path $installDir | Out-Null
     Copy-Item "$temp\$package\leteo.exe" (Join-Path $installDir 'leteo.exe') -Force
 
+    # The semantic search model, which the archive carries and the binary loads from
+    # `model\` beside it. Without it the binary still works and searches by words
+    # only, so a failure here is a warning and not a failed install.
+    if (Test-Path "$temp\$package\model") {
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $installDir 'model') | Out-Null
+            Copy-Item "$temp\$package\model\*" (Join-Path $installDir 'model') -Force
+        } catch {
+            Write-Warning "could not install the search model: $_; run 'leteo model install' later"
+        }
+    }
+
     # The uninstaller ships beside the binary rather than being downloaded when
     # it is needed: somebody removing a tool should not have to be online, and
     # `leteo.exe` cannot delete itself on Windows — a separate script is the

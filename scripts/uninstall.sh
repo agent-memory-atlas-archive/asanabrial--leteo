@@ -99,6 +99,12 @@ if [ -e "$BINARY" ]; then
     rm -f "$BINARY"
 fi
 rm -f "$INSTALL_DIR/uninstall.sh"
+# The model the installer put under `../share/leteo/model`, by name: three files
+# and the directory they were in, never `share/` itself.
+rm -f "$INSTALL_DIR/../share/leteo/model/config.json" \
+      "$INSTALL_DIR/../share/leteo/model/model.safetensors" \
+      "$INSTALL_DIR/../share/leteo/model/tokenizer.json.gz"
+rmdir "$INSTALL_DIR/../share/leteo/model" "$INSTALL_DIR/../share/leteo" 2>/dev/null || true
 
 say ""
 say "Leteo is gone."
