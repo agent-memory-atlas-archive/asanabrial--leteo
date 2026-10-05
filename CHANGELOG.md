@@ -10,9 +10,13 @@ All notable changes to Leteo are documented in this file.
   `porter` stays on every memory, and each one gains the Snowball stems of the
   language named by the memory-language setting, recorded on its row so the choice is
   fixed per memory; a question is stemmed for `porter` and for every language the store
-  holds. `ejecuta` now finds `ejecutaron`, which `porter` cannot. Only Spanish has a
-  second stemmer so far: every other language records its language and gets `porter`
-  alone until its algorithm lands, and Galician has none. Schema version 21; the
+  holds. `ejecuta` now finds `ejecutaron`, which `porter` cannot. Spanish,
+  Portuguese, French, German, Italian, Romanian, Dutch and Swedish have a second
+  stemmer; Catalan, Basque and Polish have official Snowball algorithms that the
+  stemming crate lacks, Galician has none, and those four record their language and
+  get `porter` alone. Each stemmer has a set of questions that reach their memory
+  only through another inflection, scored on the strict pass alone, and a floor in
+  the ratchet. Schema version 21; the
   migration stems existing rows in the setting's language and rebuilds the index.
   A tool writing to the database file directly must register `leteo_stem`, or its
   writes to `observations` are refused (#125).

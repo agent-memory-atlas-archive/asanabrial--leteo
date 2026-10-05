@@ -18,13 +18,26 @@ use crate::settings::Interface;
 /// The Snowball algorithm for a language, where this build has one.
 ///
 /// English is absent on purpose: `porter` already indexes every memory, and a
-/// row's English stems are those. Galician has no Snowball algorithm at all, and
-/// Catalan, Basque and Polish are not in `rust-stemmers`; a row in any of them
-/// is recorded under its language and gets `porter` alone until one is added
-/// here.
+/// row's English stems are those. Catalan, Basque and Polish have official
+/// Snowball algorithms (snowballstem.org lists all three) that `rust-stemmers`
+/// 1.2.0 does not carry, so they need code generated from Snowball's own
+/// sources and vendored. Galician has no Snowball algorithm at all. A row in any
+/// of the four is recorded under its language and gets `porter` alone until one
+/// is added here.
+///
+/// A language added here needs a set in `tools/engram-bench/inflection_sets.py`
+/// and a floor for it: a stemmer that no query can tell from `porter` is not
+/// shipping anything.
 pub fn algorithm(language: Interface) -> Option<Algorithm> {
     match language {
         Interface::Spanish => Some(Algorithm::Spanish),
+        Interface::Portuguese => Some(Algorithm::Portuguese),
+        Interface::French => Some(Algorithm::French),
+        Interface::German => Some(Algorithm::German),
+        Interface::Italian => Some(Algorithm::Italian),
+        Interface::Romanian => Some(Algorithm::Romanian),
+        Interface::Dutch => Some(Algorithm::Dutch),
+        Interface::Swedish => Some(Algorithm::Swedish),
         _ => None,
     }
 }

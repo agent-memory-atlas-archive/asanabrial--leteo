@@ -18,12 +18,17 @@ fn reopen_in(temp: &TempDir, language: Interface) -> Store {
     Store::open(config).unwrap()
 }
 
-/// What a question finds by the strict pass alone, so that a widened or
-/// nearest rescue cannot stand in for the stemmer being asked about.
+/// What a question finds by the strict pass alone, so that neither a widened or
+/// nearest rescue nor a corrected term can stand in for the stemmer being asked
+/// about.
 fn strict(store: &Store, query: &str) -> Vec<String> {
-    store
-        .search(query, SearchOptions::default())
-        .unwrap()
+    let (found, _, corrections) = store
+        .search_with_more_and_corrections(query, SearchOptions::default())
+        .unwrap();
+    if !corrections.is_empty() {
+        return Vec::new();
+    }
+    found
         .into_iter()
         .filter(|result| !result.partial)
         .map(|result| result.observation.title)
@@ -43,6 +48,69 @@ fn languages(store: &Store) -> Vec<(String, String)> {
         .unwrap()
         .collect::<Result<_, _>>()
         .unwrap()
+}
+
+/// One memory and one question per language, the question reaching the memory
+/// only through another inflection of a word it holds, at least three edits from
+/// it so neither `porter` nor the typo stage can answer. The English store is the
+/// control, as in the Spanish test below.
+#[test]
+fn every_language_with_a_stemmer_finds_a_memory_by_another_inflection() {
+    let cases = [
+        (
+            Interface::Spanish,
+            "Cuánto tarda la reindexación completa",
+            "reindexar",
+        ),
+        (
+            Interface::Portuguese,
+            "A reindexação completa leva quatro minutos",
+            "reindexar",
+        ),
+        (
+            Interface::French,
+            "Meilisearch tolère les fautes de frappe",
+            "tolérait",
+        ),
+        (
+            Interface::German,
+            "Wir müssen jeden Aufruf verarbeiten",
+            "Verarbeitungen",
+        ),
+        (
+            Interface::Italian,
+            "La reindicizzazione completa dura quattro minuti",
+            "reindicizzare",
+        ),
+        (
+            Interface::Romanian,
+            "Meilisearch tolerează greșeli de scriere",
+            "greșelilor",
+        ),
+        (
+            Interface::Dutch,
+            "We willen alle teksten vertalen",
+            "vertalingen",
+        ),
+        (
+            Interface::Swedish,
+            "Migrering av sökningen",
+            "migreringarna",
+        ),
+    ];
+    for (language, title, question) in cases {
+        let (_temp, mut store) = store_in(language);
+        store
+            .add_observation(observation("s1", title, "Anteckning."))
+            .unwrap();
+        assert_eq!(strict(&store, question), [title], "{language:?}");
+
+        let (_other, mut english) = store_in(Interface::English);
+        english
+            .add_observation(observation("s1", title, "Anteckning."))
+            .unwrap();
+        assert!(strict(&english, question).is_empty(), "{language:?}");
+    }
 }
 
 /// `porter` is an English algorithm, and `ejecuta` and `ejecutaron` are two words
@@ -374,4 +442,25 @@ fn doctor_names_a_store_whose_stems_went_missing_and_the_repair_puts_them_back()
     store.rebuild_full_text_indexes().unwrap();
     assert!(store.doctor().unwrap().healthy);
     assert_eq!(strict(&store, "ejecutaron"), ["El cron ejecuta"]);
+}
+
+/// The languages the setting offers that still have no second stemmer are four,
+/// and `search.md` §16 names them and what each lacks. A fifth gaining an arm, or
+/// one of the four gaining one, is a reason to edit that paragraph.
+#[test]
+fn the_languages_without_a_stemmer_are_the_four_the_spec_names() {
+    let without: Vec<Interface> = Interface::ALL
+        .into_iter()
+        .filter(|language| *language != Interface::English)
+        .filter(|language| crate::stemming::algorithm(*language).is_none())
+        .collect();
+    assert_eq!(
+        without,
+        [
+            Interface::Catalan,
+            Interface::Galician,
+            Interface::Basque,
+            Interface::Polish
+        ]
+    );
 }

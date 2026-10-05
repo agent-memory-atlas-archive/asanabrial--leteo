@@ -576,14 +576,25 @@ before any of it.
     substring stages and the vocabulary the typo stage corrects against do not
     read it: a fragment is not a word a stemmer has an opinion about.
 
-    **Which languages have a stemmer is a gap, and it is stated here.** This
-    slice ships Spanish and English (`porter`) only. Every other language the
-    setting offers records its language on its rows and gets `porter` alone.
-    Snowball has algorithms for ca, de, en, es, eu, fr, it, nl, pl, pt, ro and sv;
-    `rust-stemmers` 1.2.0 lacks Catalan, Basque and Polish, so those three need
-    generated or vendored code. **Galician has no Snowball algorithm at all.**
-    Adding a language is one arm in `stemming::algorithm`, and the rows already
-    recorded under it are re-stemmed by the repair that `doctor --repair` runs.
+    **Which languages have a stemmer, and which do not.** `stemming::algorithm`
+    is the one table. It carries Spanish, Portuguese, French, German, Italian,
+    Romanian, Dutch and Swedish, which are the Snowball algorithms `rust-stemmers`
+    1.2.0 ships for languages the setting offers; English is `porter`'s.
+    Four languages the setting offers have none, for two different reasons:
+
+    - **Catalan, Basque and Polish have official Snowball algorithms**
+      (snowballstem.org lists each, with its `.sbl` source, in the Snowball
+      repository), and `rust-stemmers` 1.2.0, last released in 2019, does not
+      carry them. Adding them takes code generated from those sources with
+      Snowball's own compiler and vendored with its licence, or a crate that
+      has them, plus a set in `tools/engram-bench/inflection_sets.py` and a floor
+      for it.
+    - **Galician has no Snowball algorithm at all.** Nothing to vendor; it
+      needs a stemmer from somewhere else, or stays on `porter`.
+
+    A row in any of the four records its language and gets `porter` alone, and
+    the rows recorded under a language are re-stemmed by the repair
+    (`doctor --repair`) the day an arm for it exists.
 
     **What it costs, and what it did not buy.** A larger index — 782 KB to 954 KB
     on the 178-memory benchmark store — and some cross-language false positives:
@@ -593,6 +604,27 @@ before any of it.
     foreign tool writing to the file directly is such a connection. Migration 21
     stems the rows that exist in the language the setting names when it runs,
     because nothing recorded what their writer used.
+
+    **Each language that ships a stemmer has a set that can fail.** The
+    ratchet's `spanish` kind could not show the stemmer working (below), so
+    every language with an arm in `stemming::algorithm` has eight questions in
+    `tools/engram-bench/inflection_sets.py`, each reaching its memory only
+    through another inflection of a word the memory holds — `reindexar` for
+    `reindexación`, `Verarbeitungen` for `verarbeiten` — at least three edits
+    from it, which is past the typo stage's budget. The set is scored on the
+    strict pass alone: an answer counts only if no result is marked `partial` or
+    `semantic` and the hint does not say terms were corrected, so a prefix,
+    substring, typo, widened, nearest or semantic rescue scores as a miss. The
+    runner refuses to run if a deliberately mangled word is ever answered without
+    saying so, because then it could not tell the stages apart. One store per
+    language, with that language named in its settings; `inflection_check.py`
+    verifies the edit distances and that a stemmer folds each query word onto its
+    memory. A stemmer ships only if its set separates the stemming store from the
+    same store told it writes English: all eight languages score MRR 1.000 with
+    their stemmer and 0.000 without it. A question is worth keeping only if
+    `porter` cannot answer it: French's first draft had four that share an
+    English suffix, `-ation` and `-er`, and `porter` answered them. The floors
+    are in `floors.json` under `inflection`.
 
     Measured on `tools/engram-bench` with the semantic stage on, as CI runs it,
     the `spanish` kind went 0.790 to 0.969 and overall 0.887 to 0.918 — and
@@ -637,7 +669,8 @@ before any of it.
 - Search quality has a floor that CI enforces. `tools/engram-bench/ratchet.py`
   saves a fixed synthetic corpus into a fresh store through `mem_save`, asks every
   query it defines, in several kinds, through `mem_search`, and fails when any
-  kind's mean reciprocal rank, or the overall one, is below its entry in
+  kind's mean reciprocal rank, or the overall one, or a language's strict-pass
+  rank on its inflection set, is below its entry in
   `tools/engram-bench/floors.json`. The same file holds a byte ceiling for
   twenty-result `mem_search` replies and for `mem_context` with its defaults,
   because a change that keeps ranking and doubles what every call sends is a
@@ -653,6 +686,9 @@ before any of it.
 - `src/store/schema.rs` — the indexes and the triggers that feed them
 - `src/stemming.rs` — the language table, the stemmer, and the SQL functions
 - `migrations/0021_observation_stems.sql` — the stems, their index and triggers
+- `tools/engram-bench/inflection_sets.py`, `inflection.py`, `inflection_check.py` —
+  the per-language strict sets, their runner, and the checker of their edit
+  distances
 - `src/store/tests/search.rs` — the stage-by-stage tests
 - `src/semantic/` (the model, where it is, its pins, `install`), `src/store/semantic_stage.rs` — the model, the stage, and
   the fusion; `src/store/tests/semantic.rs` holds them
@@ -662,7 +698,8 @@ before any of it.
   the ranking statement it measures; `--pipeline` asks the whole search with and
   without the semantic stage
 - `tools/engram-bench/ratchet.py`, `floors.json` — the quality and reply-size
-  floors (the ratchet names the memory language in the store's settings) and the ceiling on empty answers, run by the `search-quality` job in
+  floors (the ratchet names the memory language in the store's settings), the
+  per-language strict floors, and the ceiling on empty answers, run by the `search-quality` job in
   `.github/workflows/ci.yml`, which also runs the hard-set evaluator, the
   binary-size check and `tools/semantic/check_install.sh`, which installs a
   release-shaped archive and checks the binary finds its model and an uninstall
