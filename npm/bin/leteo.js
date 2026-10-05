@@ -23,6 +23,11 @@ const path = require("node:path");
 
 const REPO = "asanabrial/leteo";
 
+// How many times to look for the binary and fetch it when it is missing. Two
+// concurrent runs can each remove the other's finished install once while
+// healing it; the third pass is the first that cannot lose that race again.
+const INSTALL_ATTEMPTS = 3;
+
 // Five builds, matching the release workflow's matrix. `npm/tests` in the Rust
 // crate holds this table against `.github/workflows/release.yml`, because a
 // target added there and not here is a platform that silently falls back to
@@ -330,9 +335,9 @@ async function main() {
   const binary = path.join(installDir, target.exe);
 
   // More than once because a concurrent run healing a damaged directory can
-  // remove an install this one has just finished; the second attempt finds the
+  // remove an install this one has just finished; the next attempt finds the
   // directory whole or makes it so.
-  for (let attempt = 0; attempt < 3 && !fs.existsSync(binary); attempt += 1) {
+  for (let attempt = 0; attempt < INSTALL_ATTEMPTS && !fs.existsSync(binary); attempt += 1) {
     await fetchBinary(tag, target, installDir);
   }
 

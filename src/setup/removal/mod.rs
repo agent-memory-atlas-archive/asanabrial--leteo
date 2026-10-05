@@ -194,6 +194,9 @@ fn remove_model(removed: &mut Removal, data_dir: &Path) {
     // link, once resolved and once not, and each file would otherwise be judged
     // and reported under both spellings.
     let mut judged = std::collections::HashSet::new();
+    let real_data_dir = data_dir
+        .canonicalize()
+        .unwrap_or_else(|_| data_dir.to_path_buf());
     for directory in crate::semantic::locations_for(removed.binary.as_deref(), data_dir, None) {
         if std::fs::symlink_metadata(&directory).is_ok_and(|meta| meta.file_type().is_symlink()) {
             if has_model_named_entry(&directory) {
@@ -259,8 +262,15 @@ fn remove_model(removed: &mut Removal, data_dir: &Path) {
         }
         if took_any && remove_if_empty(removed, &directory) {
             // A share/leteo that holds something else is somebody else's, and
-            // is named as such.
+            // is named as such. Not when it is the data directory: with
+            // `LETEO_DATA_DIR` at `.../share/leteo` the names match, and the
+            // store beside the model would be reported as a stranger, or the
+            // directory removed here before `remove_data_directory` judged it.
             if let Some(parent) = directory.parent()
+                && parent
+                    .canonicalize()
+                    .unwrap_or_else(|_| parent.to_path_buf())
+                    != real_data_dir
                 && parent.file_name().is_some_and(|name| name == "leteo")
                 && parent
                     .parent()

@@ -538,6 +538,30 @@ fn a_share_leteo_with_something_else_in_it_is_kept_and_named() {
 }
 
 #[test]
+fn a_data_directory_named_like_the_installers_share_leteo_is_still_the_data_directory() {
+    let Some(model) = crate::semantic::tests::needs_model!() else {
+        return;
+    };
+    let temp = TempDir::new().unwrap();
+    let exe = fake_exe(temp.path());
+    let data = temp.path().join("share/leteo");
+    std::fs::create_dir_all(&data).unwrap();
+    std::fs::write(data.join("leteo.db"), b"store").unwrap();
+    put_model(&model, &data.join("model"));
+
+    let removed = uninstall_everything_for(&probe_in(temp.path()), &data, exe);
+
+    assert!(
+        !remaining_mentions(&removed, &["was kept"]),
+        "{:?}",
+        removed.remaining
+    );
+    assert!(removed.complete(), "{removed:?}");
+    assert!(removed.data_removed && removed.data_dir_removed);
+    assert!(!data.exists());
+}
+
+#[test]
 fn a_model_that_was_never_installed_is_not_a_failure_or_a_mention() {
     let temp = TempDir::new().unwrap();
     let exe = fake_exe(temp.path());

@@ -292,10 +292,13 @@ duties about what an answer explains.
     `remaining`; a location that is itself a symbolic link is not followed, and
     is named too. A directory that still holds something else -- `model/` or
     `share/leteo` -- is kept and named with what it holds, and one that could not
-    be removed while empty is named with the I/O error and not with a stranger. With
-    `--dry-run` nothing is touched and `model_files` lists what would go, by the
+    be removed while empty is named with the I/O error and not with a stranger. A
+    `share/leteo` that is the data directory is never treated as the installer's.
+    Without `--yes`, `uninstall` is the preview: nothing is touched and `model_files` lists what would go, by the
     same rule. `scripts/uninstall.sh` and `uninstall.ps1` repeat the removal by
-    name for a binary that is gone, and leave it to the binary when it ran.
+    name for a binary that is gone, and leave the model files to the binary
+    whenever it ran, whatever it exited with; a directory they keep is reported
+    as kept, with the binary's report as the reason, not as holding strangers.
 
 ## Invariants
 

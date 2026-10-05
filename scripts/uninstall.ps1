@@ -39,6 +39,20 @@ $modelFiles = @('config.json', 'model.safetensors', 'tokenizer.json.gz')
 
 function Say($text) { Write-Host $text }
 
+# Said of a directory that survived. When the binary ran it already reported why
+# it kept what it kept -- a hash that is not its pin, a symlink, an I/O error --
+# so naming a stranger here would often be wrong. Without it, the only reason
+# this script leaves a directory is that it was not empty.
+function Say-Kept($directory) {
+    if ($script:ran) {
+        Say "  $directory was kept; the report from leteo uninstall above says why"
+    } elseif (Get-ChildItem -Force $directory) {
+        Say "  $directory was kept: it holds files Leteo did not put there"
+    } else {
+        Say "  $directory was kept: it could not be removed"
+    }
+}
+
 # What is about to go, counted before anything is removed so the numbers on
 # screen are the numbers that will actually be destroyed.
 $memories = 'unknown'
@@ -86,10 +100,16 @@ if (-not $Yes) {
 # still exists. It resolves fifteen agents' config files, strips the MCP server,
 # the lifecycle hooks and the memory-protocol block from each, and removes the
 # data directory. Doing it here by hand would be a second, worse copy of that.
+# `$ran` is whether the binary judged the model files at all, whatever it exited
+# with: it exits non-zero on any incomplete removal, after it has already kept
+# the model files it did not recognise. The by-name removal of the model below
+# does not look at content, so it must not run behind it.
+$ran = $false
 if (Test-Path $binary) {
     Say "  removing agent configuration and memories"
     try {
         & $binary uninstall --yes
+        $ran = $true
         if ($LASTEXITCODE -ne 0) {
             Say "  leteo uninstall exited with $LASTEXITCODE; carrying on with the files"
         }
@@ -123,7 +143,7 @@ if ((Test-Path $dataDir) -and -not (Test-Path $binary)) {
     if (-not (Get-ChildItem -Force $dataDir)) {
         Remove-Item -Force $dataDir -ErrorAction SilentlyContinue
     } else {
-        Say "  $dataDir was kept: it holds files Leteo did not put there"
+        Say-Kept $dataDir
     }
 }
 
@@ -163,17 +183,20 @@ foreach ($own in @('leteo.exe', 'uninstall.ps1')) {
         Remove-Item -Force $path -ErrorAction SilentlyContinue
     }
 }
-# The model the installer put beside the binary, by name. The directory goes
-# only if that left it empty: Remove-Item prompts on a directory with anything
-# in it, and a prompt hangs an uninstall that nobody is watching.
+# The model the installer put beside the binary, by name, unless the binary ran
+# and so already kept what it did not recognise. The directory goes only if that
+# left it empty: Remove-Item prompts on a directory with anything in it, and a
+# prompt hangs an uninstall that nobody is watching.
 $modelDir = Join-Path $installDir 'model'
-foreach ($own in $modelFiles) {
-    Remove-Item -Force (Join-Path $modelDir $own) -ErrorAction SilentlyContinue
+if (-not $ran) {
+    foreach ($own in $modelFiles) {
+        Remove-Item -Force (Join-Path $modelDir $own) -ErrorAction SilentlyContinue
+    }
 }
 if ((Test-Path $modelDir) -and -not (Get-ChildItem -Force $modelDir)) {
     Remove-Item -Force $modelDir -ErrorAction SilentlyContinue
 } elseif (Test-Path $modelDir) {
-    Say "  $modelDir was kept: it holds files Leteo did not put there"
+    Say-Kept $modelDir
 }
 if ((Test-Path $installDir) -and -not (Get-ChildItem -Force $installDir)) {
     Remove-Item -Force $installDir -ErrorAction SilentlyContinue
