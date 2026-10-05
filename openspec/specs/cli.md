@@ -296,9 +296,17 @@ duties about what an answer explains.
     `share/leteo` that is the data directory is never treated as the installer's.
     Without `--yes`, `uninstall` is the preview: nothing is touched and `model_files` lists what would go, by the
     same rule. `scripts/uninstall.sh` and `uninstall.ps1` repeat the removal by
-    name for a binary that is gone, and leave the model files to the binary
-    whenever it ran, whatever it exited with; a directory they keep is reported
-    as kept, with the binary's report as the reason, not as holding strangers.
+    name for a binary that is gone or could not start, and leave the model files
+    to the binary whenever it ran, whatever it exited with. Could not start is
+    exit 126 or 127 in the shell script and an exception from the call in the
+    PowerShell one; any other exit, or an exception after the call began, means
+    the binary judged the model. A directory they keep is reported as kept,
+    with the binary's report as the reason, not as holding strangers, and only
+    when there was a report. Both scripts retry the data files by name whenever
+    the binary did not finish with exit 0, which undoes no judgment because the
+    binary and the scripts name those files identically.
+    `tools/semantic/check_install.sh` runs both scripts behind a binary that
+    ran, kept a file and failed, and behind one that cannot start.
 
 ## Invariants
 

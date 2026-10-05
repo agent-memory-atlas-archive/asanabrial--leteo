@@ -100,42 +100,69 @@ if (-not $Yes) {
 # still exists. It resolves fifteen agents' config files, strips the MCP server,
 # the lifecycle hooks and the memory-protocol block from each, and removes the
 # data directory. Doing it here by hand would be a second, worse copy of that.
-# `$ran` is whether the binary judged the model files at all, whatever it exited
-# with: it exits non-zero on any incomplete removal, after it has already kept
-# the model files it did not recognise. The by-name removal of the model below
-# does not look at content, so it must not run behind it.
+# `$ran` is whether the binary started and so judged the model files, whatever it
+# exited with: it exits non-zero on any incomplete removal, after it has already
+# kept the model files it did not recognise. The by-name removal of the model
+# below does not look at content, so it must not run behind it. A binary that
+# could not start judged nothing: PowerShell throws for that before any exit
+# code exists, and 126 or 127 is what uninstall.sh treats the same way, so the
+# two scripts agree on what counts. `$handled` is the narrower claim that it
+# finished, and gates only the data files, which the binary and this script name
+# identically, so trying them again after a failure undoes no judgment.
 $ran = $false
+$handled = $false
 if (Test-Path $binary) {
     Say "  removing agent configuration and memories"
     try {
         & $binary uninstall --yes
-        $ran = $true
-        if ($LASTEXITCODE -ne 0) {
-            Say "  leteo uninstall exited with $LASTEXITCODE; carrying on with the files"
+        $code = $LASTEXITCODE
+        if ($code -eq 126 -or $code -eq 127) {
+            Say "  could not start leteo uninstall; carrying on with the files"
+        } else {
+            $ran = $true
+            if ($code -eq 0) {
+                $handled = $true
+            } else {
+                Say "  leteo uninstall exited with $code; carrying on with the files"
+            }
         }
     } catch {
-        Say "  could not run leteo uninstall: $($_.Exception.Message)"
+        # Only a failure to start leaves the model unjudged. Anything thrown
+        # otherwise may have come after the binary had already kept a file, and
+        # the by-name removal must not guess that it did not.
+        $startFailure = $_.Exception -is [System.ComponentModel.Win32Exception] -or
+            $_.Exception -is [System.Management.Automation.ApplicationFailedException] -or
+            $_.Exception -is [System.Management.Automation.CommandNotFoundException]
+        $ran = -not $startFailure
+        if ($startFailure) {
+            Say "  could not run leteo uninstall: $($_.Exception.Message)"
+        } else {
+            Say "  leteo uninstall was interrupted: $($_.Exception.Message)"
+        }
         Say "  carrying on with the files"
     }
 } else {
     Say "  no binary to ask, removing the data directory directly"
 }
 
-# Only reached when the binary could not do it — `leteo uninstall` above removes
-# its own files and leaves anything it did not create, which is the behaviour
-# that matters and the one that is tested. This is the fallback for a store
-# whose binary is already gone, so it removes the same names rather than the
-# directory: `LETEO_DATA_DIR` points wherever somebody chose it to.
-if ((Test-Path $dataDir) -and -not (Test-Path $binary)) {
+# Only when the binary did not finish. `leteo uninstall` removes its own files
+# and leaves anything it did not create, which is the behaviour that matters and
+# the one that is tested. This is the fallback for a store whose binary is gone
+# or failed, so it removes the same names rather than the directory:
+# `LETEO_DATA_DIR` points wherever somebody chose it to.
+if ((Test-Path $dataDir) -and -not $handled) {
     Say "  removing Leteo's files from $dataDir"
     foreach ($own in @('leteo.db*', 'store.db*', 'settings.json', 'cloud.json', 'backup-*')) {
         Remove-Item -Force -Recurse (Join-Path $dataDir $own) -ErrorAction SilentlyContinue
     }
     Remove-Item -Force -Recurse (Join-Path $dataDir 'hooks') -ErrorAction SilentlyContinue
-    # `leteo model install` writes here by default.
+    # `leteo model install` writes here by default; left alone when the binary
+    # ran, for the reason given above.
     $dataModel = Join-Path $dataDir 'model'
-    foreach ($own in $modelFiles) {
-        Remove-Item -Force (Join-Path $dataModel $own) -ErrorAction SilentlyContinue
+    if (-not $ran) {
+        foreach ($own in $modelFiles) {
+            Remove-Item -Force (Join-Path $dataModel $own) -ErrorAction SilentlyContinue
+        }
     }
     if ((Test-Path $dataModel) -and -not (Get-ChildItem -Force $dataModel)) {
         Remove-Item -Force $dataModel -ErrorAction SilentlyContinue

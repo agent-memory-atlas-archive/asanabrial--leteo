@@ -1558,8 +1558,8 @@
   {
     "name": "uninstall: a file with a model's name and another hash is deleted",
     "file": "src/setup/removal/mod.rs",
-    "old": "    Ok(hex::encode(Sha256::digest(std::fs::read(file)?)) == pin)",
-    "new": "    let _ = (Sha256::digest(std::fs::read(file)?), pin);\n    Ok(true)"
+    "old": "    Ok(crate::semantic::sha256_hex(&std::fs::read(file)?) == pin)",
+    "new": "    let _ = (crate::semantic::sha256_hex(&std::fs::read(file)?), pin);\n    Ok(true)"
   },
   {
     "name": "uninstall: a model directory that is a symbolic link is followed",
@@ -1602,5 +1602,11 @@
     "file": "src/setup/removal/mod.rs",
     "old": "                    failed = true;\n                    removed\n                        .remaining\n                        .push(format!(\"{}: {error}\", file.display()));",
     "new": "                    removed\n                        .remaining\n                        .push(format!(\"{}: {error}\", file.display()));"
+  },
+  {
+    "name": "uninstall: a path that does not exist yet is compared unresolved",
+    "file": "src/setup/removal/mod.rs",
+    "old": "        (Some(parent), Some(name)) => resolved(parent).join(name),",
+    "new": "        (Some(_), Some(_)) => path.to_path_buf(),"
   }
 ]
