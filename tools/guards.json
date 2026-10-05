@@ -1055,8 +1055,14 @@
     "name": "release: a tag pattern sorts ahead of the one the guard reads",
     "file": ".github/workflows/release.yml",
     "edits": [
-      { "old": "            type=semver,pattern={{major}}.{{minor}}\n      # Pushed by digest rather than by tag, because two jobs writing the same\n", "new": "            type=semver,pattern={{major}}.{{minor}},priority=1000\n      # Pushed by digest rather than by tag, because two jobs writing the same\n" },
-      { "old": "            type=semver,pattern={{major}}.{{minor}}\n      # No guard on the digests being there. `needs: container` is satisfied\n", "new": "            type=semver,pattern={{major}}.{{minor}},priority=1000\n      # No guard on the digests being there. `needs: container` is satisfied\n" }
+      {
+        "old": "            type=semver,pattern={{major}}.{{minor}}\n      # Pushed by digest rather than by tag, because two jobs writing the same\n",
+        "new": "            type=semver,pattern={{major}}.{{minor}},priority=1000\n      # Pushed by digest rather than by tag, because two jobs writing the same\n"
+      },
+      {
+        "old": "            type=semver,pattern={{major}}.{{minor}}\n      # No guard on the digests being there. `needs: container` is satisfied\n",
+        "new": "            type=semver,pattern={{major}}.{{minor}},priority=1000\n      # No guard on the digests being there. `needs: container` is satisfied\n"
+      }
     ]
   },
   {
@@ -1326,5 +1332,275 @@
     "file": "src/store/projects.rs",
     "old": "       (SELECT MAX(at) FROM (",
     "new": "       (SELECT NULL FROM ("
+  },
+  {
+    "name": "semantic: the cosine floor is not applied",
+    "file": "src/store/semantic_stage.rs",
+    "old": "            scored.retain(|(cosine, ..)| *cosine >= floor);",
+    "new": "            let _ = floor;"
+  },
+  {
+    "name": "semantic: the published floor is lowered to nothing",
+    "file": "src/semantic/mod.rs",
+    "old": "pub const FLOOR: f32 = 0.30;",
+    "new": "pub const FLOOR: f32 = 0.0;"
+  },
+  {
+    "name": "semantic: the floor is applied to a nearest answer too",
+    "file": "src/store/search.rs",
+    "old": "let floor = (!nearest_answered).then_some(crate::semantic::FLOOR);",
+    "new": "let floor = Some(crate::semantic::FLOOR);"
+  },
+  {
+    "name": "semantic: the scan stops asking what a search may return",
+    "file": "src/store/semantic_stage.rs",
+    "old": "             WHERE {visible} AND o.type != ?4\n               AND v.model = ?5 AND v.source_key = {SOURCE_KEY}\"",
+    "new": "             WHERE 1 = 1 AND o.type != ?4\n               AND v.model = ?5 AND v.source_key = {SOURCE_KEY}\""
+  },
+  {
+    "name": "semantic: session summaries are scanned",
+    "file": "src/store/semantic_stage.rs",
+    "old": "             WHERE {visible} AND o.type != ?4\n               AND v.model = ?5 AND v.source_key = {SOURCE_KEY}\"",
+    "new": "             WHERE {visible} AND ?4 IS NOT NULL\n               AND v.model = ?5 AND v.source_key = {SOURCE_KEY}\""
+  },
+  {
+    "name": "semantic: a vector from another model is current",
+    "file": "src/store/semantic_stage.rs",
+    "old": "(v.observation_id IS NULL OR v.model != ?5 OR v.source_key != {SOURCE_KEY})",
+    "new": "(v.observation_id IS NULL OR v.source_key != {SOURCE_KEY})"
+  },
+  {
+    "name": "semantic: a vector made from changed text is current",
+    "file": "src/store/semantic_stage.rs",
+    "old": "(v.observation_id IS NULL OR v.model != ?5 OR v.source_key != {SOURCE_KEY})",
+    "new": "(v.observation_id IS NULL OR v.model != ?5)"
+  },
+  {
+    "name": "semantic: the title is not part of what a vector was made from",
+    "file": "src/store/semantic_stage.rs",
+    "old": "ifnull(o.normalized_hash, '') || '|' || o.title\"",
+    "new": "ifnull(o.normalized_hash, '')\""
+  },
+  {
+    "name": "semantic: a stronger stage's answer is followed by the stage",
+    "file": "src/store/search.rs",
+    "old": "(matched.is_empty() || nearest_answered)",
+    "new": "true"
+  },
+  {
+    "name": "semantic: the stage ignores the caller's switch",
+    "file": "src/store/search.rs",
+    "old": "        if options.semantic\n            && !any\n",
+    "new": "        if !any\n"
+  },
+  {
+    "name": "semantic: the stage runs in mode any",
+    "file": "src/store/search.rs",
+    "old": "            && !any\n            && results.is_empty()\n            && (matched.is_empty()",
+    "new": "            && results.is_empty()\n            && (matched.is_empty()"
+  },
+  {
+    "name": "semantic: a topic key answer is followed by the stage",
+    "file": "src/store/search.rs",
+    "old": "            && results.is_empty()\n            && (matched.is_empty()",
+    "new": "            && (matched.is_empty()"
+  },
+  {
+    "name": "semantic: the connection's patience is left short",
+    "file": "src/store/semantic_stage.rs",
+    "old": ".busy_timeout(Duration::from_millis(before.max(0) as u64))?;",
+    "new": ".busy_timeout(WRITE_PATIENCE)?;"
+  },
+  {
+    "name": "semantic: the fusion lets the semantic list's rows win",
+    "file": "src/store/semantic_stage.rs",
+    "old": "    for list in [lexical, semantic] {",
+    "new": "    for list in [semantic, lexical] {"
+  },
+  {
+    "name": "semantic: the page is not labelled",
+    "file": "src/mcp/output.rs",
+    "old": "        } else if by_meaning {",
+    "new": "        } else if false {"
+  },
+  {
+    "name": "semantic: the command line says nothing",
+    "file": "src/cli/mod.rs",
+    "old": "} else if found.iter().any(|result| result.semantic) {",
+    "new": "} else if false {"
+  },
+  {
+    "name": "semantic: the elsewhere retry skips the stage",
+    "file": "src/mcp/tools.rs",
+    "old": "                        mode,\n                        semantic,\n                    },",
+    "new": "                        mode,\n                        semantic: false,\n                    },"
+  },
+  {
+    "name": "semantic: the wizard drops the choice it has no screen for",
+    "file": "src/setup/wizard/mod.rs",
+    "old": "semantic_search: on_disk.semantic_search,",
+    "new": "semantic_search: None,"
+  },
+  {
+    "name": "semantic: a setting that cannot be read is not named",
+    "file": "src/settings.rs",
+    "old": "            .is_none_or(serde_json::Value::is_boolean),",
+    "new": "            .is_none_or(|_| true),"
+  },
+  {
+    "name": "semantic: a vector outlives its memory",
+    "file": "migrations/0020_observation_vectors.sql",
+    "old": "REFERENCES observations(id) ON DELETE CASCADE",
+    "new": "REFERENCES observations(id)"
+  },
+  {
+    "name": "search: the shared visibility clause forgets a verdict",
+    "file": "src/store/search.rs",
+    "old": "           AND (?{scope} IS NULL OR o.scope = ?{scope})\n           AND {not_superseded}\"",
+    "new": "           AND (?{scope} IS NULL OR o.scope = ?{scope})\""
+  },
+  {
+    "name": "search: the shared visibility clause forgets a deletion",
+    "file": "src/store/search.rs",
+    "old": "\"o.deleted_at IS NULL\n           AND (?{kind}",
+    "new": "\"1 = 1\n           AND (?{kind}"
+  },
+  {
+    "name": "semantic: a model file that does not hash to its pin is loaded",
+    "file": "src/semantic/mod.rs",
+    "old": "                if sha256_hex(&bytes) != expected {",
+    "new": "                if false {"
+  },
+  {
+    "name": "semantic: the explicit model path is not looked in",
+    "file": "src/semantic/mod.rs",
+    "old": "        add(path.to_path_buf());",
+    "new": "        let _ = path;"
+  },
+  {
+    "name": "semantic: symlinks in the executable's path are not resolved",
+    "file": "src/semantic/mod.rs",
+    "old": "        let resolved = exe.canonicalize().ok();",
+    "new": "        let resolved: Option<PathBuf> = None;"
+  },
+  {
+    "name": "semantic: the share directory beside a prefix is not looked in",
+    "file": "src/semantic/mod.rs",
+    "old": "        for directory in &directories {\n            add(directory\n                .join(\"..\")",
+    "new": "        for directory in directories.iter().take(0) {\n            add(directory\n                .join(\"..\")"
+  },
+  {
+    "name": "semantic: the data directory is not looked in",
+    "file": "src/semantic/mod.rs",
+    "old": "    add(data_dir.join(\"model\"));\n    found",
+    "new": "    found"
+  },
+  {
+    "name": "semantic: a download is installed without being checked",
+    "file": "src/semantic/install.rs",
+    "old": "        if sha256_hex(&body) != expected {",
+    "new": "        if false {"
+  },
+  {
+    "name": "doctor: a model that is not the one this build accepts is called fine",
+    "file": "src/store/diagnostics.rs",
+    "old": "                    status => DoctorCheck::failed(\"semantic_model\", status.explain()),",
+    "new": "                    status => DoctorCheck::noted(\"semantic_model\", status.explain()),"
+  },
+  {
+    "name": "doctor: a missing model makes the store unhealthy",
+    "file": "src/store/diagnostics.rs",
+    "old": "                    status @ crate::semantic::Status::Missing(_) => {\n                        DoctorCheck::noted(\"semantic_model\", status.explain())",
+    "new": "                    status @ crate::semantic::Status::Missing(_) => {\n                        DoctorCheck::failed(\"semantic_model\", status.explain())"
+  },
+  {
+    "name": "semantic: the first firing writes everything in one go",
+    "file": "src/store/semantic_stage.rs",
+    "old": "        for chunk in stale.chunks(CHUNK) {",
+    "new": "        for chunk in stale.chunks(usize::MAX) {"
+  },
+  {
+    "name": "semantic: a fused page keeps two scales",
+    "file": "src/store/semantic_stage.rs",
+    "old": "        row.rank = -scores[&row.id];",
+    "new": "        let _ = scores[&row.id];"
+  },
+  {
+    "name": "search: the topic-key lookup carries its own visibility again",
+    "file": "src/store/search.rs",
+    "old": "                 WHERE o.topic_key = ?1 AND {visible}",
+    "new": "                 WHERE o.topic_key = ?1 AND o.deleted_at IS NULL"
+  },
+  {
+    "name": "uninstall: the model is left where it was",
+    "file": "src/setup/removal/mod.rs",
+    "old": "    // and would otherwise keep the directory as something foreign.\n    remove_model(&mut removed, data_dir);",
+    "new": "    // and would otherwise keep the directory as something foreign.\n    if false {\n        remove_model(&mut removed, data_dir);\n    }"
+  },
+  {
+    "name": "uninstall: the share directory is cleared with `share/` itself",
+    "file": "src/setup/removal/mod.rs",
+    "old": "                remove_if_empty(removed, parent);",
+    "new": "                let _ = std::fs::remove_dir_all(parent.parent().unwrap());"
+  },
+  {
+    "name": "uninstall.sh: names a file fewer than the binary checks",
+    "file": "scripts/uninstall.sh",
+    "old": "MODEL_FILES=\"config.json model.safetensors tokenizer.json.gz\"",
+    "new": "MODEL_FILES=\"config.json model.safetensors\""
+  },
+  {
+    "name": "uninstall.ps1: names a file fewer than the binary checks",
+    "file": "scripts/uninstall.ps1",
+    "old": "@('config.json', 'model.safetensors', 'tokenizer.json.gz')",
+    "new": "@('config.json', 'model.safetensors')"
+  },
+  {
+    "name": "uninstall: a file with a model's name and another hash is deleted",
+    "file": "src/setup/removal/mod.rs",
+    "old": "    Ok(hex::encode(Sha256::digest(std::fs::read(file)?)) == pin)",
+    "new": "    let _ = (Sha256::digest(std::fs::read(file)?), pin);\n    Ok(true)"
+  },
+  {
+    "name": "uninstall: a model directory that is a symbolic link is followed",
+    "file": "src/setup/removal/mod.rs",
+    "old": "        if std::fs::symlink_metadata(&directory).is_ok_and(|meta| meta.file_type().is_symlink()) {",
+    "new": "        if false {"
+  },
+  {
+    "name": "uninstall: a model file that is not a regular file is judged like one",
+    "file": "src/setup/removal/mod.rs",
+    "old": "            if !meta.is_file() {",
+    "new": "            if false {"
+  },
+  {
+    "name": "uninstall: a dry run does not list the model",
+    "file": "src/setup/removal/mod.rs",
+    "old": "            if dry_run {\n                removed.model_files.push(file);\n                continue;\n            }",
+    "new": "            if dry_run {\n                continue;\n            }"
+  },
+  {
+    "name": "uninstall: a dry run deletes the model",
+    "file": "src/setup/removal/mod.rs",
+    "old": "            if dry_run {\n                removed.model_files.push(file);\n                continue;\n            }",
+    "new": "            if false {\n                removed.model_files.push(file);\n                continue;\n            }"
+  },
+  {
+    "name": "uninstall: a share/leteo that is not empty is kept without being named",
+    "file": "src/setup/removal/mod.rs",
+    "old": "                remove_if_empty(removed, parent);",
+    "new": "                let _ = std::fs::remove_dir(parent);"
+  },
+  {
+    "name": "uninstall: a directory that could not be removed empty is blamed on a stranger",
+    "file": "src/setup/removal/mod.rs",
+    "old": "    removed.remaining.push(if strangers.is_empty() {",
+    "new": "    removed.remaining.push(if false {"
+  },
+  {
+    "name": "uninstall: a model file that could not be deleted does not make the removal incomplete",
+    "file": "src/setup/removal/mod.rs",
+    "old": "                    failed = true;\n                    removed\n                        .remaining\n                        .push(format!(\"{}: {error}\", file.display()));",
+    "new": "                    removed\n                        .remaining\n                        .push(format!(\"{}: {error}\", file.display()));"
   }
 ]

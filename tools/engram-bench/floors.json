@@ -1,13 +1,13 @@
 {
   "raise_margin": 0.02,
   "mrr": {
-    "ALL": 0.835,
-    "longnl": 0.76,
-    "multiword": 0.923,
-    "paraphrase": 0.826,
+    "ALL": 0.887,
+    "longnl": 0.775,
+    "multiword": 1.0,
+    "paraphrase": 0.84,
     "partial": 0.923,
     "short": 0.937,
-    "spanish": 0.515,
+    "spanish": 0.789,
     "typo": 1.0
   },
   "bytes": {
@@ -15,5 +15,8 @@
     "search_latency": 10600,
     "search_long_bodies": 12100,
     "search_service": 10500
+  },
+  "empty": {
+    "ALL": 3
   }
 }

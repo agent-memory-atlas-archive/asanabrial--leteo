@@ -62,7 +62,7 @@ differs from them.
 | `build_model.py` | convert, truncate, quantise, prune; prints and checks the SHA-256 of the output |
 | `checksums.json` | what each input and output hashes to, and what they were built from |
 | `requirements.txt` | the versions it was built with |
-| `hardset/` | the hard evaluation set, and `check_sets.py`, which verifies it |
+| `hardset/` | the hard evaluation set, and the bootstrap evaluator — see its README |
 
 The tokenizer is stored as `assets/model/tokenizer.json.gz`, deterministic gzip made by
 [`pack_gz.py`](pack_gz.py) (level 9, no name, zero mtime), because 843 KB of one-line JSON

@@ -12,6 +12,7 @@
 //! cargo run --manifest-path tools/retrieval/Cargo.toml -- ~/.leteo/leteo.db
 //! cargo run --manifest-path tools/retrieval/Cargo.toml -- copy.db \
 //!     --weights "20.0, 0.3, 0.0, 0.0, 0.0, 6.0"
+//! cargo run --release --manifest-path tools/retrieval/Cargo.toml -- copy.db --pipeline
 //! ```
 
 use rand::SeedableRng;
@@ -167,7 +168,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut arguments = std::env::args().skip(1);
     let Some(database) = arguments.next() else {
         eprintln!(
-            "usage: leteo-retrieval <leteo.db> [--sample N] [--seed N] [--weights \"…\"]… [--rerank]"
+            "usage: leteo-retrieval <leteo.db> [--sample N] [--seed N] [--weights \"…\"]… [--rerank] [--pipeline]"
         );
         return Ok(());
     };
@@ -175,6 +176,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut seed = 7_u64;
     let mut extra = Vec::new();
     let mut rerank = false;
+    let mut through_search = false;
     while let Some(flag) = arguments.next() {
         match flag.as_str() {
             "--sample" => sample_size = arguments.next().unwrap_or_default().parse()?,
@@ -184,6 +186,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // it — the first version of this parse read one value per flag and
             // would have eaten `--sample` here.
             "--rerank" => rerank = true,
+            "--pipeline" => through_search = true,
             other => return Err(format!("unknown option {other}").into()),
         }
     }
@@ -258,7 +261,165 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("Read the two rows for bodies before believing a win on titles:");
         println!("questions drawn from titles reward weighting titles by construction.");
     }
+    if through_search {
+        let sets: [QuestionSet; 4] = [
+            ("titles", true, 6, 0, &sample),
+            ("titles, held out", true, 6, 0, &held_out),
+            ("bodies", false, 12, BODY_SKIP, &sample),
+            ("bodies, held out", false, 12, BODY_SKIP, &held_out),
+        ];
+        if !pipeline(&database, &sets)? {
+            std::process::exit(1);
+        }
+    }
     Ok(())
+}
+
+/// A named set of questions: what it is called, whether it is drawn from titles,
+/// how many words each takes, how many it skips, and the memories drawn.
+type QuestionSet<'a> = (&'a str, bool, usize, usize, &'a [(i64, String, String)]);
+
+/// The largest fall in a set's mean reciprocal rank the semantic stage may
+/// cause, the rule the issue sets for every kind of question.
+const REGRESSION: f64 = 0.02;
+
+/// A private directory that is removed on every way out of the function that made it.
+///
+/// The store copy used to sit at a predictable name in the shared temporary
+/// directory, where anybody could have put a file or a link first, and a `?` in
+/// the middle left the copy of somebody's memories behind.
+struct Scratch(std::path::PathBuf);
+
+impl Scratch {
+    /// Created exclusively, mode 0700 on unix, under a name that cannot be guessed
+    /// from the process id alone.
+    fn create() -> std::io::Result<Self> {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |elapsed| elapsed.as_nanos());
+        for attempt in 0..16_u32 {
+            let path = std::env::temp_dir().join(format!(
+                "leteo-retrieval-{}-{nanos:x}-{attempt}",
+                std::process::id()
+            ));
+            let mut builder = std::fs::DirBuilder::new();
+            #[cfg(unix)]
+            std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+            match builder.create(&path) {
+                Ok(()) => return Ok(Self(path)),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => return Err(error),
+            }
+        }
+        Err(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            "could not create a private scratch directory",
+        ))
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// The whole search, with and without the semantic stage, over the same
+/// questions — on a copy.
+///
+/// Everything above measures the first stage's statement and cannot see a
+/// stage added after it. This asks `Store::search`, the call both surfaces make,
+/// so a stage that changed what a question finds would show here.
+///
+/// A copy, because turning the stage on writes: the first search that reaches it
+/// embeds every memory in scope and keeps the vectors. `VACUUM INTO` makes the
+/// copy from a read-only connection, so the store named on the command line is
+/// still never written, and the copy is deleted.
+///
+/// The honest limit is the one the module header names. These questions are
+/// built from their targets' own words, so the lexical stages answer nearly all
+/// of them and the stage has almost nothing to do: that no set falls is the
+/// result, and it is not evidence that the stage helps. The hard set under
+/// `tools/semantic/hardset/` is the one that can show it helping.
+fn pipeline(database: &str, sets: &[QuestionSet; 4]) -> Result<bool, Box<dyn std::error::Error>> {
+    let scratch = Scratch::create()?;
+    let copy = scratch.0.join("store.db");
+    Connection::open_with_flags(
+        database,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_URI,
+    )?
+    .execute("VACUUM INTO ?1", [copy.to_string_lossy().as_ref()])?;
+    // Asked of the library's own lookup before anything is measured. A table of
+    // "ok" over a stage that was not there reads as the stage doing no harm, when
+    // without the model it is the same search asked twice. The results' own marks
+    // cannot be the test: these questions are drawn from their targets' words, so
+    // the lexical stages answer them and the stage, which speaks only to an empty
+    // or a `nearest` answer, may have nothing to add with the model present.
+    let status = leteo::semantic::status(&scratch.0, leteo::semantic::explicit_dir().as_deref());
+    if !matches!(status, leteo::semantic::Status::Verified(_)) {
+        return Err(format!(
+            "the semantic stage never ran: {} (LETEO_MODEL_DIR names a directory holding the model)",
+            status.explain()
+        )
+        .into());
+    }
+    let store = leteo::Store::open(leteo::StoreConfig::new(&copy))?;
+
+    let mut held = true;
+    let mut staged = 0_usize;
+    let mut rows = Vec::new();
+    for (name, titles, count, skip, questions) in sets {
+        let mut totals = [(0.0_f64, 0_usize); 2];
+        let mut asked = 0;
+        for (id, title, content) in questions.iter() {
+            let words = words(if *titles { title } else { content }, *count, *skip);
+            if words.is_empty() {
+                continue;
+            }
+            asked += 1;
+            for (index, semantic) in [false, true].into_iter().enumerate() {
+                let found = store.search(
+                    &words.join(" "),
+                    leteo::SearchOptions {
+                        limit: Some(DEPTH),
+                        semantic,
+                        ..Default::default()
+                    },
+                )?;
+                if found.is_empty() {
+                    totals[index].1 += 1;
+                }
+                if semantic {
+                    staged += found.iter().filter(|hit| hit.semantic).count();
+                }
+                if let Some(place) = found.iter().position(|hit| hit.observation.id == *id) {
+                    totals[index].0 += 1.0 / (place as f64 + 1.0);
+                }
+            }
+        }
+        let [lexical, with] = totals.map(|(sum, empty)| (sum / asked.max(1) as f64, empty));
+        let delta = with.0 - lexical.0;
+        let verdict = if delta < -REGRESSION {
+            held = false;
+            "REGRESSION"
+        } else {
+            "ok"
+        };
+        rows.push(format!(
+            "  {name:<18} n={asked:<4} lexical mrr={:.4} (empty {})  with the stage mrr={:.4} (empty {})  delta {delta:+.4}  {verdict}",
+            lexical.0, lexical.1, with.0, with.1
+        ));
+    }
+    drop(store);
+    println!();
+    println!(
+        "the whole search, through Store::search, with and without the semantic stage \
+         (the stage added {staged} results to the second pass)"
+    );
+    for row in rows {
+        println!("{row}");
+    }
+    Ok(held)
 }
 
 #[cfg(test)]

@@ -59,6 +59,10 @@ def measure():
             raise CannotRun("two corpus memories were given the same id")
 
         ranks = defaultdict(list)
+        # How many questions came back with nothing at all. MRR alone cannot
+        # say it: a question answered wrongly and a question not answered both
+        # score zero, and an agent is told very different things by the two.
+        empty = defaultdict(int)
         millis = []
         for q in wanted:
             reply, _, dt = call(servers[q["project"]], "mem_search", {"query": q["q"], "limit": SEARCH_LIMIT})
@@ -67,6 +71,9 @@ def measure():
             rank = found.index(target) + 1 if target in found else None
             ranks[q["kind"]].append(rank)
             ranks["ALL"].append(rank)
+            if not found:
+                empty[q["kind"]] += 1
+                empty["ALL"] += 1
             millis.append(dt * 1000)
         if len(ranks["ALL"]) != len(wanted) or len(wanted) == 0:
             raise CannotRun(f"{len(ranks['ALL'])} queries were evaluated and the corpus defines {len(wanted)}")
@@ -92,7 +99,7 @@ def measure():
     mrr = {k: sum(1 / r for r in rs if r) / len(rs) for k, rs in ranks.items()}
     hit1 = {k: sum(r == 1 for r in rs) / len(rs) for k, rs in ranks.items()}
     return dict(mrr=mrr, hit1=hit1, counts={k: len(v) for k, v in ranks.items()}, bytes=sizes,
-                median_ms=statistics.median(millis))
+                empty={k: empty[k] for k in ranks}, median_ms=statistics.median(millis))
 
 
 def propose(got):
@@ -100,6 +107,7 @@ def propose(got):
         "raise_margin": 0.02,
         "mrr": {k: math.floor(got["mrr"][k] * 1000 + 1e-9) / 1000 for k in sorted(got["mrr"])},
         "bytes": {k: (v // 100 + 1) * 100 for k, v in sorted(got["bytes"].items())},
+        "empty": {"ALL": got["empty"]["ALL"]},
     }
 
 
@@ -117,6 +125,19 @@ def judge(got, floors):
             breaches.append(f"MRR {kind}: measured {value:.3f}, floor {floor:.3f}")
         elif value - floor >= floors["raise_margin"]:
             raisable.append(f"MRR {kind}: measured {value:.3f} is {value - floor:.3f} above its floor {floor:.3f}")
+    # A ceiling and not a floor: the count of questions answered with nothing
+    # can only be allowed to fall. Only the total is gated; the per-kind
+    # counts are printed, because a kind of eight questions moves by one.
+    for kind, ceiling in floors.get("empty", {}).items():
+        value = got["empty"].get(kind)
+        if value is None:
+            # A ceiling on something that was not measured would pass for ever.
+            raise CannotRun(f"floors.json bounds empty answers for {kind!r}, which was not measured "
+                            f"(measured: {sorted(got['empty'])})")
+        if value > ceiling:
+            breaches.append(f"empty answers {kind}: measured {value}, ceiling {ceiling}")
+        elif value < ceiling:
+            raisable.append(f"empty answers {kind}: measured {value} is below its ceiling {ceiling}")
     for name, ceiling in floors["bytes"].items():
         value = got["bytes"].get(name)
         if value is not None and value > ceiling:
@@ -140,7 +161,7 @@ def main():
     n = got["counts"]["ALL"]
     print(f"{n} queries evaluated, median warm search {got['median_ms']:.1f} ms (printed, not gated)")
     for k in sorted(got["mrr"]):
-        print(f"  {k:10} n={got['counts'][k]:3}  hit@1 {got['hit1'][k]:.3f}  MRR {got['mrr'][k]:.3f}  floor {floors['mrr'].get(k, float('nan')):.3f}")
+        print(f"  {k:10} n={got['counts'][k]:3}  hit@1 {got['hit1'][k]:.3f}  MRR {got['mrr'][k]:.3f}  floor {floors['mrr'].get(k, float('nan')):.3f}  empty {got['empty'][k]:3}")
     for k, v in sorted(got["bytes"].items()):
         print(f"  {k:15} {v:6} bytes  ceiling {floors['bytes'].get(k, 0)}")
     breaches, raisable = judge(got, floors)

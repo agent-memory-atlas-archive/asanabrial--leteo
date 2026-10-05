@@ -21,7 +21,14 @@ def engine_cmd(engine, project):
         return [ENGRAM, "mcp"], cwd, dict(os.environ, HOME=home, ENGRAM_DATA_DIR=os.path.join(home, "data"))
     home = os.path.join(BENCH, "lhome")
     os.makedirs(home, exist_ok=True)
-    return [LETEO, "mcp", "--database", os.path.join(home, "leteo.db")], cwd, dict(os.environ, HOME=home, LETEO_DATA_DIR=home)
+    env = dict(os.environ, HOME=home, LETEO_DATA_DIR=home)
+    # The server runs from `cwd` above, so a relative model directory would be
+    # looked for under the bench state and not where the person who typed it
+    # meant. The stage then stays off without a word, which is how a documented
+    # `LETEO_MODEL_DIR=assets/model` made a run measure the lexical search alone.
+    if env.get("LETEO_MODEL_DIR"):
+        env["LETEO_MODEL_DIR"] = os.path.abspath(env["LETEO_MODEL_DIR"])
+    return [LETEO, "mcp", "--database", os.path.join(home, "leteo.db")], cwd, env
 
 class MCP:
     def __init__(self, engine, project):

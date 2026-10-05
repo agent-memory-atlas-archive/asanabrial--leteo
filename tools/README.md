@@ -210,7 +210,9 @@ not gated: it does not transfer between SQLite builds, ranking does.
 
 `floors.json` is the only place the numbers live. Floors are the measured MRR
 rounded down to three decimals; ceilings are the measured bytes rounded up to
-the next hundred. When a run prints `RAISE?` a kind is two points or more above
+the next hundred, and the one ceiling on empty answers is the measured count,
+which can only fall. Since the semantic stage the kinds it can help — `spanish`,
+`paraphrase`, `multiword` — are measured with it on. When a run prints `RAISE?` a kind is two points or more above
 its floor. To raise floors after an improvement, or to move them on purpose,
 run `python3 tools/engram-bench/ratchet.py --propose`, which prints a
 replacement file under those two rules, and commit it with the change that
@@ -221,6 +223,11 @@ A guard is checked by breaking what it protects. Disabling a relaxed search
 stage failed the ratchet on the kinds that depend on it, and raising
 `PREVIEW_BYTES` failed it on the byte ceilings; both were put back and the diff
 of the file came back empty.
+
+`--propose` also prints the empty-answer ceiling. A run prints how many questions
+each kind came back empty for, beside its MRR: a question answered wrongly and a
+question not answered both score zero, and an agent is told different things by the
+two.
 
 The second use is the comparison with Engram, on identical data: the corpus is
 saved into a fresh Engram store through Engram's own CLI, a copy of that store
@@ -253,3 +260,43 @@ synthetic and were written knowing how both engines search, so paraphrases
 deliberately avoid the memories' words — exactly where Leteo's relaxed stages
 help; questions real agents asked would be the stronger test. And precision is
 barely measured: there is no set of queries that should find nothing.
+
+## `semantic` — where the shipped model comes from, and whether it earns its keep
+
+`tools/semantic/` rebuilds the embedding model under `assets/model/` from the model
+it is derived from (`build_model.py`, with `fetch_corpus.py` for the text the
+vocabulary is pruned against), checks the result against `checksums.json`, and
+carries the two things that keep the stage honest:
+
+```bash
+# The model is a file the binary loads, so the ones that exercise the stage say where.
+export LETEO_MODEL_DIR=assets/model
+python3 tools/semantic/hardset/evaluate.py target/release/leteo
+python3 tools/semantic/hardset/check_sets.py
+python3 tools/semantic/check_binary_size.py target/release/leteo
+cargo run --release --manifest-path tools/retrieval/Cargo.toml -- copy.db --pipeline
+```
+
+- **`hardset/evaluate.py`** asks 2,028 questions that do not use their target's words,
+  once with the `semantic_search` setting off and once with it on, through one binary,
+  and reports the paired difference with a bootstrap 95% interval. It fails when the
+  whole set's interval does not exclude zero, or any kind falls by more than 0.02. The
+  questions are LLM-generated; `hardset/README.md` says by what and how they were
+  checked. The `search-quality` CI job runs it.
+- **`check_binary_size.py`** fails above its byte budget (the binary is about 21 MB on Linux, and the model is a file beside it). Prove it by lowering the
+  constant under the binary's size, running it, and restoring the file.
+- **`check_install.sh`** builds an archive laid out as `release.yml` packs one, installs it
+  with `scripts/install.sh` over `file://` into temporary directories, asks the installed
+  binary's `doctor` whether the model is verified, and removes Leteo three ways
+  (`leteo uninstall --yes`, `uninstall.sh` with and without the binary), failing if any
+  model file or directory is left or `share/` is taken. It then runs the npm wrapper against the
+  same archive over a local HTTPS endpoint: a cold install, a cache whose binary was deleted, and
+  two runs at once of each. Every command runs under `env -i`, so no variable of the caller's
+  (`LETEO_DATABASE` included) reaches the binary. It needs `node`, `openssl` and `python3`.
+  The `search-quality` CI job runs it. Prove it by pointing `install.sh` at a different model
+  directory and running it, or by taking the heal out of `npm/bin/leteo.js`.
+- **`retrieval --pipeline`** asks the whole search over a *copy* of a store, with and
+  without the stage. It cannot show the stage helping — those questions are built from
+  their targets' words — only that it does no harm where it has nothing to do.
+
+See [`semantic/README.md`](semantic/README.md).

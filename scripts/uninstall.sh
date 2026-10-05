@@ -14,6 +14,9 @@ set -eu
 INSTALL_DIR="${LETEO_INSTALL_DIR:-$HOME/.local/bin}"
 DATA_DIR="${LETEO_DATA_DIR:-$HOME/.leteo}"
 BINARY="$INSTALL_DIR/leteo"
+# The model's files by name, once. tests/model_names.rs checks this line against
+# MODEL_FILES in src/semantic/mod.rs, which a shell script cannot read.
+MODEL_FILES="config.json model.safetensors tokenizer.json.gz"
 
 YES=0
 DRY_RUN=0
@@ -26,6 +29,20 @@ for arg in "$@"; do
 done
 
 say() { printf '%s\n' "$1"; }
+
+# Said of a directory that survived. When the binary ran it already reported why
+# it kept what it kept -- a hash that is not its pin, a symlink, an I/O error --
+# so naming a stranger here would often be wrong. Without it, the only reason
+# this script leaves a directory is that it was not empty.
+say_kept() {
+    if [ "$ran" -eq 1 ]; then
+        say "  $1 was kept; the report from leteo uninstall above says why"
+    elif [ -n "$(ls -A "$1" 2>/dev/null)" ]; then
+        say "  $1 was kept: it holds files Leteo did not put there"
+    else
+        say "  $1 was kept: it could not be removed"
+    fi
+}
 
 # Counted before anything goes, so the number on screen is the number that is
 # about to be destroyed rather than an estimate.
@@ -41,6 +58,8 @@ say "  every agent it was configured in  (MCP server, hooks, memory protocol)"
 say "  $DATA_DIR"
 say "      $memories memories, settings, and any backups kept beside them"
 say "  $BINARY"
+say "  the semantic search model, if one was installed"
+say "      ($INSTALL_DIR/../share/leteo/model and $DATA_DIR/model)"
 say ""
 # The boundary worth stating: a `.leteo/` inside a repository is project data,
 # usually committed and often somebody else's too. Searching the filesystem for
@@ -67,9 +86,24 @@ fi
 # still here. It resolves fifteen agents' config files and strips the MCP server,
 # the hooks and the memory-protocol block from each; doing that here by hand
 # would be a second, worse copy of the same knowledge.
+# `ran` is whether the binary judged the model files at all, whatever it exited
+# with: it exits non-zero on any incomplete removal, an agent-config error for
+# one, after it has already kept the model files it did not recognise. It takes
+# a model file only when the file hashes to the pin it was built with, and the
+# by-name removal below does not look at content, so it must not run behind a
+# binary that has decided to keep a file. `handled` is the narrower claim that
+# it finished, and gates only the data files, which the binary and this script
+# name identically, so trying them again after a failure undoes no judgment.
+ran=0
+handled=0
 if [ -x "$BINARY" ]; then
     say "  removing agent configuration and memories"
-    "$BINARY" uninstall --yes || say "  leteo uninstall failed; carrying on with the files"
+    ran=1
+    if "$BINARY" uninstall --yes; then
+        handled=1
+    else
+        say "  leteo uninstall failed; carrying on with the files"
+    fi
 else
     say "  no binary to ask, removing the data directory directly"
 fi
@@ -78,17 +112,22 @@ fi
 # and leaves anything it did not create; this is the fallback for a store whose
 # binary is already gone, so it names the same files rather than reaching for
 # `rm -rf` on a path `LETEO_DATA_DIR` may point anywhere.
-if [ -d "$DATA_DIR" ] && [ ! -x "$BINARY" ]; then
+if [ -d "$DATA_DIR" ] && [ "$handled" -eq 0 ]; then
     say "  removing Leteo's files from $DATA_DIR"
     rm -f "$DATA_DIR"/leteo.db* "$DATA_DIR"/store.db* \
           "$DATA_DIR/settings.json" "$DATA_DIR/cloud.json"
     rm -rf "$DATA_DIR/hooks" "$DATA_DIR"/backup-*
+    # `leteo model install` writes here by default.
+    if [ "$ran" -eq 0 ]; then
+        for file in $MODEL_FILES; do rm -f "$DATA_DIR/model/$file"; done
+    fi
+    rmdir "$DATA_DIR/model" 2>/dev/null || true
     # Only if that emptied it. A note somebody filed beside the store keeps the
     # directory, and is reported rather than taken along with it.
     if [ -z "$(ls -A "$DATA_DIR" 2>/dev/null)" ]; then
         rmdir "$DATA_DIR"
     else
-        say "  $DATA_DIR was kept: it holds files Leteo did not put there"
+        say_kept "$DATA_DIR"
     fi
 fi
 
@@ -99,6 +138,19 @@ if [ -e "$BINARY" ]; then
     rm -f "$BINARY"
 fi
 rm -f "$INSTALL_DIR/uninstall.sh"
+# The model the installer put under `../share/leteo/model`, by name, and the
+# directories only if that emptied them: never `share/` itself. The files are
+# left alone when the binary ran, for the reason given above; an empty directory
+# is no one's judgment and still goes.
+SHARE_DIR="$INSTALL_DIR/../share/leteo"
+if [ "$ran" -eq 0 ]; then
+    for file in $MODEL_FILES; do rm -f "$SHARE_DIR/model/$file"; done
+fi
+rmdir "$SHARE_DIR/model" 2>/dev/null || true
+rmdir "$SHARE_DIR" 2>/dev/null || true
+for kept in "$SHARE_DIR/model" "$SHARE_DIR"; do
+    [ ! -d "$kept" ] || say_kept "$kept"
+done
 
 say ""
 say "Leteo is gone."

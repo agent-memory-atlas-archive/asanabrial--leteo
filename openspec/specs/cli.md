@@ -282,8 +282,23 @@ duties about what an answer explains.
     the same download when no location in [`search.md`](search.md) §15 holds a
     verified model, unless `semantic_search` is false or the run is a `--dry-run`,
     and never fails for want of it: it says on stderr what happened and what to
-    run. `uninstall` leaves the model, which is not part of any agent's
-    configuration.
+    run. `uninstall` removes the model from the places the binary looks
+    for it ([`search.md`](search.md) §15) except `LETEO_MODEL_DIR`, which names a
+    directory somebody else chose: the files of `MODEL_FILES` by name *and* by
+    content, then `model/` and `share/leteo` if that left them empty, never
+    `share/` or the binary's directory. A file is deleted only if it is a regular
+    file whose SHA-256 is its pin, so a `config.json` somebody else keeps there,
+    and the model an older release installed, are kept and named in the report's
+    `remaining`; a location that is itself a symbolic link is not followed, and
+    is named too. A directory that still holds something else -- `model/` or
+    `share/leteo` -- is kept and named with what it holds, and one that could not
+    be removed while empty is named with the I/O error and not with a stranger. A
+    `share/leteo` that is the data directory is never treated as the installer's.
+    Without `--yes`, `uninstall` is the preview: nothing is touched and `model_files` lists what would go, by the
+    same rule. `scripts/uninstall.sh` and `uninstall.ps1` repeat the removal by
+    name for a binary that is gone, and leave the model files to the binary
+    whenever it ran, whatever it exited with; a directory they keep is reported
+    as kept, with the binary's report as the reason, not as holding strangers.
 
 ## Invariants
 
