@@ -372,6 +372,11 @@ pub struct StoreConfig {
     /// [`crate::semantic::locations`] for the rest of the list, which is the only
     /// place the order is written.
     pub model_dir: Option<PathBuf>,
+    /// The language this connection stems the memories it writes in.
+    ///
+    /// `None` reads the memory-writing setting beside the database, which is
+    /// what every caller but a test wants. See [`crate::stemming`].
+    pub memory_language: Option<crate::settings::Interface>,
 }
 
 impl StoreConfig {
@@ -384,6 +389,7 @@ impl StoreConfig {
             max_search_results: 20,
             dedupe_window: Duration::from_secs(15 * 60),
             model_dir: crate::semantic::explicit_dir(),
+            memory_language: None,
         }
     }
 
@@ -654,6 +660,16 @@ impl Store {
         let deadline = std::time::Instant::now() + config.busy_timeout;
         let connection = Connection::open(&config.database_path)?;
         connection.busy_timeout(config.busy_timeout)?;
+        // Before the schema is prepared, not after: migration 21 stems the rows
+        // that exist, and every trigger on `observations` calls these.
+        let language = config.memory_language.unwrap_or_else(|| {
+            crate::stemming::memory_language(
+                crate::settings::load_beside(&config.database_path)
+                    .language
+                    .as_deref(),
+            )
+        });
+        crate::stemming::register(&connection, language)?;
         prepare(&connection, config.busy_timeout)?;
         let left = deadline.saturating_duration_since(std::time::Instant::now());
         connection.busy_timeout(left)?;

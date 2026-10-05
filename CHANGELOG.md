@@ -6,6 +6,17 @@ All notable changes to Leteo are documented in this file.
 
 ### Added
 
+- **Memories are stemmed in the language they were written in, Spanish first.**
+  `porter` stays on every memory, and each one gains the Snowball stems of the
+  language named by the memory-language setting, recorded on its row so the choice is
+  fixed per memory; a question is stemmed for `porter` and for every language the store
+  holds. `ejecuta` now finds `ejecutaron`, which `porter` cannot. Only Spanish has a
+  second stemmer so far: every other language records its language and gets `porter`
+  alone until its algorithm lands, and Galician has none. Schema version 21; the
+  migration stems existing rows in the setting's language and rebuilds the index.
+  A tool writing to the database file directly must register `leteo_stem`, or its
+  writes to `observations` are refused (#125).
+
 - **The semantic search model is a file beside the binary, and `leteo model install`
   puts it there.** A 13 MB static embedding model, verified against SHA-256s the
   binary was built with before a byte of it is used, found through one ordered list

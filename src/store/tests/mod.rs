@@ -14,6 +14,7 @@ mod schema;
 mod search;
 mod semantic;
 mod sessions;
+mod stems;
 mod versions;
 
 /// A store whose default test project replicates.

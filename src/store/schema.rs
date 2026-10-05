@@ -54,10 +54,11 @@ pub(super) const BASELINE_NORMALIZE_SQL: &str =
 ///   0018_review_clocks_in_calendar_months.sql  <- the first one after it
 ///   0019_observation_versions.sql      <- the version history table
 ///   0020_observation_vectors.sql       <- the vectors the semantic stage reads
-///   0021_something.sql                  <- add here, and bump SCHEMA_VERSION
+///   0021_observation_stems.sql         <- the Snowball index, one row a memory
+///   0022_something.sql                  <- add here, and bump SCHEMA_VERSION
 /// ```
 ///
-/// The next number is 21 rather than 2 because 2 through 17 are spent history
+/// The next number is 22 rather than 2 because 2 through 17 are spent history
 /// and are refused rather than migrated; `LAST_PRE_RELEASE_VERSION` owns that
 /// band and says why.
 ///
@@ -82,6 +83,7 @@ pub(super) const MIGRATIONS: &[(i32, Migration)] = &[
     ),
     (19, Migration::Sql(OBSERVATION_VERSIONS)),
     (20, Migration::Sql(OBSERVATION_VECTORS)),
+    (21, Migration::Sql(OBSERVATION_STEMS)),
 ];
 
 pub(super) const REVIEW_CLOCKS_IN_CALENDAR_MONTHS: &str =
@@ -102,6 +104,13 @@ pub(super) const OBSERVATION_VERSIONS: &str =
 /// the file gives and `store-and-schema.md` §16 repeats.
 pub(super) const OBSERVATION_VECTORS: &str =
     include_str!("../../migrations/0020_observation_vectors.sql");
+
+/// Migration 21: the language each memory was stemmed in, and the stems.
+///
+/// Pure SQL, but not SQL SQLite can run alone: it calls `leteo_stem`, which the
+/// connection registers before the schema is prepared. See `crate::stemming`.
+pub(super) const OBSERVATION_STEMS: &str =
+    include_str!("../../migrations/0021_observation_stems.sql");
 
 /// How a migration is carried out.
 ///
@@ -155,7 +164,7 @@ pub(super) enum Migration {
 /// What raising it past them does *not* do is make them migratable: see
 /// `LAST_PRE_RELEASE_VERSION` and the refusal in `migrate`. They stop being
 /// ambiguous and stay refused.
-pub(crate) const SCHEMA_VERSION: i32 = 20;
+pub(crate) const SCHEMA_VERSION: i32 = 21;
 
 /// The highest number stamped by the numbering that predates any release.
 ///
@@ -843,6 +852,9 @@ fn rebuild_full_text(connection: &Connection) -> Result<(), rusqlite::Error> {
 /// moment and a repair on a fully migrated store, rather than two lists that
 /// can disagree about what an index is.
 pub(super) fn rebuild_present_indexes(connection: &Connection) -> Result<(), rusqlite::Error> {
+    if table_exists(connection, "observation_stems")? {
+        restem_observations(connection)?;
+    }
     for index in FULL_TEXT_INDEXES {
         if table_exists(connection, index)? {
             connection.execute(
@@ -854,9 +866,37 @@ pub(super) fn rebuild_present_indexes(connection: &Connection) -> Result<(), rus
     Ok(())
 }
 
+/// Brings the stems up to the memories they are taken from.
+///
+/// The index over the stems is rebuilt from the stems table, so a memory the
+/// triggers did not see — an import runs with them dropped, and a repair is
+/// there because one went missing — would stay unfindable by its stems however
+/// often the index were rebuilt. A row keeps the language it was stemmed in; one
+/// that has none yet takes the language this connection writes.
+fn restem_observations(connection: &Connection) -> Result<(), rusqlite::Error> {
+    connection.execute_batch(
+        "INSERT INTO observation_stems(observation_id, language, title, content, tool_name, type, project, topic_key)
+         SELECT o.id, ifnull(s.language, leteo_stem_language()),
+                leteo_stem(o.title, ifnull(s.language, leteo_stem_language())),
+                leteo_stem(o.content, ifnull(s.language, leteo_stem_language())),
+                o.tool_name, o.type, o.project,
+                leteo_stem(o.topic_key, ifnull(s.language, leteo_stem_language()))
+         FROM observations o LEFT JOIN observation_stems s ON s.observation_id = o.id
+         WHERE typeof(o.id) = 'integer'
+         ON CONFLICT(observation_id) DO UPDATE SET
+             title = excluded.title, content = excluded.content,
+             tool_name = excluded.tool_name, type = excluded.type,
+             project = excluded.project, topic_key = excluded.topic_key;",
+    )
+}
+
 /// The full-text indexes, in the order a report lists them.
-pub(super) const FULL_TEXT_INDEXES: &[&str] =
-    &["observations_fts", "observations_exact", "prompts_fts"];
+pub(super) const FULL_TEXT_INDEXES: &[&str] = &[
+    "observations_fts",
+    "observations_exact",
+    "observations_stemmed",
+    "prompts_fts",
+];
 
 /// The triggers that keep those indexes level with the rows they cover.
 ///
@@ -868,9 +908,10 @@ pub(super) const FULL_TEXT_INDEXES: &[&str] =
 /// is still findable only by the words it had yesterday, and the report says
 /// the store is healthy.
 ///
-/// Listed here so something can ask. The definitions live in the two migrations
-/// that create them — the baseline for the stemmed and prompt indexes, and
-/// migration 8 for the unstemmed one — and this is only the roll call.
+/// Listed here so something can ask. The definitions live in the migrations
+/// that create them — the baseline for the stemmed and prompt indexes, migration
+/// 8 for the unstemmed one and migration 21 for the Snowball one — and this is
+/// only the roll call.
 pub(super) const FULL_TEXT_TRIGGERS: &[&str] = &[
     "obs_fts_insert",
     "obs_fts_delete",
@@ -878,12 +919,17 @@ pub(super) const FULL_TEXT_TRIGGERS: &[&str] = &[
     "obs_exact_insert",
     "obs_exact_delete",
     "obs_exact_update",
+    "obs_stems_insert",
+    "obs_stems_update",
+    "stems_fts_insert",
+    "stems_fts_delete",
+    "stems_fts_update",
     "prompt_fts_insert",
     "prompt_fts_delete",
     "prompt_fts_update",
 ];
 
-/// The two migrations that own the trigger definitions.
+/// The migrations that own the trigger definitions.
 ///
 /// The second was `0008_exact_index.sql` and is now the file the ten
 /// pre-release migrations were collapsed into: the same `CREATE TRIGGER`
@@ -898,6 +944,7 @@ pub(super) const FULL_TEXT_TRIGGERS: &[&str] = &[
 const FULL_TEXT_TRIGGER_SOURCES: &[&str] = &[
     BASELINE_FINALIZE_SQL,
     include_str!("../../migrations/0001_baseline_after_the_tables.sql"),
+    OBSERVATION_STEMS,
 ];
 
 /// The statement that creates one of them, lifted out of its migration.

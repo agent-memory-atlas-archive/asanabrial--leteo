@@ -366,6 +366,7 @@ impl Store {
         // report have been the shape of `mem_doctor`'s output since before
         // there was a second index.
         let exact_fts = check_index("observations_exact", "unstemmed observation");
+        let stems_fts = check_index("observations_stemmed", "Snowball observation");
         let observations = query_count(&self.connection, "SELECT COUNT(*) FROM observations")?;
         let prompts = query_count(&self.connection, "SELECT COUNT(*) FROM prompts")?;
         // Counted from the shadow table rather than from the index itself.
@@ -375,6 +376,11 @@ impl Store {
         // report a healthy store while every search came back empty.
         let observation_fts_rows = indexed_row_count(&self.connection, "observations_fts");
         let exact_fts_rows = indexed_row_count(&self.connection, "observations_exact");
+        // Two counts for this one, because it is two things that can drift: the
+        // stems table against the memories, and the index against the stems.
+        let stems_rows =
+            query_count(&self.connection, "SELECT COUNT(*) FROM observation_stems").unwrap_or(-1);
+        let stems_fts_rows = indexed_row_count(&self.connection, "observations_stemmed");
         let prompt_fts_rows = indexed_row_count(&self.connection, "prompts_fts");
         // Whether every memory's hash still describes the memory.
         //
@@ -462,6 +468,22 @@ impl Store {
                 ),
             )
         });
+        record(match &stems_fts {
+            None => DoctorCheck::passed("observation_stems_fts_integrity"),
+            Some(detail) => DoctorCheck::failed("observation_stems_fts_integrity", detail.clone()),
+        });
+        record(
+            if observations == stems_rows && stems_rows == stems_fts_rows {
+                DoctorCheck::passed("observation_stems_sync")
+            } else {
+                DoctorCheck::failed(
+                    "observation_stems_sync",
+                    format!(
+                        "Snowball observation index row mismatch: table={observations}, stems={stems_rows}, fts={stems_fts_rows}; {REBUILD_REMEDY}"
+                    ),
+                )
+            },
+        );
         record(if prompts == prompt_fts_rows {
             DoctorCheck::passed("prompt_fts_sync")
         } else {

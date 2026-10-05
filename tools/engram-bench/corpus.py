@@ -23,7 +23,7 @@ TARGETS = [
    [("longnl","what algorithm did we pick for throttling clients and where is the state stored?"),("partial","throttl"),("typo","rate limitting redis")], topic="architecture/rate-limit"),
  T("tzbug", A, "bugfix", "Invoices dated one day early for users in UTC-5",
    "Root cause: invoice date computed with time.Now().Truncate(24h) in UTC, then formatted in local time. Fixed by computing the date in the account's IANA timezone.",
-   [("paraphrase","billing documents showing the wrong day for American customers"),("multiword","invoice timezone truncate bug"),("spanish","facturas con fecha equivocada por zona horaria")]),
+   [("paraphrase","billing documents showing the wrong day for American customers"),("multiword","invoice timezone truncate bug")]),
  T("migr", A, "pattern", "Migrations are append-only and named with a UTC timestamp",
    "Never edit a migration that has shipped. New file per change, named 20240101T120000_description.sql, checked by CI against the applied list.",
    [("paraphrase","can I modify an old schema change file"),("partial","append-onl"),("short","sql")], topic="conventions/migrations"),
@@ -35,7 +35,7 @@ TARGETS = [
    [("paraphrase","which tracing library replaced the deprecated one"),("partial","telemetr"),("short","otlp")], topic="architecture/observability"),
  T("cache", A, "discovery", "Product catalog cache stampede on cold start",
    "When the catalog cache expired, hundreds of requests recomputed it at once. singleflight.Group collapses concurrent misses into one load.",
-   [("paraphrase","thundering herd when the cache expires"),("multiword","catalog singleflight stampede fix"),("spanish","estampida de caché al arrancar")]),
+   [("paraphrase","thundering herd when the cache expires"),("multiword","catalog singleflight stampede fix")]),
  T("s3up", A, "bugfix", "Large file uploads to S3 failed above 5 GB",
    "PutObject has a 5 GB limit. Switched to the multipart upload manager with 64 MB parts and a retry per part.",
    [("paraphrase","uploading huge files to object storage breaks"),("typo","multpart uplod s3"),("short","s3")]),
@@ -47,7 +47,7 @@ TARGETS = [
    [("paraphrase","where do toggles for unreleased features get decided"),("short","unleash")], topic="architecture/feature-flags"),
  T("idemp", A, "pattern", "Payment endpoints require an Idempotency-Key header",
    "Retries from mobile clients created duplicate charges. Payment POSTs now require Idempotency-Key; responses are stored for 24h keyed by it.",
-   [("paraphrase","customers charged twice when the app retried"),("multiword","idempotency key payments duplicate"),("spanish","cobros duplicados al reintentar el pago")]),
+   [("paraphrase","customers charged twice when the app retried"),("multiword","idempotency key payments duplicate")]),
  T("goroutine", A, "bugfix", "Goroutine leak in websocket hub",
    "Each disconnected client left a goroutine blocked on an unbuffered send channel. Fixed with a select on ctx.Done() and closing the channel on unregister.",
    [("typo","gorutine leek websocket"),("paraphrase","memory keeps growing because background workers never exit")]),
@@ -68,7 +68,7 @@ TARGETS = [
    [("paraphrase","pods getting killed while the schema upgrade ran"),("multiword","liveness readiness probe migration restart"),("longnl","why were our containers restarting in the middle of a database migration?")]),
  T("decimal", A, "bugfix", "Rounding errors in currency totals from float64",
    "Totals were summed as float64 and drifted by a cent. Money is now int64 minor units everywhere; formatting happens at the edge.",
-   [("paraphrase","totals off by one cent"),("typo","rouding eror curency"),("spanish","errores de redondeo en importes")]),
+   [("paraphrase","totals off by one cent"),("typo","rouding eror curency")]),
  T("cors", A, "bugfix", "CORS preflight failed for the admin dashboard",
    "OPTIONS requests were routed through auth middleware, which returned 401 before CORS headers were written. CORS middleware now runs first.",
    [("paraphrase","browser blocked admin panel requests with a preflight error"),("short","cors")]),
@@ -83,7 +83,7 @@ TARGETS = [
    [("paraphrase","what was making our javascript bundle so large"),("multiword","bundle size moment date-fns analyzer"),("partial","analyz")]),
  T("a11y", B, "pattern", "Every icon button needs an aria-label",
    "Screen readers announced icon-only buttons as 'button'. Lint rule jsx-a11y/control-has-associated-label enforces it.",
-   [("paraphrase","screen reader says just button for icon buttons"),("short","aria"),("spanish","accesibilidad botones con icono")], topic="conventions/accessibility"),
+   [("paraphrase","screen reader says just button for icon buttons"),("short","aria")], topic="conventions/accessibility"),
  T("flutterweb", B, "discovery", "Flutter web CanvasKit adds 2 MB to first load",
    "CanvasKit renderer downloads a 2 MB wasm on first load. HTML renderer is lighter but text measurement differs; we keep CanvasKit and preload the wasm.",
    [("paraphrase","why is the flutter web first load heavy"),("partial","canvask"),("typo","canvaskit wasm prelaod")]),
@@ -95,10 +95,10 @@ TARGETS = [
    [("paraphrase","search page freezes because the component keeps rendering"),("typo","infinte rerender useefect"),("longnl","what caused the filters panel to keep re-rendering until the tab froze?")]),
  T("i18n", B, "decision", "Translations managed with ICU messages in Lokalise",
    "Hard-coded strings and string concatenation broke plurals in Spanish and Polish. ICU MessageFormat everywhere, synced from Lokalise in CI.",
-   [("paraphrase","where do translated strings come from"),("spanish","traducciones y plurales en la web"),("short","icu")], topic="architecture/i18n"),
+   [("paraphrase","where do translated strings come from"),("short","icu")], topic="architecture/i18n"),
  T("sw", B, "bugfix", "Service worker served a stale app shell after deploy",
    "The service worker cached index.html with cache-first, so users kept the old bundle hashes and got 404s on chunks. index.html is now network-first and the SW calls skipWaiting on update.",
-   [("paraphrase","users stuck on the old version after we deploy"),("multiword","service worker stale cache chunks 404"),("spanish","usuarios con la versión vieja después del despliegue")]),
+   [("paraphrase","users stuck on the old version after we deploy"),("multiword","service worker stale cache chunks 404")]),
  T("e2e", B, "pattern", "End-to-end tests use Playwright with fixtures per role",
    "Cypress was flaky with multiple tabs. Playwright fixtures log in as admin, editor or viewer once per worker and reuse storage state.",
    [("paraphrase","what do we use for browser tests"),("partial","playwr"),("typo","playwrite fixtures")], topic="conventions/testing"),
@@ -131,7 +131,42 @@ TARGETS = [
    [("paraphrase","where is the component documentation"),("partial","storyb")], topic="conventions/components"),
  T("memleak", B, "bugfix", "Memory leak from un-removed scroll listeners on the map page",
    "The map component added window scroll listeners on mount and never removed them; navigating back and forth piled up handlers. Cleanup in the effect's return.",
-   [("paraphrase","browser tab memory grows on the map screen"),("multiword","scroll listener cleanup map leak"),("spanish","fuga de memoria en el mapa")]),
+   [("paraphrase","browser tab memory grows on the map screen"),("multiword","scroll listener cleanup map leak")]),
+]
+
+# The same eight memories written in Spanish, which is what the `spanish` queries
+# for them are about. Before these existed, eight of the sixteen Spanish
+# questions asked in Spanish for a memory written in English: no stemmer can
+# bridge that, so the kind's ceiling was set by the corpus and not by the search.
+# The English originals and their English questions are unchanged.
+#
+# Written as a Spanish-speaking developer would write the note rather than
+# fitted to the question: some questions share no whole word with their target.
+ES_COUNTERPARTS = [
+ T("es_tzbug", A, "bugfix", "Corregido: facturas con la fecha de un día antes para usuarios en UTC-5",
+   "Causa raíz: la fecha de la factura se calculaba con time.Now().Truncate(24h) en UTC y luego se formateaba en hora local. Se corrige calculando la fecha en la zona horaria IANA de la cuenta.",
+   [("spanish","facturas con fecha equivocada por zona horaria")]),
+ T("es_cache", A, "discovery", "Descubrimiento: estampida de caché del catálogo de productos en el arranque en frío",
+   "Cuando expiraba la caché del catálogo, cientos de peticiones la recalculaban a la vez. singleflight.Group agrupa los fallos concurrentes en una sola carga.",
+   [("spanish","estampida de caché al arrancar")]),
+ T("es_idemp", A, "pattern", "Los endpoints de pago exigen la cabecera Idempotency-Key",
+   "Los reintentos de los clientes móviles creaban cobros duplicados. Los POST de pago ahora requieren Idempotency-Key; las respuestas se guardan durante 24 h asociadas a ella.",
+   [("spanish","cobros duplicados al reintentar el pago")]),
+ T("es_decimal", A, "bugfix", "Errores de redondeo en los totales de moneda por usar float64",
+   "Los totales se sumaban como float64 y se desviaban un céntimo. Ahora el dinero son enteros int64 en unidades menores en todas partes; el formato se aplica en el borde.",
+   [("spanish","errores de redondeo en importes")]),
+ T("es_a11y", B, "pattern", "Todo botón de icono necesita un aria-label",
+   "Los lectores de pantalla anunciaban los botones con solo un icono como «botón». Es una regla de accesibilidad que hace cumplir jsx-a11y/control-has-associated-label.",
+   [("spanish","accesibilidad botones con icono")]),
+ T("es_i18n", B, "decision", "Traducciones gestionadas con mensajes ICU en Lokalise",
+   "Las cadenas escritas a mano y la concatenación rompían los plurales en español y polaco. ICU MessageFormat en todas partes, sincronizado desde Lokalise en CI.",
+   [("spanish","traducciones y plurales en la web")]),
+ T("es_sw", B, "bugfix", "El service worker servía un app shell obsoleto tras el despliegue",
+   "El service worker guardaba index.html con cache-first, así que los usuarios conservaban los hashes antiguos del bundle y recibían 404 en los chunks. Ahora index.html es network-first y el SW llama a skipWaiting al actualizar.",
+   [("spanish","usuarios con la versión vieja después del despliegue")]),
+ T("es_memleak", B, "bugfix", "Fuga de memoria por listeners de scroll sin eliminar en la página del mapa",
+   "El componente del mapa añadía listeners de scroll en window al montarse y nunca los eliminaba; al navegar adelante y atrás se acumulaban manejadores. La limpieza va en el return del efecto.",
+   [("spanish","fuga de memoria en el mapa")]),
 ]
 
 SERVICES = ["billing","inventory","checkout","notifications","search","catalog","shipping","accounts","reports","admin"]
@@ -167,11 +202,11 @@ def distractors(n=130, seed=7):
     return out
 
 def corpus():
-    return TARGETS + distractors()
+    return TARGETS + ES_COUNTERPARTS + distractors()
 
 def queries():
     qs = []
-    for t in TARGETS:
+    for t in TARGETS + ES_COUNTERPARTS:
         for kind, q in t["queries"]:
             qs.append(dict(kind=kind, q=q, target=t["key"], project=t["project"]))
     return qs

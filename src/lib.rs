@@ -69,6 +69,7 @@ pub mod sardi;
 pub mod semantic;
 pub mod settings;
 pub mod setup;
+pub mod stemming;
 pub mod store;
 
 /// The ranking statement, for the retrieval measurement under `tools/`.

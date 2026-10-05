@@ -15,11 +15,13 @@ before any of it.
    the key was normalised on the way in, so `Architecture/Wizard-Split` and
    `architecture/wizard-split` are the same question.
 
-2. **Two indexes, fused.** Every memory is indexed twice: stemmed
+2. **Indexes, fused.** Every memory is indexed twice: stemmed
    (`porter unicode61`) so that *migrating* finds *migration*, and unstemmed
-   (`unicode61`) so that an exact word beats a stem of it. The two result lists
-   are merged by reciprocal rank fusion — a memory is worth `1 / (60 + place)`
-   in each list it appears in, and the sum orders the answer.
+   (`unicode61`) so that an exact word beats a stem of it. A third, stemmed by
+   the language the memory was written in, joins them where a language has a
+   stemmer (§16). The result lists are merged by reciprocal rank fusion — a
+   memory is worth `1 / (60 + place)` in each list it appears in, and the sum
+   orders the answer.
 
    **A pin/recency/stability rerank was measured and is not taken.** Engram
    orders by `bm25 × (1 + 0.10·pinned + 0.06·recency + 0.04·stability)` and
@@ -264,8 +266,8 @@ before any of it.
     stemmed index is a candidate. A term the index holds is never changed —
     correcting it would answer a different question from the one asked — and
     neither is an inflected word the stemmer already reaches (`limitting` for
-    `limit`), which is why the decision is made against the *stemmed* index and
-    not the vocabulary. The replacement comes from the *unstemmed* vocabulary,
+    `limit`), which is why the decision is made against the *stemmed* indexes —
+    `porter` and, where §16 applies, Snowball — and not the vocabulary. The replacement comes from the *unstemmed* vocabulary,
     so the word put back into the query is a word somebody could have written.
     The nearest word within an edit budget is chosen — one edit at five
     characters or fewer, two above that — with ties broken by the word the index
@@ -539,6 +541,75 @@ before any of it.
     store. And it reads the first 128 tokens, so a memory whose subject is
     stated late is found by its start.
 
+16. **Every memory is also stemmed in the language it was written in, and the
+    row says which.** `porter` is an English algorithm: it folds `memoria` and
+    `memorias` by stripping a final `s`, and nothing else Spanish — `ejecuta` and
+    `ejecutaron` stay two terms. Each memory therefore carries a second set of
+    stems, made by the Snowball stemmer of the language in
+    `Settings::language`, the language memories are written in,
+    and a row in `observation_stems` records that language beside them. `porter`
+    stays on every row, because agents write English terms into memories in any
+    language. Nothing is detected and no setting was added: a memory takes the
+    setting as it stands when the row is written, so the choice is fixed per row
+    and a store holding both languages is deterministic by construction. A
+    setting that names no language (`auto`) or one that cannot be read indexes as
+    English, which has no second stemmer and needs none.
+
+    FTS5 takes its tokenizer from a fixed list, so a stemmer written in Rust
+    cannot be named in `tokenize =`. The text is stemmed *before* it is indexed,
+    by `leteo_stem`, a SQL function the connection registers
+    (`src/stemming.rs`), and held in `observation_stems`, which `observations_stemmed`
+    (`unicode61`, external content) indexes. The triggers that fill it are on
+    `observations`, so every write path stems and none has to remember to: a
+    save, a revision by topic key, an `update`, a project merge, a pulled
+    replication write, an import, a repair and the migration's own backfill.
+    Rows with no stemmer for their language still get a row — language recorded,
+    stems empty — so a stemmer added later can find the rows it owes.
+
+    **At query time** the question is stemmed with `porter` (the existing index)
+    and with the Snowball stemmer of every language *present in the rows*, not
+    the one the setting names today: a person who switched from Spanish to
+    English still holds Spanish memories. The Snowball lists are merged on a
+    memory's best rank and fused in the strict stage as the third list; the
+    widened and nearest stages take a memory's best rank over `porter` and
+    Snowball, because they decide on bm25 against a floor. The prefix and
+    substring stages and the vocabulary the typo stage corrects against do not
+    read it: a fragment is not a word a stemmer has an opinion about.
+
+    **Which languages have a stemmer is a gap, and it is stated here.** This
+    slice ships Spanish and English (`porter`) only. Every other language the
+    setting offers records its language on its rows and gets `porter` alone.
+    Snowball has algorithms for ca, de, en, es, eu, fr, it, nl, pl, pt, ro and sv;
+    `rust-stemmers` 1.2.0 lacks Catalan, Basque and Polish, so those three need
+    generated or vendored code. **Galician has no Snowball algorithm at all.**
+    Adding a language is one arm in `stemming::algorithm`, and the rows already
+    recorded under it are re-stemmed by the repair that `doctor --repair` runs.
+
+    **What it costs, and what it did not buy.** A larger index — 782 KB to 954 KB
+    on the 178-memory benchmark store — and some cross-language false positives:
+    a Spanish-language store stems its English memories with the Spanish
+    algorithm too, and a query is stemmed the same way. A connection that has not
+    registered the functions cannot write a memory, and fails saying so; a
+    foreign tool writing to the file directly is such a connection. Migration 21
+    stems the rows that exist in the language the setting names when it runs,
+    because nothing recorded what their writer used.
+
+    Measured on `tools/engram-bench` with the semantic stage on, as CI runs it,
+    the `spanish` kind went 0.790 to 0.969 and overall 0.887 to 0.918 — and
+    **almost all of that is the corpus, not the stemmer**. Eight of the sixteen
+    Spanish questions asked in Spanish for memories written in English, which no
+    stemmer can bridge; the corpus now holds Spanish-written counterparts of
+    those eight. The unmodified binary on the extended corpus scores 0.969 on
+    `spanish` as well, so Snowball moved that kind by nothing: every question
+    that missed, missed on a word the memory does not contain, not on an
+    inflection. What the stemmer did move is `paraphrase` (0.836 to 0.856) and
+    `longnl` (0.775 to 0.792), English kinds, in a store told it writes Spanish.
+    The cases where it decides — a strict question one inflection away — are
+    held by `src/store/tests/stems.rs`, each written so that `porter` alone
+    cannot pass it. `tools/retrieval` reads `observations_fts` through the shipped
+    statement, which this change does not touch, and measured the same to four
+    decimals before and after on the benchmark's own store.
+
 ## Invariants
 
 - The index is kept level with its table by triggers and by nothing else.
@@ -552,6 +623,10 @@ before any of it.
   that writes around the triggers leaves them stale. One that touches no
   full-text column needs neither: see [`store-and-schema.md`](store-and-schema.md)
   for the same invariant.
+- The stems are kept level with the memories by triggers and by nothing else,
+  exactly as the other indexes are, and they need the functions the connection
+  registers. A write path that bypasses the triggers has to call the repair
+  (`restem_observations`) before it commits; the import does.
 - Ranking transfers between SQLite builds; timing does not, and neither does
   query *construction*. A measurement of search quality made anywhere other than
   through this binary's own query builder is a measurement of something else.
@@ -575,7 +650,9 @@ before any of it.
 
 - `src/store/search.rs` — the stages, the fusion, the floors
 - `src/memory/normalize.rs` — `fts_query`, `topic_key`, and the narrowing folds
-- `src/store/schema.rs` — the two indexes and the triggers that feed them
+- `src/store/schema.rs` — the indexes and the triggers that feed them
+- `src/stemming.rs` — the language table, the stemmer, and the SQL functions
+- `migrations/0021_observation_stems.sql` — the stems, their index and triggers
 - `src/store/tests/search.rs` — the stage-by-stage tests
 - `src/semantic/` (the model, where it is, its pins, `install`), `src/store/semantic_stage.rs` — the model, the stage, and
   the fusion; `src/store/tests/semantic.rs` holds them
@@ -585,7 +662,7 @@ before any of it.
   the ranking statement it measures; `--pipeline` asks the whole search with and
   without the semantic stage
 - `tools/engram-bench/ratchet.py`, `floors.json` — the quality and reply-size
-  floors and the ceiling on empty answers, run by the `search-quality` job in
+  floors (the ratchet names the memory language in the store's settings) and the ceiling on empty answers, run by the `search-quality` job in
   `.github/workflows/ci.yml`, which also runs the hard-set evaluator, the
   binary-size check and `tools/semantic/check_install.sh`, which installs a
   release-shaped archive and checks the binary finds its model and an uninstall
@@ -598,6 +675,6 @@ before any of it.
 ## Related
 
 - [`memory-model.md`](memory-model.md) — the fields being matched
-- [`store-and-schema.md`](store-and-schema.md) — the indexes, triggers, and `doctor`
+- [`store-and-schema.md`](store-and-schema.md) — the indexes, triggers, and `doctor`; §17 is the stems table
 - [`mcp-tools.md`](mcp-tools.md) — `mem_search`, and the hints §4 describes
 - [`hooks.md`](hooks.md) — the prompt nudge, which is a search nobody asked for
