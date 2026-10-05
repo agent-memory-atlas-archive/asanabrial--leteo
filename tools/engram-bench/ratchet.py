@@ -13,8 +13,8 @@ import inflection
 
 # The language the corpus's memories are written in, as the product reads it from
 # settings. Without it a store indexes every memory as English and the Spanish
-# stemmer never runs, so the Spanish half of the corpus would be measured against
-# the stemmer it was meant to be measured against.
+# stemmer never runs, so the Spanish half of the corpus would be measured without
+# the stemmer it was meant to be measuring.
 LETEO_HOME = os.path.join(STATE, "lhome")
 os.makedirs(LETEO_HOME, exist_ok=True)
 with open(os.path.join(LETEO_HOME, "settings.json"), "w") as settings:

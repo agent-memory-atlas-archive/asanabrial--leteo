@@ -3,7 +3,7 @@
 //! FTS5 takes its tokenizer from a fixed list, so a stemmer written in Rust
 //! cannot be named in `tokenize =`. The words are stemmed *before* they reach an
 //! index instead, by the two SQL functions registered here, and the index that
-//! holds them (`observations_stems`) tokenises plain `unicode61`. The query side
+//! holds them (`observations_stemmed`) tokenises plain `unicode61`. The query side
 //! applies the same function, so a word and the stem it was indexed under meet.
 //!
 //! Which languages have a stemmer is the one table in [`algorithm`]; every other
@@ -90,8 +90,10 @@ pub fn stem_text(text: &str, language: Interface) -> String {
 
 /// Makes the two functions the stem triggers call available on a connection.
 ///
-/// `leteo_stem_language()` is what a row written on this connection is recorded
-/// under. It is fixed for the life of the connection: a long-running server
+/// Both are needed by an insert or an edit of a memory's text, because the
+/// triggers call them; a delete or an edit of `tool_name`, `type` or `project`
+/// calls neither. `leteo_stem_language()` is what a row written on this
+/// connection is recorded under. It is fixed for the life of the connection: a long-running server
 /// keeps stemming in the language it opened with until it is restarted.
 ///
 /// Every connection that writes `observations` has to have registered these,

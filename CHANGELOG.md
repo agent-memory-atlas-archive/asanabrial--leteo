@@ -16,10 +16,11 @@ All notable changes to Leteo are documented in this file.
   stemming crate lacks, Galician has none, and those four record their language and
   get `porter` alone. Each stemmer has a set of questions that reach their memory
   only through another inflection, scored on the strict pass alone, and a floor in
-  the ratchet. Schema version 21; the
-  migration stems existing rows in the setting's language and rebuilds the index.
-  A tool writing to the database file directly must register `leteo_stem`, or its
-  writes to `observations` are refused (#125).
+  the ratchet. Schema version 22; the migration stems existing rows in the setting's
+  language and rebuilds the index. A tool writing to the database file directly must
+  register both `leteo_stem` and `leteo_stem_language`, or its inserts and its edits
+  of a memory's text are refused; deletes and edits of `project`, `type` or
+  `tool_name` alone are not (#125).
 
 - **The semantic search model is a file beside the binary, and `leteo model install`
   puts it there.** A 13 MB static embedding model, verified against SHA-256s the

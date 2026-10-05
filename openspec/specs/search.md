@@ -547,7 +547,13 @@ before any of it.
     `ejecutaron` stay two terms. Each memory therefore carries a second set of
     stems, made by the Snowball stemmer of the language in
     `Settings::language`, the language memories are written in,
-    and a row in `observation_stems` records that language beside them. `porter`
+    and a row in `observation_stems` records that language beside them. The
+    language is taken when the row is written and kept until the memory's text
+    (title, content or topic key) changes, which stems it again in the language
+    of the connection that changed it; an edit that touches only `project`,
+    `type` or `tool_name` keeps the language and the stems and refreshes the
+    copied identifiers, so a project merge or a replicated project move after a
+    change of setting does not turn a Spanish memory into an English one. `porter`
     stays on every row, because agents write English terms into memories in any
     language. Nothing is detected and no setting was added: a memory takes the
     setting as it stands when the row is written, so the choice is fixed per row
@@ -562,9 +568,12 @@ before any of it.
     (`unicode61`, external content) indexes. The triggers that fill it are on
     `observations`, so every write path stems and none has to remember to: a
     save, a revision by topic key, an `update`, a project merge, a pulled
-    replication write, an import, a repair and the migration's own backfill.
-    Rows with no stemmer for their language still get a row — language recorded,
-    stems empty — so a stemmer added later can find the rows it owes.
+    replication write and the migration's own backfill. An import is the
+    exception: it drops the triggers to build the indexes once at the end, and
+    stems what it wrote with `restem_observations` before that rebuild, so a
+    repair and an import share one stemming step. Rows with no stemmer for their
+    language still get a row — language recorded, stems empty — so a stemmer
+    added later can find the rows it owes.
 
     **At query time** the question is stemmed with `porter` (the existing index)
     and with the Snowball stemmer of every language *present in the rows*, not
@@ -575,6 +584,15 @@ before any of it.
     Snowball, because they decide on bm25 against a floor. The prefix and
     substring stages and the vocabulary the typo stage corrects against do not
     read it: a fragment is not a word a stemmer has an opinion about.
+
+    **Four surfaces are `porter` only, on purpose and unchanged:** the
+    candidates `mem_save` offers for conflict detection
+    (`src/store/relations.rs`), the per-prompt hint, the `type`/`project` list
+    filter (`src/store/observations.rs`) and the session filter
+    (`src/store/sessions.rs`). Each reads `observations_fts` directly, so on a
+    Spanish store they miss an inflected match that `mem_search` finds. They ask
+    a narrower question than a search, and putting a second index behind them
+    would change what they were measured to do.
 
     **Which languages have a stemmer, and which do not.** `stemming::algorithm`
     is the one table. It carries Spanish, Portuguese, French, German, Italian,
@@ -594,7 +612,18 @@ before any of it.
 
     A row in any of the four records its language and gets `porter` alone, and
     the rows recorded under a language are re-stemmed by the repair
-    (`doctor --repair`) the day an arm for it exists.
+    (`doctor --repair`) the day an arm for it exists, because the repair writes
+    the stems of any row whose stems differ from what its recorded language
+    makes of its text.
+
+    **The language of a row is fixed, and a repair does not change it.** A store
+    whose setting is `auto` records its memories as English, and naming a language
+    later does not re-stem them: a row stemmed under `en` cannot be told from a
+    memory written in English by someone who named English, and handing every
+    such row to a new setting would stem real English text in the wrong
+    language. What a later write does is stem *its own* row in the new language.
+    A store that wants its old memories under a new language has no way to ask
+    for it yet.
 
     **What it costs, and what it did not buy.** A larger index — 782 KB to 954 KB
     on the 178-memory benchmark store — and some cross-language false positives:
@@ -623,8 +652,7 @@ before any of it.
     same store told it writes English: all eight languages score MRR 1.000 with
     their stemmer and 0.000 without it. A question is worth keeping only if
     `porter` cannot answer it: French's first draft had four that share an
-    English suffix, `-ation` and `-er`, and `porter` answered them. The floors
-    are in `floors.json` under `inflection`.
+    English suffix, `-ation` and `-er`, and `porter` answered them. The floors are in `floors.json` under `inflection`.
 
     Measured on `tools/engram-bench` with the semantic stage on, as CI runs it,
     the `spanish` kind went 0.790 to 0.969 and overall 0.887 to 0.918 — and
@@ -685,7 +713,9 @@ before any of it.
 - `src/memory/normalize.rs` — `fts_query`, `topic_key`, and the narrowing folds
 - `src/store/schema.rs` — the indexes and the triggers that feed them
 - `src/stemming.rs` — the language table, the stemmer, and the SQL functions
-- `migrations/0021_observation_stems.sql` — the stems, their index and triggers
+- `migrations/0021_observation_stems.sql` — the stems, their index and triggers;
+  `migrations/0022_stems_keep_their_language.sql` — the trigger split that keeps
+  a row's language through an identifier edit
 - `tools/engram-bench/inflection_sets.py`, `inflection.py`, `inflection_check.py` —
   the per-language strict sets, their runner, and the checker of their edit
   distances
