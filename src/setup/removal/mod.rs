@@ -24,16 +24,34 @@ pub struct Removal {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub binary: Option<PathBuf>,
     pub binary_removed: bool,
+    /// The model files taken out of the places the binary looks for them.
+    pub model_files: Vec<PathBuf>,
+    /// False when a model file was found and could not be deleted; a model that
+    /// was never installed is not a failure.
+    pub model_removed: bool,
     pub remaining: Vec<String>,
 }
 
 impl Removal {
     pub fn complete(&self) -> bool {
-        self.agents.iter().all(|agent| agent.error.is_none()) && (self.data_removed || self.dry_run)
+        self.agents.iter().all(|agent| agent.error.is_none())
+            && (self.data_removed || self.dry_run)
+            && (self.model_removed || self.dry_run)
     }
 }
 
 pub fn uninstall_everything(options: &SetupOptions, data_dir: &Path) -> Removal {
+    uninstall_everything_for(options, data_dir, std::env::current_exe().ok())
+}
+
+/// [`uninstall_everything`] for a given executable, so the removal of what sits
+/// beside it can be tested without being run against the test binary's own
+/// directory.
+fn uninstall_everything_for(
+    options: &SetupOptions,
+    data_dir: &Path,
+    exe: Option<PathBuf>,
+) -> Removal {
     let memories = count_memories(data_dir);
     let mut removed = Removal {
         dry_run: options.dry_run,
@@ -42,8 +60,10 @@ pub fn uninstall_everything(options: &SetupOptions, data_dir: &Path) -> Removal 
         data_dir_removed: false,
         data_removed: false,
         memories,
-        binary: std::env::current_exe().ok(),
+        binary: exe,
         binary_removed: false,
+        model_files: Vec::new(),
+        model_removed: false,
         remaining: Vec::new(),
     };
 
@@ -68,6 +88,12 @@ pub fn uninstall_everything(options: &SetupOptions, data_dir: &Path) -> Removal 
                 error: Some(error.to_string()),
             },
         });
+    }
+
+    // Before the data directory, because `<data dir>/model` is one of the places
+    // and would otherwise keep the directory as something foreign.
+    if !options.dry_run {
+        remove_model(&mut removed, data_dir);
     }
 
     if !options.dry_run && data_dir.exists() {
@@ -143,6 +169,61 @@ fn remove_data_directory(removed: &mut Removal, data_dir: &Path) {
             foreign.join(", ")
         ));
     }
+}
+
+/// The model, from every place the binary looks for it except `LETEO_MODEL_DIR`.
+///
+/// The places are [`crate::semantic::locations_for`] -- the list the lookup
+/// itself reads -- and the files are [`crate::semantic::MODEL_FILES`], so an
+/// installer that puts the model somewhere the binary finds it is also somewhere
+/// this takes it from. The variable is left out because it names a directory
+/// somebody else chose and may share with other things. Files are removed by
+/// name, then a directory only if that left it empty: `model/`, and
+/// `share/leteo` above it, never `share/`.
+fn remove_model(removed: &mut Removal, data_dir: &Path) {
+    let mut failed = false;
+    for directory in crate::semantic::locations_for(removed.binary.as_deref(), data_dir, None) {
+        let mut took_any = false;
+        for (name, _) in crate::semantic::MODEL_FILES {
+            let file = directory.join(name);
+            if std::fs::symlink_metadata(&file).is_err() {
+                continue;
+            }
+            match std::fs::remove_file(&file) {
+                Ok(()) => {
+                    took_any = true;
+                    removed.model_files.push(file);
+                }
+                Err(error) => {
+                    failed = true;
+                    removed
+                        .remaining
+                        .push(format!("{}: {error}", file.display()));
+                }
+            }
+        }
+        if !took_any {
+            continue;
+        }
+        if std::fs::remove_dir(&directory).is_err() && directory.exists() {
+            removed.remaining.push(format!(
+                "{} was kept: it holds files that Leteo did not put there",
+                directory.display()
+            ));
+            continue;
+        }
+        if let Some(parent) = directory.parent()
+            && parent.file_name().is_some_and(|name| name == "leteo")
+            && parent
+                .parent()
+                .and_then(Path::file_name)
+                .is_some_and(|name| name == "share")
+        {
+            // A share/leteo that holds something else is somebody else's.
+            let _ = std::fs::remove_dir(parent);
+        }
+    }
+    removed.model_removed = !failed;
 }
 
 #[cfg(not(windows))]

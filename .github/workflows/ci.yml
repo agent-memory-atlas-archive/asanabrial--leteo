@@ -447,7 +447,7 @@ jobs:
   # It is printed and left alone. Stock `python3` is all it needs, and the store
   # is created in a temporary directory the script owns.
   #
-  # Two more checks ride on the same release build rather than becoming jobs of
+  # More checks ride on the same release build rather than becoming jobs of
   # their own, because a new job is a new required context that protection does
   # not learn about by itself (see the note on `unit-tests`). The binary has a
   # size budget, and the semantic stage has to keep beating the lexical search on
@@ -477,3 +477,7 @@ jobs:
         env:
           LETEO_MODEL_DIR: ${{ github.workspace }}/assets/model
       - run: python3 tools/semantic/check_binary_size.py target/release/leteo
+      # The release archive's layout run through `install.sh` and the uninstallers
+      # on this runner, in temporary directories: the binary has to find the model
+      # where the installer put it, and nothing of it may survive an uninstall.
+      - run: sh tools/semantic/check_install.sh target/release/leteo

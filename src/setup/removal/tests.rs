@@ -202,3 +202,123 @@ fn a_data_directory_of_only_leteos_own_files_goes_entirely() {
     assert!(removed.data_removed);
     assert!(!data.exists(), "nothing of ours may be left behind");
 }
+
+/// A prefix as `install.sh` lays it out, plus the other two places a model can
+/// be: `bin/leteo`, `bin/model/`, `share/leteo/model/` and `data/model/`, every
+/// one holding the three files.
+fn installed_prefix(temp: &Path) -> (PathBuf, PathBuf) {
+    let bin = temp.join("prefix").join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let exe = bin.join("leteo");
+    std::fs::write(&exe, b"binary").unwrap();
+    let data = temp.join("data");
+    for directory in [
+        bin.join("model"),
+        temp.join("prefix/share/leteo/model"),
+        data.join("model"),
+    ] {
+        std::fs::create_dir_all(&directory).unwrap();
+        for (name, _) in crate::semantic::MODEL_FILES {
+            std::fs::write(directory.join(name), b"weights").unwrap();
+        }
+    }
+    (exe, data)
+}
+
+#[test]
+fn uninstall_takes_the_model_from_every_place_the_binary_looks() {
+    let temp = TempDir::new().unwrap();
+    let (exe, data) = installed_prefix(temp.path());
+    std::fs::write(temp.path().join("prefix/share/other"), b"not ours").unwrap();
+
+    let removed = uninstall_everything_for(&probe_in(temp.path()), &data, Some(exe.clone()));
+
+    for gone in [
+        exe.parent().unwrap().join("model"),
+        temp.path().join("prefix/share/leteo"),
+        data.join("model"),
+    ] {
+        assert!(!gone.exists(), "{} should be gone", gone.display());
+    }
+    assert!(
+        temp.path().join("prefix/share/other").exists(),
+        "share/ and what is in it are not Leteo's"
+    );
+    assert!(
+        !data.exists(),
+        "and a data directory whose only other tenant was the model goes whole"
+    );
+    assert!(removed.model_removed);
+    assert!(removed.complete(), "{removed:?}");
+    assert_eq!(
+        removed.model_files.len(),
+        3 * crate::semantic::MODEL_FILES.len(),
+        "{:?}",
+        removed.model_files
+    );
+}
+
+#[test]
+fn a_dry_run_leaves_the_model_where_it_is() {
+    let temp = TempDir::new().unwrap();
+    let (exe, data) = installed_prefix(temp.path());
+    let options = SetupOptions {
+        dry_run: true,
+        ..probe_in(temp.path())
+    };
+
+    let removed = uninstall_everything_for(&options, &data, Some(exe));
+
+    assert!(removed.model_files.is_empty());
+    assert!(data.join("model/config.json").exists());
+    assert!(
+        temp.path()
+            .join("prefix/share/leteo/model/config.json")
+            .exists()
+    );
+}
+
+#[test]
+fn a_model_directory_with_a_stranger_in_it_keeps_the_stranger_and_says_so() {
+    let temp = TempDir::new().unwrap();
+    let (exe, data) = installed_prefix(temp.path());
+    let beside = exe.parent().unwrap().join("model");
+    std::fs::write(beside.join("notes.txt"), b"mine").unwrap();
+
+    let removed = uninstall_everything_for(&probe_in(temp.path()), &data, Some(exe.clone()));
+
+    assert!(beside.join("notes.txt").exists());
+    assert!(!beside.join("config.json").exists(), "the named files go");
+    assert!(
+        exe.parent().unwrap().exists(),
+        "and the binary's directory stays"
+    );
+    assert!(
+        removed
+            .remaining
+            .iter()
+            .any(|line| line.contains("model") && line.contains("was kept")),
+        "{:?}",
+        removed.remaining
+    );
+}
+
+#[test]
+fn a_model_that_was_never_installed_is_not_a_failure_or_a_mention() {
+    let temp = TempDir::new().unwrap();
+    let bin = temp.path().join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let exe = bin.join("leteo");
+    std::fs::write(&exe, b"binary").unwrap();
+    let data = temp.path().join("data");
+    std::fs::create_dir_all(&data).unwrap();
+
+    let removed = uninstall_everything_for(&probe_in(temp.path()), &data, Some(exe));
+
+    assert!(removed.model_removed && removed.model_files.is_empty());
+    assert!(
+        removed.remaining.iter().all(|line| !line.contains("model")),
+        "{:?}",
+        removed.remaining
+    );
+}

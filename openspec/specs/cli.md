@@ -282,8 +282,12 @@ duties about what an answer explains.
     the same download when no location in [`search.md`](search.md) §15 holds a
     verified model, unless `semantic_search` is false or the run is a `--dry-run`,
     and never fails for want of it: it says on stderr what happened and what to
-    run. `uninstall` leaves the model, which is not part of any agent's
-    configuration.
+    run. `uninstall` removes the model from the places the binary looks
+    for it ([`search.md`](search.md) §15) except `LETEO_MODEL_DIR`, which names a
+    directory somebody else chose: the files of `MODEL_FILES` by name, then
+    `model/` and `share/leteo` if that left them empty, never `share/` or the
+    binary's directory. A directory that still holds something else is kept and
+    named in the report's `remaining`.
 
 ## Invariants
 

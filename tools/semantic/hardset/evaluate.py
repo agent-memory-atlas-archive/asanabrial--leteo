@@ -65,9 +65,11 @@ class Store:
     def __init__(self, root, name, members, binary):
         self.root = os.path.join(root, name)
         os.makedirs(self.root)
-        # mcpclient reads its directory at import, so each store gets a fresh copy
-        # of the module pointed at its own: a store that reused another's would
-        # be measuring whatever that one left in it.
+        # mcpclient reads BENCH_STATE and LETEO_BIN once, when it is imported, and
+        # `importlib.reload` runs that again in the same module object -- there is
+        # no second copy. What holds is the order: the servers below are spawned
+        # before the next store reloads it, and a spawned server has its directory
+        # in its own environment, so each store's servers keep pointing at its own.
         os.environ["BENCH_STATE"] = self.root
         os.environ["LETEO_BIN"] = binary
         import mcpclient
@@ -208,6 +210,15 @@ def main():
                          sem_rr=reciprocal_rank(sem["found"], q["target"]),
                          lex_empty=not lex["found"], sem_empty=not sem["found"],
                          added=sum(sem["marked"]), sem_ms=sem["ms"], lex_ms=lex["ms"]))
+
+    if not any(r["added"] for r in rows):
+        # Without the model the stage is off and the second pass is the first
+        # again, which this would report as the stage failing to help. That is a
+        # fact about the environment and not about the stage.
+        raise CannotRun("the semantic stage never ran: no answer in the semantic pass carries a result "
+                        "found by meaning. Either the model was not found or did not verify (point "
+                        "LETEO_MODEL_DIR at a directory holding it, e.g. assets/model), or "
+                        "`semantic_search` is off")
 
     groups = defaultdict(list)
     for r in rows:

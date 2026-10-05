@@ -14,6 +14,9 @@ set -eu
 INSTALL_DIR="${LETEO_INSTALL_DIR:-$HOME/.local/bin}"
 DATA_DIR="${LETEO_DATA_DIR:-$HOME/.leteo}"
 BINARY="$INSTALL_DIR/leteo"
+# The model's files by name, once. tests/model_names.rs checks this line against
+# MODEL_FILES in src/semantic/mod.rs, which a shell script cannot read.
+MODEL_FILES="config.json model.safetensors tokenizer.json.gz"
 
 YES=0
 DRY_RUN=0
@@ -83,6 +86,9 @@ if [ -d "$DATA_DIR" ] && [ ! -x "$BINARY" ]; then
     rm -f "$DATA_DIR"/leteo.db* "$DATA_DIR"/store.db* \
           "$DATA_DIR/settings.json" "$DATA_DIR/cloud.json"
     rm -rf "$DATA_DIR/hooks" "$DATA_DIR"/backup-*
+    # `leteo model install` writes here by default.
+    for file in $MODEL_FILES; do rm -f "$DATA_DIR/model/$file"; done
+    rmdir "$DATA_DIR/model" 2>/dev/null || true
     # Only if that emptied it. A note somebody filed beside the store keeps the
     # directory, and is reported rather than taken along with it.
     if [ -z "$(ls -A "$DATA_DIR" 2>/dev/null)" ]; then
@@ -101,9 +107,7 @@ fi
 rm -f "$INSTALL_DIR/uninstall.sh"
 # The model the installer put under `../share/leteo/model`, by name: three files
 # and the directory they were in, never `share/` itself.
-rm -f "$INSTALL_DIR/../share/leteo/model/config.json" \
-      "$INSTALL_DIR/../share/leteo/model/model.safetensors" \
-      "$INSTALL_DIR/../share/leteo/model/tokenizer.json.gz"
+for file in $MODEL_FILES; do rm -f "$INSTALL_DIR/../share/leteo/model/$file"; done
 rmdir "$INSTALL_DIR/../share/leteo/model" "$INSTALL_DIR/../share/leteo" 2>/dev/null || true
 
 say ""

@@ -489,13 +489,14 @@ before any of it.
 
     **What it costs**, measured on an Apple M-series machine:
 
-    - **The binary** is 17,206,608 bytes, against 15,730,544 with the installer
-      alone and 15,680,176 before either: the loader and its tokenizer, which the
-      linker keeps only where something loads the model, and none of the model. The bound on it is
-      20,000,000 bytes, decimal: that size and a margin of 2.8 MB (16%) for what
-      differs between platforms, applied by `tools/semantic/check_binary_size.py`
-      in the `search-quality` CI job. It bounds the code and is not tied to the
-      model, which is a file beside the binary.
+    - **The binary** is 17,206,608 bytes on arm64 macOS and 21,052,600 on
+      ubuntu-latest, which is the build CI checks; on macOS it was 15,730,544
+      with the installer alone and 15,680,176 before either. The difference is
+      the loader and its tokenizer, which the linker keeps only where something
+      loads the model, and none of the model. The bound on it is in
+      `tools/semantic/check_binary_size.py`, applied in the `search-quality` CI
+      job, and is set from the Linux measurement. It bounds the code and is not
+      tied to the model, which is a file beside the binary.
     - **The crate** is 1,076,718 bytes packaged, about 1 MB, and does not depend
       on the model's size, so a larger model can never again make it unpublishable.
       The model is 12.9 MB beside it.
@@ -585,11 +586,13 @@ before any of it.
   without the semantic stage
 - `tools/engram-bench/ratchet.py`, `floors.json` — the quality and reply-size
   floors and the ceiling on empty answers, run by the `search-quality` job in
-  `.github/workflows/ci.yml`, which also runs the hard-set evaluator and the
-  binary-size check
+  `.github/workflows/ci.yml`, which also runs the hard-set evaluator, the
+  binary-size check and `tools/semantic/check_install.sh`, which installs a
+  release-shaped archive and checks the binary finds its model and an uninstall
+  takes it away
 - `.github/workflows/release.yml`, `scripts/install.*`, `npm/bin/leteo.js` — how
   the model reaches an install: packed beside the binary in every archive, and
-  kept beside it when an installer or the npm wrapper unpacks. Nothing is
+  put where the binary looks when an installer or the npm wrapper unpacks: `../share/leteo/model` for `install.sh`, `model/` beside the executable for `install.ps1` and npm. Nothing is
   published for `leteo model install`, which reads the files committed at the tag
 
 ## Related

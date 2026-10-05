@@ -102,10 +102,11 @@ install -m 755 "$TEMP/$PACKAGE/leteo" "$INSTALL_DIR/leteo" 2>/dev/null \
     || { cp "$TEMP/$PACKAGE/leteo" "$INSTALL_DIR/leteo" && chmod 755 "$INSTALL_DIR/leteo"; }
 
 # The semantic search model, which the archive carries and the binary loads from a
-# file. `../share/leteo/model` from the binary is the second place it looks, and
-# the one that does not put a directory in the middle of `~/.local/bin`, which is
-# shared with every other tool. Without it the binary still works and searches by
-# words only, so a failure to copy it is said and does not stop the install.
+# file. `../share/leteo/model` from the binary is the third place it looks, after
+# `LETEO_MODEL_DIR` and `model/` beside the binary, and the one that does not put
+# a directory in the middle of `~/.local/bin`, which is shared with every other
+# tool. Without it the binary still works and searches by words only, so a
+# failure to copy it is said and does not stop the install.
 if [ -d "$TEMP/$PACKAGE/model" ]; then
     MODEL_DIR="$INSTALL_DIR/../share/leteo/model"
     mkdir -p "$MODEL_DIR" && cp "$TEMP/$PACKAGE/model/"* "$MODEL_DIR/" \

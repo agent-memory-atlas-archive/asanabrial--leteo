@@ -252,9 +252,9 @@ async function fetchBinary(version, target, installDir) {
 
   verify(archive, sums.toString("utf8"), archiveName);
 
-  // Unpack beside the destination and rename into place, so two `npx leteo`
-  // processes racing on a cold cache cannot leave a half-written binary that
-  // the loser then executes.
+  // Unpack beside the install directory and rename the directory into place, so
+  // two `npx leteo` processes racing on a cold cache cannot leave a half-written
+  // directory that the loser then executes from.
   //
   // The binary and the semantic search model go into one directory, renamed in
   // whole: the binary looks for `model/` beside itself, and a binary copied out
@@ -279,11 +279,29 @@ async function fetchBinary(version, target, installDir) {
     }
     // Another process may have finished first — two MCP clients starting at
     // once on a cold cache is an ordinary Tuesday. Its copy came through the
-    // same checksum, so it is the same bytes, and on Windows renaming over a
-    // binary that process is already executing fails with EPERM. Leaving the
-    // winner alone is both correct and the only thing that works.
-    if (!fs.existsSync(installDir)) {
-      fs.renameSync(ready, installDir);
+    // same checksum, so it is the same bytes. Renaming a directory onto a
+    // non-empty one fails (ENOTEMPTY or EEXIST on POSIX, EPERM on Windows)
+    // where renaming a file used to replace it, so that failure with the binary
+    // there afterwards is the winner's work and not ours to undo; the same
+    // errors with no binary there are real and are thrown.
+    const installed = path.join(installDir, target.exe);
+    // A directory without the binary is what a quarantined or deleted one
+    // leaves behind. Renaming onto it would fail on every run from then on, so
+    // it is cleared and the cache heals itself.
+    if (fs.existsSync(installDir) && !fs.existsSync(installed)) {
+      fs.rmSync(installDir, { recursive: true, force: true });
+    }
+    if (!fs.existsSync(installed)) {
+      try {
+        fs.renameSync(ready, installDir);
+      } catch (error) {
+        const lostTheRace =
+          ["ENOTEMPTY", "EEXIST", "EPERM"].includes(error.code) &&
+          fs.existsSync(installed);
+        if (!lostTheRace) {
+          throw error;
+        }
+      }
     }
   } finally {
     fs.rmSync(staging, { recursive: true, force: true });

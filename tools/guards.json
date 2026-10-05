@@ -1524,5 +1524,29 @@
     "file": "src/store/search.rs",
     "old": "                 WHERE o.topic_key = ?1 AND {visible}",
     "new": "                 WHERE o.topic_key = ?1 AND o.deleted_at IS NULL"
+  },
+  {
+    "name": "uninstall: the model is left where it was",
+    "file": "src/setup/removal/mod.rs",
+    "old": "    if !options.dry_run {\n        remove_model(&mut removed, data_dir);",
+    "new": "    if false {\n        remove_model(&mut removed, data_dir);"
+  },
+  {
+    "name": "uninstall: the share directory is cleared with `share/` itself",
+    "file": "src/setup/removal/mod.rs",
+    "old": ".is_some_and(|name| name == \"share\")\n        {\n            // A share/leteo that holds something else is somebody else's.\n            let _ = std::fs::remove_dir(parent);",
+    "new": ".is_some_and(|name| name == \"share\")\n        {\n            let _ = std::fs::remove_dir_all(parent.parent().unwrap());"
+  },
+  {
+    "name": "uninstall.sh: names a file fewer than the binary checks",
+    "file": "scripts/uninstall.sh",
+    "old": "MODEL_FILES=\"config.json model.safetensors tokenizer.json.gz\"",
+    "new": "MODEL_FILES=\"config.json model.safetensors\""
+  },
+  {
+    "name": "uninstall.ps1: names a file fewer than the binary checks",
+    "file": "scripts/uninstall.ps1",
+    "old": "@('config.json', 'model.safetensors', 'tokenizer.json.gz')",
+    "new": "@('config.json', 'model.safetensors')"
   }
 ]

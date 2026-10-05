@@ -282,9 +282,15 @@ cargo run --release --manifest-path tools/retrieval/Cargo.toml -- copy.db --pipe
   and reports the paired difference with a bootstrap 95% interval. It fails when the
   whole set's interval does not exclude zero, or any kind falls by more than 0.02. The
   questions are LLM-generated; `hardset/README.md` says by what and how they were
-  checked. The ratchet runs it in CI.
-- **`check_binary_size.py`** fails above its 20 MB budget (the binary is about 17 MB, and the model is a file beside it). Prove it by lowering the
+  checked. The `search-quality` CI job runs it.
+- **`check_binary_size.py`** fails above its byte budget (the binary is about 21 MB on Linux, and the model is a file beside it). Prove it by lowering the
   constant under the binary's size, running it, and restoring the file.
+- **`check_install.sh`** builds an archive laid out as `release.yml` packs one, installs it
+  with `scripts/install.sh` over `file://` into temporary directories, asks the installed
+  binary's `doctor` whether the model is verified, and removes Leteo three ways
+  (`leteo uninstall --yes`, `uninstall.sh` with and without the binary), failing if any
+  model file or directory is left or `share/` is taken. The `search-quality` CI job runs it.
+  Prove it by pointing `install.sh` at a different model directory and running it.
 - **`retrieval --pipeline`** asks the whole search over a *copy* of a store, with and
   without the stage. It cannot show the stage helping — those questions are built from
   their targets' words — only that it does no harm where it has nothing to do.

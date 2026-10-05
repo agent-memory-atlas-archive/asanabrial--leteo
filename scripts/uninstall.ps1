@@ -151,11 +151,19 @@ foreach ($own in @('leteo.exe', 'uninstall.ps1')) {
         Remove-Item -Force $path -ErrorAction SilentlyContinue
     }
 }
-# The model the installer put beside the binary, by name.
+# The model the installer put beside the binary, by name. The directory goes
+# only if that left it empty: Remove-Item prompts on a directory with anything
+# in it, and a prompt hangs an uninstall that nobody is watching.
+# tests/model_names.rs checks these names against MODEL_FILES.
+$modelDir = Join-Path $installDir 'model'
 foreach ($own in @('config.json', 'model.safetensors', 'tokenizer.json.gz')) {
-    Remove-Item -Force (Join-Path (Join-Path $installDir 'model') $own) -ErrorAction SilentlyContinue
+    Remove-Item -Force (Join-Path $modelDir $own) -ErrorAction SilentlyContinue
 }
-Remove-Item -Force (Join-Path $installDir 'model') -ErrorAction SilentlyContinue
+if ((Test-Path $modelDir) -and -not (Get-ChildItem -Force $modelDir)) {
+    Remove-Item -Force $modelDir -ErrorAction SilentlyContinue
+} elseif (Test-Path $modelDir) {
+    Say "  $modelDir was kept: it holds files Leteo did not put there"
+}
 if ((Test-Path $installDir) -and -not (Get-ChildItem -Force $installDir)) {
     Remove-Item -Force $installDir -ErrorAction SilentlyContinue
 } elseif (Test-Path $installDir) {

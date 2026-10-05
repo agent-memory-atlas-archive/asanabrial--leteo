@@ -256,7 +256,7 @@ leteo uninstall --yes
 ```
 
 The first reports what would go and changes nothing. The second carries it out:
-Leteo leaves every agent it configured, and then the machine. On Windows it also
+Leteo leaves every agent it configured, and then the machine, search model included. On Windows it also
 registers itself in Installed apps, so it can be removed from there instead.
 
 To leave one agent and stay in the rest:

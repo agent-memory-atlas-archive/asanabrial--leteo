@@ -130,9 +130,13 @@ def judge(got, floors):
     # counts are printed, because a kind of eight questions moves by one.
     for kind, ceiling in floors.get("empty", {}).items():
         value = got["empty"].get(kind)
-        if value is not None and value > ceiling:
+        if value is None:
+            # A ceiling on something that was not measured would pass for ever.
+            raise CannotRun(f"floors.json bounds empty answers for {kind!r}, which was not measured "
+                            f"(measured: {sorted(got['empty'])})")
+        if value > ceiling:
             breaches.append(f"empty answers {kind}: measured {value}, ceiling {ceiling}")
-        elif value is not None and value < ceiling:
+        elif value < ceiling:
             raisable.append(f"empty answers {kind}: measured {value} is below its ceiling {ceiling}")
     for name, ceiling in floors["bytes"].items():
         value = got["bytes"].get(name)

@@ -136,10 +136,10 @@ jobs:
           # says nothing about it — the install still works, so nobody learns
           # that removing it quietly stopped being possible from Settings.
           cp scripts/uninstall.ps1 scripts/uninstall.sh "dist/$package/"
-          # The semantic search model, beside the executable where the binary
-          # looks first, and the licence text it asks for. Verified by the
-          # archive's SHA256SUMS like everything else in it, and again by the
-          # binary against the hashes it was built with.
+          # The semantic search model, beside the executable, the first place
+          # the binary looks there, and the licence text it asks for. Verified
+          # by the archive's SHA256SUMS like everything else in it, and again
+          # by the binary against the hashes it was built with.
           cp -R assets/model "dist/$package/model"
           cp -R LICENSES "dist/$package/LICENSES"
           if [[ "${{ matrix.archive }}" == "zip" ]]; then

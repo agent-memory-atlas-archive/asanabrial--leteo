@@ -15,7 +15,8 @@ All notable changes to Leteo are documented in this file.
   tag of its own version (or
   `--from <directory>` with no network), which `leteo setup` runs, after the agent is
   configured, when it finds none. `leteo doctor` reports
-  whether the model is verified, missing or wrong. The binary grows by 50 KB for
+  whether the model is verified, missing or wrong, and `leteo uninstall` removes it from
+  every place on that list but `LETEO_MODEL_DIR`. The binary grows by 50 KB for
   the installer and the crate stays about 1 MB (#124).
 
 - **A search the words cannot answer now goes on to look by meaning.** A seventh
@@ -29,7 +30,7 @@ All notable changes to Leteo are documented in this file.
   2,028 LLM-generated questions that do not use their target's words it adds .101 MRR
   [.088, .114]. The model is the file the entry above describes; a binary that cannot verify it
   searches by words only, and `doctor` says why. The model runtime adds 1.5 MB to
-  the binary, which CI bounds at 20 MB; memory while it runs is in `search.md` §15. Turn it off with `"semantic_search": false`
+  the binary, which CI bounds; memory while it runs is in `search.md` §15. Turn it off with `"semantic_search": false`
   in `settings.json`. Basque is the weak language: the model was not trained on it
   (#124).
 
