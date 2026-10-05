@@ -289,8 +289,12 @@ cargo run --release --manifest-path tools/retrieval/Cargo.toml -- copy.db --pipe
   with `scripts/install.sh` over `file://` into temporary directories, asks the installed
   binary's `doctor` whether the model is verified, and removes Leteo three ways
   (`leteo uninstall --yes`, `uninstall.sh` with and without the binary), failing if any
-  model file or directory is left or `share/` is taken. The `search-quality` CI job runs it.
-  Prove it by pointing `install.sh` at a different model directory and running it.
+  model file or directory is left or `share/` is taken. It then runs the npm wrapper against the
+  same archive over a local HTTPS endpoint: a cold install, a cache whose binary was deleted, and
+  two runs at once of each. Every command runs under `env -i`, so no variable of the caller's
+  (`LETEO_DATABASE` included) reaches the binary. It needs `node`, `openssl` and `python3`.
+  The `search-quality` CI job runs it. Prove it by pointing `install.sh` at a different model
+  directory and running it, or by taking the heal out of `npm/bin/leteo.js`.
 - **`retrieval --pipeline`** asks the whole search over a *copy* of a store, with and
   without the stage. It cannot show the stage helping — those questions are built from
   their targets' words — only that it does no harm where it has nothing to do.

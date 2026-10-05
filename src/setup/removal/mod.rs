@@ -24,7 +24,8 @@ pub struct Removal {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub binary: Option<PathBuf>,
     pub binary_removed: bool,
-    /// The model files taken out of the places the binary looks for them.
+    /// The model files taken out of the places the binary looks for them; on a
+    /// dry run, the ones that would be.
     pub model_files: Vec<PathBuf>,
     /// False when a model file was found and could not be deleted; a model that
     /// was never installed is not a failure.
@@ -92,9 +93,7 @@ fn uninstall_everything_for(
 
     // Before the data directory, because `<data dir>/model` is one of the places
     // and would otherwise keep the directory as something foreign.
-    if !options.dry_run {
-        remove_model(&mut removed, data_dir);
-    }
+    remove_model(&mut removed, data_dir);
 
     if !options.dry_run && data_dir.exists() {
         remove_data_directory(&mut removed, data_dir);
@@ -177,16 +176,72 @@ fn remove_data_directory(removed: &mut Removal, data_dir: &Path) {
 /// itself reads -- and the files are [`crate::semantic::MODEL_FILES`], so an
 /// installer that puts the model somewhere the binary finds it is also somewhere
 /// this takes it from. The variable is left out because it names a directory
-/// somebody else chose and may share with other things. Files are removed by
-/// name, then a directory only if that left it empty: `model/`, and
-/// `share/leteo` above it, never `share/`.
+/// somebody else chose and may share with other things.
+///
+/// A file goes only if it is a regular file whose SHA-256 is its pin: a name is
+/// not proof that Leteo wrote it, and `data/model` or `bin/model` is somewhere a
+/// person may keep their own `config.json`. A file with the name and another
+/// hash is kept and named, which includes the model an older release installed;
+/// reported rather than deleted is the intended trade. A location that is itself
+/// a symbolic link is not followed, for the same reason. Then a directory only
+/// if that left it empty: `model/`, and `share/leteo` above it, never `share/`.
+///
+/// On a dry run nothing is touched and `model_files` is what would go.
 fn remove_model(removed: &mut Removal, data_dir: &Path) {
+    let dry_run = removed.dry_run;
     let mut failed = false;
+    // The binary's own directory is listed twice when it is reached through a
+    // link, once resolved and once not, and each file would otherwise be judged
+    // and reported under both spellings.
+    let mut judged = std::collections::HashSet::new();
     for directory in crate::semantic::locations_for(removed.binary.as_deref(), data_dir, None) {
+        if std::fs::symlink_metadata(&directory).is_ok_and(|meta| meta.file_type().is_symlink()) {
+            if has_model_named_entry(&directory) {
+                removed.remaining.push(format!(
+                    "{} was kept: it is a symbolic link, and Leteo does not delete through one",
+                    directory.display()
+                ));
+            }
+            continue;
+        }
+        let real_directory = directory
+            .canonicalize()
+            .unwrap_or_else(|_| directory.clone());
         let mut took_any = false;
-        for (name, _) in crate::semantic::MODEL_FILES {
+        for (name, pin) in crate::semantic::MODEL_FILES {
             let file = directory.join(name);
-            if std::fs::symlink_metadata(&file).is_err() {
+            let Ok(meta) = std::fs::symlink_metadata(&file) else {
+                continue;
+            };
+            if !judged.insert(real_directory.join(name)) {
+                continue;
+            }
+            if !meta.is_file() {
+                removed.remaining.push(format!(
+                    "{} was kept: it is not a regular file",
+                    file.display()
+                ));
+                continue;
+            }
+            match hashes_to(&file, pin) {
+                Ok(true) => {}
+                Ok(false) => {
+                    removed.remaining.push(format!(
+                        "{} was kept: it is not the model this build installs",
+                        file.display()
+                    ));
+                    continue;
+                }
+                Err(error) => {
+                    failed = true;
+                    removed
+                        .remaining
+                        .push(format!("{}: could not be read: {error}", file.display()));
+                    continue;
+                }
+            }
+            if dry_run {
+                removed.model_files.push(file);
                 continue;
             }
             match std::fs::remove_file(&file) {
@@ -202,28 +257,70 @@ fn remove_model(removed: &mut Removal, data_dir: &Path) {
                 }
             }
         }
-        if !took_any {
-            continue;
-        }
-        if std::fs::remove_dir(&directory).is_err() && directory.exists() {
-            removed.remaining.push(format!(
-                "{} was kept: it holds files that Leteo did not put there",
-                directory.display()
-            ));
-            continue;
-        }
-        if let Some(parent) = directory.parent()
-            && parent.file_name().is_some_and(|name| name == "leteo")
-            && parent
-                .parent()
-                .and_then(Path::file_name)
-                .is_some_and(|name| name == "share")
-        {
-            // A share/leteo that holds something else is somebody else's.
-            let _ = std::fs::remove_dir(parent);
+        if took_any && remove_if_empty(removed, &directory) {
+            // A share/leteo that holds something else is somebody else's, and
+            // is named as such.
+            if let Some(parent) = directory.parent()
+                && parent.file_name().is_some_and(|name| name == "leteo")
+                && parent
+                    .parent()
+                    .and_then(Path::file_name)
+                    .is_some_and(|name| name == "share")
+            {
+                remove_if_empty(removed, parent);
+            }
         }
     }
     removed.model_removed = !failed;
+}
+
+/// Whether a directory, reached through whatever it is, holds a model file's name.
+fn has_model_named_entry(directory: &Path) -> bool {
+    crate::semantic::MODEL_FILES
+        .iter()
+        .any(|(name, _)| std::fs::symlink_metadata(directory.join(name)).is_ok())
+}
+
+fn hashes_to(file: &Path, pin: &str) -> std::io::Result<bool> {
+    use sha2::{Digest, Sha256};
+    Ok(hex::encode(Sha256::digest(std::fs::read(file)?)) == pin)
+}
+
+/// Removes a directory that is empty, and says why one that stayed did.
+///
+/// "Holds files Leteo did not put there" is said only of a directory that does
+/// hold something; a permission or a busy handle on an empty one is reported as
+/// the I/O error it is, so nobody goes looking for a stranger who is not there.
+/// Returns whether the directory is gone.
+fn remove_if_empty(removed: &mut Removal, directory: &Path) -> bool {
+    let error = match std::fs::remove_dir(directory) {
+        Ok(()) => return true,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return true,
+        Err(error) => error,
+    };
+    let strangers: Vec<String> = std::fs::read_dir(directory)
+        .map(|entries| {
+            entries
+                .flatten()
+                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                .collect()
+        })
+        .unwrap_or_default();
+    removed.remaining.push(if strangers.is_empty() {
+        format!("{}: {error}", directory.display())
+    } else {
+        format!(
+            "{} was kept: it holds {} that Leteo did not put there ({})",
+            directory.display(),
+            if strangers.len() == 1 {
+                "a file"
+            } else {
+                "files"
+            },
+            strangers.join(", ")
+        )
+    });
+    false
 }
 
 #[cfg(not(windows))]

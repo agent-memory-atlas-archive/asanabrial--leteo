@@ -23,6 +23,9 @@ LIMIT_BYTES = 24_000_000
 
 
 def main() -> int:
+    if len(sys.argv) != 2:
+        print("usage: check_binary_size.py <path-to-leteo>")
+        return 2
     path = sys.argv[1]
     if not os.path.isfile(path):
         print(f"binary size check could not run: {path} is not a file")

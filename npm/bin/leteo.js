@@ -281,24 +281,34 @@ async function fetchBinary(version, target, installDir) {
     // once on a cold cache is an ordinary Tuesday. Its copy came through the
     // same checksum, so it is the same bytes. Renaming a directory onto a
     // non-empty one fails (ENOTEMPTY or EEXIST on POSIX, EPERM on Windows)
-    // where renaming a file used to replace it, so that failure with the binary
-    // there afterwards is the winner's work and not ours to undo; the same
-    // errors with no binary there are real and are thrown.
+    // where renaming a file used to replace it.
+    //
+    // So the question after any failure below is not which error it was but
+    // whether the binary is there now: if it is, somebody's complete install
+    // is in place and that is the outcome wanted; if it is not, the error is
+    // real and is thrown.
     const installed = path.join(installDir, target.exe);
     // A directory without the binary is what a quarantined or deleted one
     // leaves behind. Renaming onto it would fail on every run from then on, so
-    // it is cleared and the cache heals itself.
+    // it is cleared and the cache heals itself. Two processes can both see the
+    // damage, and the second one's clearing can meet the first one's fresh
+    // install: on Windows it throws on the executable the first is already
+    // running, on POSIX it removes it. The first is tolerated here, and the
+    // second is why `main` looks for the binary again after this returns.
     if (fs.existsSync(installDir) && !fs.existsSync(installed)) {
-      fs.rmSync(installDir, { recursive: true, force: true });
+      try {
+        fs.rmSync(installDir, { recursive: true, force: true });
+      } catch (error) {
+        if (!fs.existsSync(installed)) {
+          throw error;
+        }
+      }
     }
     if (!fs.existsSync(installed)) {
       try {
         fs.renameSync(ready, installDir);
       } catch (error) {
-        const lostTheRace =
-          ["ENOTEMPTY", "EEXIST", "EPERM"].includes(error.code) &&
-          fs.existsSync(installed);
-        if (!lostTheRace) {
+        if (!fs.existsSync(installed)) {
           throw error;
         }
       }
@@ -319,7 +329,10 @@ async function main() {
   const installDir = path.join(cacheDirectory(), `${tag}-${target.triple}`);
   const binary = path.join(installDir, target.exe);
 
-  if (!fs.existsSync(binary)) {
+  // More than once because a concurrent run healing a damaged directory can
+  // remove an install this one has just finished; the second attempt finds the
+  // directory whole or makes it so.
+  for (let attempt = 0; attempt < 3 && !fs.existsSync(binary); attempt += 1) {
     await fetchBinary(tag, target, installDir);
   }
 

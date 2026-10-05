@@ -33,6 +33,9 @@ $installDir = if ($env:LETEO_INSTALL_DIR) { $env:LETEO_INSTALL_DIR } else { "$en
 $dataDir = if ($env:LETEO_DATA_DIR) { $env:LETEO_DATA_DIR } else { Join-Path $HOME '.leteo' }
 $registryKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Leteo'
 $binary = Join-Path $installDir 'leteo.exe'
+# The model's files by name, once. tests/model_names.rs checks this line against
+# MODEL_FILES in src/semantic/mod.rs, which a script cannot read.
+$modelFiles = @('config.json', 'model.safetensors', 'tokenizer.json.gz')
 
 function Say($text) { Write-Host $text }
 
@@ -54,6 +57,7 @@ Say ""
 Say "  every agent it was configured in  (MCP server, hooks, memory protocol)"
 Say "  $dataDir"
 Say "      $memories memories, settings, and any backups kept beside them"
+Say "  the semantic search model, if one was installed ($installDir\model and $dataDir\model)"
 Say "  $installDir"
 Say "  the PATH entry the installer added"
 Say ""
@@ -108,6 +112,14 @@ if ((Test-Path $dataDir) -and -not (Test-Path $binary)) {
         Remove-Item -Force -Recurse (Join-Path $dataDir $own) -ErrorAction SilentlyContinue
     }
     Remove-Item -Force -Recurse (Join-Path $dataDir 'hooks') -ErrorAction SilentlyContinue
+    # `leteo model install` writes here by default.
+    $dataModel = Join-Path $dataDir 'model'
+    foreach ($own in $modelFiles) {
+        Remove-Item -Force (Join-Path $dataModel $own) -ErrorAction SilentlyContinue
+    }
+    if ((Test-Path $dataModel) -and -not (Get-ChildItem -Force $dataModel)) {
+        Remove-Item -Force $dataModel -ErrorAction SilentlyContinue
+    }
     if (-not (Get-ChildItem -Force $dataDir)) {
         Remove-Item -Force $dataDir -ErrorAction SilentlyContinue
     } else {
@@ -154,9 +166,8 @@ foreach ($own in @('leteo.exe', 'uninstall.ps1')) {
 # The model the installer put beside the binary, by name. The directory goes
 # only if that left it empty: Remove-Item prompts on a directory with anything
 # in it, and a prompt hangs an uninstall that nobody is watching.
-# tests/model_names.rs checks these names against MODEL_FILES.
 $modelDir = Join-Path $installDir 'model'
-foreach ($own in @('config.json', 'model.safetensors', 'tokenizer.json.gz')) {
+foreach ($own in $modelFiles) {
     Remove-Item -Force (Join-Path $modelDir $own) -ErrorAction SilentlyContinue
 }
 if ((Test-Path $modelDir) -and -not (Get-ChildItem -Force $modelDir)) {

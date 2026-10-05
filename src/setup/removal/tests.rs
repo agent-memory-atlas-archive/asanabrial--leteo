@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use tempfile::TempDir;
 
@@ -21,6 +21,17 @@ fn probe_in(directory: &Path) -> SetupOptions {
     }
 }
 
+/// A stand-in for the running executable, inside `temp`, so that what is looked
+/// for beside it and under `../share` is the test's own directory and not the
+/// test binary's.
+fn fake_exe(temp: &Path) -> Option<PathBuf> {
+    let bin = temp.join("prefix").join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let exe = bin.join("leteo");
+    std::fs::write(&exe, b"binary").unwrap();
+    Some(exe)
+}
+
 #[test]
 fn a_dry_run_removes_nothing_at_all() {
     let temp = TempDir::new().unwrap();
@@ -32,7 +43,7 @@ fn a_dry_run_removes_nothing_at_all() {
         dry_run: true,
         ..probe_in(temp.path())
     };
-    let removed = uninstall_everything(&options, &data);
+    let removed = uninstall_everything_for(&options, &data, fake_exe(temp.path()));
 
     assert!(removed.dry_run);
     assert!(!removed.data_dir_removed);
@@ -50,7 +61,7 @@ fn every_agent_is_visited_rather_than_only_the_configured_ones() {
     let data = temp.path().join("data");
     std::fs::create_dir_all(&data).unwrap();
 
-    let removed = uninstall_everything(&probe_in(temp.path()), &data);
+    let removed = uninstall_everything_for(&probe_in(temp.path()), &data, fake_exe(temp.path()));
 
     assert_eq!(
         removed.agents.len(),
@@ -87,7 +98,7 @@ fn the_data_directory_goes_and_the_count_is_taken_before_it_does() {
     }
     drop(store);
 
-    let removed = uninstall_everything(&probe_in(temp.path()), &data);
+    let removed = uninstall_everything_for(&probe_in(temp.path()), &data, fake_exe(temp.path()));
 
     assert_eq!(removed.memories, Some(3));
     assert!(removed.data_dir_removed);
@@ -101,7 +112,7 @@ fn a_store_that_cannot_be_counted_does_not_stop_the_uninstall() {
     std::fs::create_dir_all(&data).unwrap();
     std::fs::write(data.join("leteo.db"), b"this is not a database").unwrap();
 
-    let removed = uninstall_everything(&probe_in(temp.path()), &data);
+    let removed = uninstall_everything_for(&probe_in(temp.path()), &data, fake_exe(temp.path()));
 
     assert_eq!(removed.memories, None, "unreadable is not zero");
     assert!(removed.data_dir_removed, "and it still goes");
@@ -110,7 +121,11 @@ fn a_store_that_cannot_be_counted_does_not_stop_the_uninstall() {
 #[test]
 fn an_absent_data_directory_is_not_a_failure() {
     let temp = TempDir::new().unwrap();
-    let removed = uninstall_everything(&probe_in(temp.path()), &temp.path().join("gone"));
+    let removed = uninstall_everything_for(
+        &probe_in(temp.path()),
+        &temp.path().join("gone"),
+        fake_exe(temp.path()),
+    );
     assert_eq!(removed.memories, None);
     assert!(removed.remaining.iter().all(|line| !line.contains("gone")));
 }
@@ -122,7 +137,7 @@ fn windows_reports_the_binary_instead_of_pretending_it_removed_it() {
     let data = temp.path().join("data");
     std::fs::create_dir_all(&data).unwrap();
 
-    let removed = uninstall_everything(&probe_in(temp.path()), &data);
+    let removed = uninstall_everything_for(&probe_in(temp.path()), &data, fake_exe(temp.path()));
 
     assert!(
         !removed.binary_removed,
@@ -152,7 +167,7 @@ fn a_file_nobody_here_created_is_not_taken_with_the_rest() {
     std::fs::create_dir_all(data.join("scratch")).unwrap();
     std::fs::write(data.join("scratch").join("thing.txt"), b"also mine").unwrap();
 
-    let removed = uninstall_everything(&probe_in(temp.path()), &data);
+    let removed = uninstall_everything_for(&probe_in(temp.path()), &data, fake_exe(temp.path()));
 
     assert!(!data.join("leteo.db").exists(), "the store has to go");
     assert!(!data.join("leteo.db-wal").exists(), "and its sidecars");
@@ -196,39 +211,60 @@ fn a_data_directory_of_only_leteos_own_files_goes_entirely() {
     std::fs::write(data.join("cloud.json"), b"{}").unwrap();
     std::fs::write(data.join("backup-20260802.db"), b"copy").unwrap();
 
-    let removed = uninstall_everything(&probe_in(temp.path()), &data);
+    let removed = uninstall_everything_for(&probe_in(temp.path()), &data, fake_exe(temp.path()));
 
     assert!(removed.data_dir_removed, "{removed:?}");
     assert!(removed.data_removed);
     assert!(!data.exists(), "nothing of ours may be left behind");
 }
 
+/// One model file with its real content, hard-linked from the checkout where
+/// the filesystem allows and copied where it does not. Deleting the link leaves
+/// the checkout's file alone. The hash check means a stand-in cannot be junk.
+fn put_model_file(from: &Path, into: &Path, name: &str) {
+    let target = into.join(name);
+    if std::fs::hard_link(from.join(name), &target).is_err() {
+        std::fs::copy(from.join(name), &target).unwrap();
+    }
+}
+
+fn put_model(from: &Path, directory: &Path) {
+    std::fs::create_dir_all(directory).unwrap();
+    for (name, _) in crate::semantic::MODEL_FILES {
+        put_model_file(from, directory, name);
+    }
+}
+
 /// A prefix as `install.sh` lays it out, plus the other two places a model can
 /// be: `bin/leteo`, `bin/model/`, `share/leteo/model/` and `data/model/`, every
 /// one holding the three files.
-fn installed_prefix(temp: &Path) -> (PathBuf, PathBuf) {
-    let bin = temp.join("prefix").join("bin");
-    std::fs::create_dir_all(&bin).unwrap();
-    let exe = bin.join("leteo");
-    std::fs::write(&exe, b"binary").unwrap();
+fn installed_prefix(temp: &Path, model: &Path) -> (PathBuf, PathBuf) {
+    let exe = fake_exe(temp).unwrap();
     let data = temp.join("data");
     for directory in [
-        bin.join("model"),
+        exe.parent().unwrap().join("model"),
         temp.join("prefix/share/leteo/model"),
         data.join("model"),
     ] {
-        std::fs::create_dir_all(&directory).unwrap();
-        for (name, _) in crate::semantic::MODEL_FILES {
-            std::fs::write(directory.join(name), b"weights").unwrap();
-        }
+        put_model(model, &directory);
     }
     (exe, data)
 }
 
+fn remaining_mentions(removed: &Removal, needles: &[&str]) -> bool {
+    removed
+        .remaining
+        .iter()
+        .any(|line| needles.iter().all(|needle| line.contains(needle)))
+}
+
 #[test]
 fn uninstall_takes_the_model_from_every_place_the_binary_looks() {
+    let Some(model) = crate::semantic::tests::needs_model!() else {
+        return;
+    };
     let temp = TempDir::new().unwrap();
-    let (exe, data) = installed_prefix(temp.path());
+    let (exe, data) = installed_prefix(temp.path(), &model);
     std::fs::write(temp.path().join("prefix/share/other"), b"not ours").unwrap();
 
     let removed = uninstall_everything_for(&probe_in(temp.path()), &data, Some(exe.clone()));
@@ -256,12 +292,19 @@ fn uninstall_takes_the_model_from_every_place_the_binary_looks() {
         "{:?}",
         removed.model_files
     );
+    assert!(
+        model.join("model.safetensors").exists(),
+        "removing a link to the checkout's file is not removing the file"
+    );
 }
 
 #[test]
-fn a_dry_run_leaves_the_model_where_it_is() {
+fn a_dry_run_lists_the_model_and_leaves_it_where_it_is() {
+    let Some(model) = crate::semantic::tests::needs_model!() else {
+        return;
+    };
     let temp = TempDir::new().unwrap();
-    let (exe, data) = installed_prefix(temp.path());
+    let (exe, data) = installed_prefix(temp.path(), &model);
     let options = SetupOptions {
         dry_run: true,
         ..probe_in(temp.path())
@@ -269,19 +312,33 @@ fn a_dry_run_leaves_the_model_where_it_is() {
 
     let removed = uninstall_everything_for(&options, &data, Some(exe));
 
-    assert!(removed.model_files.is_empty());
+    assert_eq!(
+        removed.model_files.len(),
+        3 * crate::semantic::MODEL_FILES.len(),
+        "each file once, whatever the spellings of its directory: {:?}",
+        removed.model_files
+    );
     assert!(data.join("model/config.json").exists());
     assert!(
         temp.path()
             .join("prefix/share/leteo/model/config.json")
             .exists()
     );
+    assert!(
+        temp.path()
+            .join("prefix/bin/model/model.safetensors")
+            .exists(),
+        "and nothing was deleted"
+    );
 }
 
 #[test]
 fn a_model_directory_with_a_stranger_in_it_keeps_the_stranger_and_says_so() {
+    let Some(model) = crate::semantic::tests::needs_model!() else {
+        return;
+    };
     let temp = TempDir::new().unwrap();
-    let (exe, data) = installed_prefix(temp.path());
+    let (exe, data) = installed_prefix(temp.path(), &model);
     let beside = exe.parent().unwrap().join("model");
     std::fs::write(beside.join("notes.txt"), b"mine").unwrap();
 
@@ -294,10 +351,187 @@ fn a_model_directory_with_a_stranger_in_it_keeps_the_stranger_and_says_so() {
         "and the binary's directory stays"
     );
     assert!(
-        removed
-            .remaining
-            .iter()
-            .any(|line| line.contains("model") && line.contains("was kept")),
+        remaining_mentions(&removed, &["model", "was kept", "notes.txt"]),
+        "{:?}",
+        removed.remaining
+    );
+}
+
+#[test]
+fn a_file_with_a_model_name_and_other_content_is_kept_and_named() {
+    let Some(model) = crate::semantic::tests::needs_model!() else {
+        return;
+    };
+    let temp = TempDir::new().unwrap();
+    let (exe, data) = installed_prefix(temp.path(), &model);
+    let theirs = data.join("model").join("config.json");
+    std::fs::remove_file(&theirs).unwrap();
+    std::fs::write(&theirs, b"{\"somebody\": \"else\"}").unwrap();
+
+    let removed = uninstall_everything_for(&probe_in(temp.path()), &data, Some(exe));
+
+    assert_eq!(
+        std::fs::read(&theirs).unwrap(),
+        b"{\"somebody\": \"else\"}",
+        "a name is not a reason to delete"
+    );
+    assert!(
+        remaining_mentions(
+            &removed,
+            &["config.json", "not the model this build installs"]
+        ),
+        "{:?}",
+        removed.remaining
+    );
+    assert!(
+        !data.join("model/model.safetensors").exists(),
+        "the files that are the model still go"
+    );
+    assert!(
+        removed.complete(),
+        "kept on purpose is not a failed removal: {removed:?}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_model_directory_that_is_a_symbolic_link_is_not_followed() {
+    let Some(model) = crate::semantic::tests::needs_model!() else {
+        return;
+    };
+    let temp = TempDir::new().unwrap();
+    let (exe, data) = installed_prefix(temp.path(), &model);
+    let beside = exe.parent().unwrap().join("model");
+    let elsewhere = temp.path().join("somebody-elses-model");
+    std::fs::remove_dir_all(&beside).unwrap();
+    put_model(&model, &elsewhere);
+    std::os::unix::fs::symlink(&elsewhere, &beside).unwrap();
+
+    let removed = uninstall_everything_for(&probe_in(temp.path()), &data, Some(exe));
+
+    for (name, _) in crate::semantic::MODEL_FILES {
+        assert!(
+            elsewhere.join(name).exists(),
+            "{name} behind the link must survive"
+        );
+    }
+    assert!(beside.exists(), "and so must the link");
+    assert!(
+        remaining_mentions(&removed, &["symbolic link"]),
+        "{:?}",
+        removed.remaining
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_file_that_cannot_be_deleted_makes_the_removal_incomplete() {
+    use std::os::unix::fs::PermissionsExt;
+    let Some(model) = crate::semantic::tests::needs_model!() else {
+        return;
+    };
+    let temp = TempDir::new().unwrap();
+    let (exe, data) = installed_prefix(temp.path(), &model);
+    let locked = data.join("model");
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o555)).unwrap();
+    // root deletes out of a read-only directory, so there is nothing to provoke.
+    let provokable = std::fs::write(locked.join("probe"), b"").is_err();
+
+    let removed = uninstall_everything_for(&probe_in(temp.path()), &data, Some(exe));
+
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+    if !provokable {
+        eprintln!("skipped: this user can write into a read-only directory");
+        return;
+    }
+    assert!(!removed.model_removed, "{removed:?}");
+    assert!(
+        !removed.complete(),
+        "a model that could not be taken is not a clean uninstall"
+    );
+    assert!(
+        remaining_mentions(&removed, &["data/model/config.json"]),
+        "{:?}",
+        removed.remaining
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_model_file_that_is_a_symbolic_link_is_not_a_regular_file_and_stays() {
+    let Some(model) = crate::semantic::tests::needs_model!() else {
+        return;
+    };
+    let temp = TempDir::new().unwrap();
+    let (exe, data) = installed_prefix(temp.path(), &model);
+    let link = data.join("model").join("model.safetensors");
+    std::fs::remove_file(&link).unwrap();
+    std::os::unix::fs::symlink(model.join("model.safetensors"), &link).unwrap();
+
+    let removed = uninstall_everything_for(&probe_in(temp.path()), &data, Some(exe));
+
+    assert!(
+        std::fs::symlink_metadata(&link).is_ok(),
+        "only a regular file is Leteo's to delete"
+    );
+    assert!(
+        remaining_mentions(&removed, &["model.safetensors", "not a regular file"]),
+        "{:?}",
+        removed.remaining
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn an_empty_model_directory_that_cannot_be_removed_is_not_blamed_on_a_stranger() {
+    use std::os::unix::fs::PermissionsExt;
+    let Some(model) = crate::semantic::tests::needs_model!() else {
+        return;
+    };
+    let temp = TempDir::new().unwrap();
+    let (exe, data) = installed_prefix(temp.path(), &model);
+    // The files can go (their directory is writable) but the directory cannot,
+    // because its parent is not.
+    std::fs::set_permissions(&data, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let provokable = std::fs::create_dir(data.join("probe")).is_err();
+
+    let removed = uninstall_everything_for(&probe_in(temp.path()), &data, Some(exe));
+
+    std::fs::set_permissions(&data, std::fs::Permissions::from_mode(0o755)).unwrap();
+    if !provokable {
+        eprintln!("skipped: this user can write into a read-only directory");
+        return;
+    }
+    let line = removed
+        .remaining
+        .iter()
+        .find(|line| line.starts_with(&data.join("model").display().to_string()))
+        .unwrap_or_else(|| panic!("the model directory is named: {:?}", removed.remaining));
+    assert!(
+        !line.contains("did not put there"),
+        "nothing foreign is in it, and the report must not say so: {line}"
+    );
+}
+
+#[test]
+fn a_share_leteo_with_something_else_in_it_is_kept_and_named() {
+    let Some(model) = crate::semantic::tests::needs_model!() else {
+        return;
+    };
+    let temp = TempDir::new().unwrap();
+    let (exe, data) = installed_prefix(temp.path(), &model);
+    let theirs = temp.path().join("prefix/share/leteo/docs");
+    std::fs::write(&theirs, b"mine").unwrap();
+
+    let removed = uninstall_everything_for(&probe_in(temp.path()), &data, Some(exe));
+
+    assert!(theirs.exists());
+    assert!(
+        !temp.path().join("prefix/share/leteo/model").exists(),
+        "the model directory it emptied still goes"
+    );
+    assert!(
+        remaining_mentions(&removed, &["share", "leteo", "was kept", "docs"]),
         "{:?}",
         removed.remaining
     );
@@ -306,14 +540,11 @@ fn a_model_directory_with_a_stranger_in_it_keeps_the_stranger_and_says_so() {
 #[test]
 fn a_model_that_was_never_installed_is_not_a_failure_or_a_mention() {
     let temp = TempDir::new().unwrap();
-    let bin = temp.path().join("bin");
-    std::fs::create_dir_all(&bin).unwrap();
-    let exe = bin.join("leteo");
-    std::fs::write(&exe, b"binary").unwrap();
+    let exe = fake_exe(temp.path());
     let data = temp.path().join("data");
     std::fs::create_dir_all(&data).unwrap();
 
-    let removed = uninstall_everything_for(&probe_in(temp.path()), &data, Some(exe));
+    let removed = uninstall_everything_for(&probe_in(temp.path()), &data, exe);
 
     assert!(removed.model_removed && removed.model_files.is_empty());
     assert!(

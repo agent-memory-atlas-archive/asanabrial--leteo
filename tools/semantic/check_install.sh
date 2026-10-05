@@ -13,12 +13,18 @@
 # and asserts that no model file or directory it created is left, and that
 # `share/` is.
 #
-# Unix only, by `install.sh`'s own limit. The npm wrapper and `install.ps1` are
-# not covered here.
+# Unix only, by `install.sh`'s own limit. `install.ps1` is not covered here. The
+# npm wrapper is, in the last section: it is served over a local HTTPS endpoint
+# with a certificate made for the run, and it needs `node` and `openssl` and
+# `python3`, whose absence is a check that could not run and not a pass.
 #
-# Nothing touches the real home or store: HOME, the data directory and every
-# variable `leteo setup` reads for an agent's configuration are pointed into one
-# temporary directory, which is removed on the way out.
+# Nothing touches the real home or store, and the way that is guaranteed is not
+# a list of what to unset. Every command runs under `env -i`, so the only things
+# the binary and the scripts can see are the ones `isolated` names below: PATH,
+# a HOME and a data directory inside one temporary directory, and what a call
+# adds itself. A variable the binary learns to read tomorrow -- or already reads
+# today, like `LETEO_DATABASE`, which outranks the data directory -- cannot
+# reach it, because it was never passed. The directory is removed on the way out.
 
 set -eu
 
@@ -29,7 +35,14 @@ BINARY="$(cd "$(dirname "$BINARY")" && pwd)/$(basename "$BINARY")"
 REPO="$(pwd)"
 
 ROOT="$(mktemp -d)"
-trap 'rm -rf "$ROOT"' EXIT INT TERM
+mkdir -p "$ROOT/tmp" "$ROOT/home"
+cleanup() {
+    # The server says its own pid: `$!` of a backgrounded shell function is the
+    # subshell that runs it, and killing that leaves the server running.
+    [ ! -s "$ROOT/server.pid" ] || kill "$(cat "$ROOT/server.pid")" 2>/dev/null || true
+    rm -rf "$ROOT"
+}
+trap cleanup EXIT INT TERM
 
 VERSION="v0.0.0-install-check"
 # The names install.sh derives from the machine; it has no way to be asked.
@@ -71,12 +84,10 @@ check() {
     fi
 }
 
-# Every variable the binary reads to decide where things go, so that neither the
-# machine's own configuration nor its real store can be reached.
+# The whole environment of every command here. Structural on purpose: see the
+# header. TMPDIR keeps `mktemp` inside the temporary directory too.
 isolated() {
-    env -u LETEO_MODEL_DIR -u XDG_CONFIG_HOME -u APPDATA -u USERPROFILE \
-        -u CLAUDE_CONFIG_DIR -u DSH_HOME -u PI_CODING_AGENT_DIR \
-        HOME="$ROOT/home" LETEO_DATA_DIR="$ROOT/data" "$@"
+    env -i PATH="$PATH" HOME="$ROOT/home" LETEO_DATA_DIR="$ROOT/data" TMPDIR="$ROOT/tmp" "$@"
 }
 
 install_into() {
@@ -92,14 +103,18 @@ model_names() {
         | grep '\.'
 }
 
+doctor_detail() {
+    # doctor_detail <leteo...>: what doctor says about the model, on one line.
+    # Blanks are stripped to read the JSON on one line, which is also why the
+    # sentences compared against have none.
+    isolated "$@" doctor 2>/dev/null | tr -d ' \n' \
+        | grep -o '"code":"semantic_model","ok":true,"detail":"[^"]*' || true
+}
+
 verified_at() {
     # The detail doctor gives names the directory it found the model in, which has
     # to be the one install.sh wrote: `../share/leteo/model` from the binary.
-    # Blanks are stripped to read the JSON on one line, which is also why the
-    # sentence below has none.
-    isolated "$1/bin/leteo" doctor 2>/dev/null | tr -d ' \n' \
-        | grep -o '"code":"semantic_model","ok":true,"detail":"[^"]*' \
-        | grep -q 'verifiedat[^"]*/bin/\.\./share/leteo/model$'
+    doctor_detail "$1/bin/leteo" | grep -q 'verifiedat[^"]*/bin/\.\./share/leteo/model$'
 }
 
 none_left() {
@@ -143,6 +158,123 @@ install_into "$P"
 rm -f "$P/bin/leteo"
 isolated LETEO_INSTALL_DIR="$P/bin" sh "$P/bin/uninstall.sh" --yes >"$ROOT/uninstall.log" 2>&1 || { cat "$ROOT/uninstall.log"; failed=1; }
 check "uninstall.sh alone removed the model and share/leteo, and not share/" none_left "$P"
+
+echo "-- the npm wrapper, against a local release"
+for tool in node openssl python3; do
+    command -v "$tool" >/dev/null 2>&1 || { echo "install check could not run: the npm flow needs $tool" >&2; exit 2; }
+done
+# The wrapper speaks HTTPS only, so the release is served over HTTPS, with a
+# certificate made here and trusted by this run's node alone.
+openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj "/CN=127.0.0.1" \
+    -addext "subjectAltName=IP:127.0.0.1" -keyout "$ROOT/key.pem" -out "$ROOT/cert.pem" >/dev/null 2>&1 \
+    || { echo "install check could not run: openssl could not make a certificate" >&2; exit 2; }
+cat > "$ROOT/serve.py" <<'PY'
+import functools, http.server, os, ssl, sys
+
+directory, cert, key, port_file = sys.argv[1:5]
+
+
+class Quiet(http.server.SimpleHTTPRequestHandler):
+    def log_message(self, *args):
+        pass
+
+
+server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), functools.partial(Quiet, directory=directory))
+context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+context.load_cert_chain(cert, key)
+server.socket = context.wrap_socket(server.socket, server_side=True)
+with open(os.path.join(os.path.dirname(port_file), "server.pid"), "w") as handle:
+    handle.write(str(os.getpid()))
+with open(port_file, "w") as handle:
+    handle.write(str(server.server_address[1]))
+server.serve_forever()
+PY
+isolated python3 "$ROOT/serve.py" "$ROOT/dist" "$ROOT/cert.pem" "$ROOT/key.pem" "$ROOT/port" >"$ROOT/serve.log" 2>&1 &
+tries=0
+while [ ! -s "$ROOT/port" ]; do
+    tries=$((tries + 1))
+    if [ "$tries" -gt 100 ]; then
+        cat "$ROOT/serve.log" >&2
+        echo "install check could not run: the local release server did not start" >&2
+        exit 2
+    fi
+    sleep 0.1
+done
+
+# The wrapper keeps its cache beside itself, so it is run from a copy inside the
+# temporary directory and not from the checkout, whose npm/ it would write into.
+mkdir -p "$ROOT/npm"
+cp -R npm/bin npm/package.json "$ROOT/npm/"
+VENDOR="$ROOT/npm/vendor"
+CACHE="$VENDOR/$VERSION-$arch-$os"
+
+# NPM_EXTRA_ENV is one more assignment for a call that wants it, and has no
+# blanks in it.
+NPM_EXTRA_ENV=""
+npm_leteo() {
+    # shellcheck disable=SC2086
+    isolated NODE_EXTRA_CA_CERTS="$ROOT/cert.pem" LETEO_VERSION="$VERSION" \
+        LETEO_BASE_URL="https://127.0.0.1:$(cat "$ROOT/port")" $NPM_EXTRA_ENV \
+        node "$ROOT/npm/bin/leteo.js" "$@"
+}
+
+npm_cache_whole() {
+    [ -x "$CACHE/leteo" ] || return 1
+    for name in $(model_names); do
+        [ -f "$CACHE/model/$name" ] || return 1
+    done
+    # A half-made directory the wrapper should have cleaned up.
+    [ -z "$(ls "$VENDOR" | grep '^staging-' || true)" ] || return 1
+    # Run through the wrapper again, which also proves a whole cache is used as it is.
+    npm_leteo doctor 2>/dev/null | tr -d ' \n' \
+        | grep -o '"code":"semantic_model","ok":true,"detail":"[^"]*' \
+        | grep -q "verifiedat[^\"]*/$VERSION-$arch-$os/model\$"
+}
+
+# Holds the directory rename of each wrapper run for long enough that both runs
+# have looked at the cache before either has changed it. That interleaving is
+# the one the wrapper has to survive and a scheduler produces only now and then:
+# with the tolerance removed, unassisted runs of this section still passed.
+cat > "$ROOT/slow_rename.js" <<'JS'
+const fs = require("node:fs");
+const path = require("node:path");
+const real = fs.renameSync;
+fs.renameSync = function (from, to) {
+  if (path.basename(String(from)) === "ready") {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 800);
+  }
+  return real.apply(this, arguments);
+};
+JS
+
+# Two wrapper runs started together, and whether both of them succeeded.
+two_at_once() {
+    NPM_EXTRA_ENV="NODE_OPTIONS=--require=$ROOT/slow_rename.js"
+    npm_leteo doctor >"$ROOT/one.out" 2>"$ROOT/one.err" &
+    first=$!
+    npm_leteo doctor >"$ROOT/two.out" 2>"$ROOT/two.err" &
+    second=$!
+    NPM_EXTRA_ENV=""
+    status_one=0; status_two=0
+    wait "$first" || status_one=$?
+    wait "$second" || status_two=$?
+    [ "$status_one" -eq 0 ] && [ "$status_two" -eq 0 ] || { cat "$ROOT"/one.err "$ROOT"/two.err >&2; return 1; }
+}
+
+npm_leteo doctor >/dev/null 2>"$ROOT/npm.log" || { cat "$ROOT/npm.log"; failed=1; }
+check "a cold run puts the binary and the model in one directory, and doctor verifies the model there" npm_cache_whole
+
+rm -f "$CACHE/leteo"
+npm_leteo doctor >/dev/null 2>"$ROOT/npm.log" || { cat "$ROOT/npm.log"; failed=1; }
+check "a directory whose binary was deleted heals on the next run" npm_cache_whole
+
+# Both succeed, and what is left is one whole install.
+rm -rf "$VENDOR"
+check "two cold runs at once both succeed" two_at_once
+check "and leave one whole install" npm_cache_whole
+rm -f "$CACHE/leteo"
+check "two runs at once on a directory whose binary was deleted both succeed" two_at_once
+check "and leave one whole install" npm_cache_whole
 
 if [ "$failed" -ne 0 ]; then
     echo "install check FAILED (repository: $REPO)"

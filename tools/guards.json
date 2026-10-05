@@ -1055,8 +1055,14 @@
     "name": "release: a tag pattern sorts ahead of the one the guard reads",
     "file": ".github/workflows/release.yml",
     "edits": [
-      { "old": "            type=semver,pattern={{major}}.{{minor}}\n      # Pushed by digest rather than by tag, because two jobs writing the same\n", "new": "            type=semver,pattern={{major}}.{{minor}},priority=1000\n      # Pushed by digest rather than by tag, because two jobs writing the same\n" },
-      { "old": "            type=semver,pattern={{major}}.{{minor}}\n      # No guard on the digests being there. `needs: container` is satisfied\n", "new": "            type=semver,pattern={{major}}.{{minor}},priority=1000\n      # No guard on the digests being there. `needs: container` is satisfied\n" }
+      {
+        "old": "            type=semver,pattern={{major}}.{{minor}}\n      # Pushed by digest rather than by tag, because two jobs writing the same\n",
+        "new": "            type=semver,pattern={{major}}.{{minor}},priority=1000\n      # Pushed by digest rather than by tag, because two jobs writing the same\n"
+      },
+      {
+        "old": "            type=semver,pattern={{major}}.{{minor}}\n      # No guard on the digests being there. `needs: container` is satisfied\n",
+        "new": "            type=semver,pattern={{major}}.{{minor}},priority=1000\n      # No guard on the digests being there. `needs: container` is satisfied\n"
+      }
     ]
   },
   {
@@ -1528,14 +1534,14 @@
   {
     "name": "uninstall: the model is left where it was",
     "file": "src/setup/removal/mod.rs",
-    "old": "    if !options.dry_run {\n        remove_model(&mut removed, data_dir);",
-    "new": "    if false {\n        remove_model(&mut removed, data_dir);"
+    "old": "    // and would otherwise keep the directory as something foreign.\n    remove_model(&mut removed, data_dir);",
+    "new": "    // and would otherwise keep the directory as something foreign.\n    if false {\n        remove_model(&mut removed, data_dir);\n    }"
   },
   {
     "name": "uninstall: the share directory is cleared with `share/` itself",
     "file": "src/setup/removal/mod.rs",
-    "old": ".is_some_and(|name| name == \"share\")\n        {\n            // A share/leteo that holds something else is somebody else's.\n            let _ = std::fs::remove_dir(parent);",
-    "new": ".is_some_and(|name| name == \"share\")\n        {\n            let _ = std::fs::remove_dir_all(parent.parent().unwrap());"
+    "old": "                remove_if_empty(removed, parent);",
+    "new": "                let _ = std::fs::remove_dir_all(parent.parent().unwrap());"
   },
   {
     "name": "uninstall.sh: names a file fewer than the binary checks",
@@ -1548,5 +1554,53 @@
     "file": "scripts/uninstall.ps1",
     "old": "@('config.json', 'model.safetensors', 'tokenizer.json.gz')",
     "new": "@('config.json', 'model.safetensors')"
+  },
+  {
+    "name": "uninstall: a file with a model's name and another hash is deleted",
+    "file": "src/setup/removal/mod.rs",
+    "old": "    Ok(hex::encode(Sha256::digest(std::fs::read(file)?)) == pin)",
+    "new": "    let _ = (Sha256::digest(std::fs::read(file)?), pin);\n    Ok(true)"
+  },
+  {
+    "name": "uninstall: a model directory that is a symbolic link is followed",
+    "file": "src/setup/removal/mod.rs",
+    "old": "        if std::fs::symlink_metadata(&directory).is_ok_and(|meta| meta.file_type().is_symlink()) {",
+    "new": "        if false {"
+  },
+  {
+    "name": "uninstall: a model file that is not a regular file is judged like one",
+    "file": "src/setup/removal/mod.rs",
+    "old": "            if !meta.is_file() {",
+    "new": "            if false {"
+  },
+  {
+    "name": "uninstall: a dry run does not list the model",
+    "file": "src/setup/removal/mod.rs",
+    "old": "            if dry_run {\n                removed.model_files.push(file);\n                continue;\n            }",
+    "new": "            if dry_run {\n                continue;\n            }"
+  },
+  {
+    "name": "uninstall: a dry run deletes the model",
+    "file": "src/setup/removal/mod.rs",
+    "old": "            if dry_run {\n                removed.model_files.push(file);\n                continue;\n            }",
+    "new": "            if false {\n                removed.model_files.push(file);\n                continue;\n            }"
+  },
+  {
+    "name": "uninstall: a share/leteo that is not empty is kept without being named",
+    "file": "src/setup/removal/mod.rs",
+    "old": "                remove_if_empty(removed, parent);",
+    "new": "                let _ = std::fs::remove_dir(parent);"
+  },
+  {
+    "name": "uninstall: a directory that could not be removed empty is blamed on a stranger",
+    "file": "src/setup/removal/mod.rs",
+    "old": "    removed.remaining.push(if strangers.is_empty() {",
+    "new": "    removed.remaining.push(if false {"
+  },
+  {
+    "name": "uninstall: a model file that could not be deleted does not make the removal incomplete",
+    "file": "src/setup/removal/mod.rs",
+    "old": "                    failed = true;\n                    removed\n                        .remaining\n                        .push(format!(\"{}: {error}\", file.display()));",
+    "new": "                    removed\n                        .remaining\n                        .push(format!(\"{}: {error}\", file.display()));"
   }
 ]

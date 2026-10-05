@@ -479,5 +479,8 @@ jobs:
       - run: python3 tools/semantic/check_binary_size.py target/release/leteo
       # The release archive's layout run through `install.sh` and the uninstallers
       # on this runner, in temporary directories: the binary has to find the model
-      # where the installer put it, and nothing of it may survive an uninstall.
+      # where the installer put it, and nothing of it may survive an uninstall. The npm
+      # wrapper is run against the same archive too, so this step needs the `node`
+      # the runner image carries; a runner without it fails the step rather than
+      # skipping the wrapper.
       - run: sh tools/semantic/check_install.sh target/release/leteo

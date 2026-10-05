@@ -175,6 +175,8 @@ def main():
     parser.add_argument("--resamples", type=int, default=4000)
     parser.add_argument("--json")
     args = parser.parse_args()
+    if args.resamples < 1:
+        raise CannotRun(f"--resamples must be at least 1, not {args.resamples}")
     binary = os.path.abspath(args.binary)
     if not os.path.exists(binary):
         raise CannotRun(f"{binary} does not exist")
@@ -212,13 +214,16 @@ def main():
                          added=sum(sem["marked"]), sem_ms=sem["ms"], lex_ms=lex["ms"]))
 
     if not any(r["added"] for r in rows):
-        # Without the model the stage is off and the second pass is the first
-        # again, which this would report as the stage failing to help. That is a
-        # fact about the environment and not about the stage.
-        raise CannotRun("the semantic stage never ran: no answer in the semantic pass carries a result "
-                        "found by meaning. Either the model was not found or did not verify (point "
-                        "LETEO_MODEL_DIR at a directory holding it, e.g. assets/model), or "
-                        "`semantic_search` is off")
+        # Inferred from the marks and not observed: nothing here can tell a
+        # stage that was off, because the model was not found or did not verify,
+        # from a stage that ran and found nothing to add. Both leave the second
+        # pass equal to the first, which would be reported as the stage failing
+        # to help, and neither is a measurement of that.
+        raise CannotRun("no answer in the semantic pass carries a result found by meaning. Either the "
+                        "stage never ran (the model was not found or did not verify -- point "
+                        "LETEO_MODEL_DIR at a directory holding it, e.g. assets/model -- or "
+                        "`semantic_search` is off), or it ran and added nothing; this check cannot "
+                        "tell which")
 
     groups = defaultdict(list)
     for r in rows:
@@ -281,6 +286,6 @@ def main():
 if __name__ == "__main__":
     try:
         sys.exit(main())
-    except (CannotRun, OSError, RuntimeError, KeyError, ValueError) as error:
+    except (CannotRun, OSError, RuntimeError, KeyError, ValueError, IndexError, ZeroDivisionError) as error:
         print(f"hard-set evaluation could not run: {type(error).__name__}: {error}")
         sys.exit(2)

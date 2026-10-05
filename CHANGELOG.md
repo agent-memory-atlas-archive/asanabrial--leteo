@@ -16,7 +16,8 @@ All notable changes to Leteo are documented in this file.
   `--from <directory>` with no network), which `leteo setup` runs, after the agent is
   configured, when it finds none. `leteo doctor` reports
   whether the model is verified, missing or wrong, and `leteo uninstall` removes it from
-  every place on that list but `LETEO_MODEL_DIR`. The binary grows by 50 KB for
+  every place on that list but `LETEO_MODEL_DIR`, a file only if it hashes to its pin, and
+  `--dry-run` lists it. The binary grows by 50 KB for
   the installer and the crate stays about 1 MB (#124).
 
 - **A search the words cannot answer now goes on to look by meaning.** A seventh
