@@ -29,6 +29,18 @@ include = [
     "/openspec/**",
     "/plugin/**",
     "/tests/**",
+    # Not source, but read by the tests that ship: the two plugin marketplaces, the
+    # registry manifest, both workflows the guards parse, and the one image the
+    # token-cost test measures. Listed by path so the 2.5 MB banner and the
+    # recordings beside it stay out.
+    "/.agents/plugins/marketplace.json",
+    "/.claude-plugin/marketplace.json",
+    "/.github/workflows/*.yml",
+    "/server.json",
+    "/assets/tokens.svg",
+    # The measured SQLite build flags. Dropped from the tarball, a build from it
+    # would compile a different SQLite from the one every number here was taken on.
+    "/.cargo/config.toml",
     "/Cargo.toml",
     "/Cargo.lock",
     "/README.md",

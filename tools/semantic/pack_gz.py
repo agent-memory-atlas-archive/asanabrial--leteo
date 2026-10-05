@@ -1,4 +1,4 @@
-"""Deterministic gzip: the same input gives the same bytes, wherever it runs.
+"""Deterministic gzip: the same input, level and zlib give the same bytes.
 
 Several things this repository ships are generated text that nobody reads line by
 line: the hard-set questions and the model's tokenizer vocabulary. Stored as plain
@@ -8,8 +8,9 @@ SHA-256s beside them -- of the compressed bytes and of what they decompress to.
 
 The header carries no file name and a zero modification time, so nothing but the
 content and the compression level reaches the output. Level 9 on the zlib this was
-made with; a different zlib build may choose different but equally valid bytes, and
-that is why the decompressed hash is recorded as well and is the one that matters.
+made with. A different zlib build may choose different but equally valid bytes, which
+is why the decompressed hash is recorded as well; it is the one the checks fail on, and
+a changed stored hash with an unchanged decompressed one is only reported.
 
 usage: pack_gz.py <file> [<file> ...]     writes <file>.gz beside each
 """
