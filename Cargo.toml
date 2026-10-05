@@ -124,6 +124,7 @@ rmcp = { version = "3.0.1", features = ["transport-io"] }
 # we do not enable, but optional dependencies still land in the lockfile, and
 # `links` conflicts are settled there). Revisit when sqlx bumps it.
 rusqlite = { version = "0.39.0", features = ["bundled-full"] }
+rust-stemmers = "1.2.0"
 serde = { version = "1.0.228", features = ["derive"] }
 # `preserve_order` because Leteo edits configuration files that belong to
 # somebody else. Without it `serde_json`'s object is a sorted map, so writing

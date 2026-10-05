@@ -52,7 +52,7 @@ there from any provenance, and how it says when something has gone wrong.
    above the six the `SCHEMA_VERSION` comment counts, which would have been 7
    and would have collided with a real pre-release stamp, letting a store
    already at 7 read as current and skip the migration in silence.
-   `SCHEMA_VERSION` is 20 now: migrations 19 and 20 followed it (§15, §16).
+   `SCHEMA_VERSION` is 21 now: migrations 19, 20 and 21 followed it (§15, §16, §17).
 
    **That removes the ambiguity and not the refusal**, and the two are worth
    separating because the first invites the mistake of dropping the second.
@@ -83,8 +83,8 @@ there from any provenance, and how it says when something has gone wrong.
 4. **`doctor` reports, and `doctor --repair` fixes what it can — and every check
    it can fix says so.** A failing check that `--repair` undoes ends its sentence
    naming the flag; one it cannot undo says something else. Current checks:
-   `sqlite_integrity`, `foreign_keys`, three full-text `*_integrity` checks,
-   three `*_sync` row-count checks, `observation_hash_sync`,
+   `sqlite_integrity`, `foreign_keys`, four full-text `*_integrity` checks,
+   four `*_sync` row-count checks, `observation_hash_sync`,
    `observation_type_searchable`, `full_text_triggers`, `topic_key_uniqueness`,
    `settings_readable`, `semantic_model`, `journal_mode`, `busy_timeout`.
    `semantic_model` is the one check about a file and not the database, and says
@@ -352,6 +352,55 @@ there from any provenance, and how it says when something has gone wrong.
     migration 20 be a plain `CREATE TABLE` with no repair path, no full-text
     rebuild, and no column added to an existing table.
 
+17. **The language a memory was stemmed in is a table of its own, kept by
+    triggers that call a function.** Migration 21 adds `observation_stems`:
+    `observation_id` (the primary key, a foreign key to `observations` with
+    `ON DELETE CASCADE`), `language`, the Snowball stems of `title`, `content`
+    and `topic_key`, and copies of `tool_name`, `type` and `project`; an index on
+    `language`, so the languages a store holds are read without scanning it; and
+    `observations_stemmed`, an `unicode61` external-content index over it with
+    the same six columns as the other two, so one query builder serves all three
+    ([`search.md`](search.md) §16 says what it is for). The copies are there
+    because the index must have the shape of the others and `project` is what a
+    search narrows on inside it; they are not stemmed, because the narrowing
+    compares them with the name as typed.
+
+    A table rather than a column for the reason §16 gave the vectors: the
+    existing triggers are bare `AFTER UPDATE`, so a column written there
+    re-indexes the memory twice. Unlike the vectors it is not recomputed lazily.
+    The index has to agree with the row on every write, and a lazy check would
+    mean a write on the read path, so five triggers keep it: `obs_stems_insert`
+    and `obs_stems_update` on `observations` (the latter `AFTER UPDATE OF` the six
+    columns the stems read, so a pin or a duplicate count does not re-stem), and
+    `stems_fts_insert`, `stems_fts_delete` and `stems_fts_update` on the table.
+    All five are in `FULL_TEXT_TRIGGERS`, read from the migration by
+    `doctor --repair`, and the index is in `FULL_TEXT_INDEXES`.
+
+    The triggers call `leteo_stem` and `leteo_stem_language`, which `Store::open`
+    registers before the schema is prepared. That is what makes every write path
+    stem without any of them knowing, and it is also the price: a connection that
+    has not registered them cannot write a memory and fails with "no such
+    function" rather than leaving a row its index cannot find. The language is
+    `Settings::language` read when the store is opened, so a long-running server
+    stems in the language it started with; a test sets
+    `StoreConfig::memory_language`.
+
+    **The backfill is deterministic and says what it assumes.** Migration 21 stems
+    every existing row in the language the setting names when it runs — a
+    migration cannot know what its writer used, because nothing recorded it. A
+    setting that names no language stems nothing (English is `porter`'s), and the
+    rows are re-stemmed by `doctor --repair` once it does. Only rows whose `id` is
+    an integer are stemmed: a database that predates the baseline can carry a
+    TEXT or NULL id, which is not a parent a row here can reference.
+
+    `doctor` reports the index as `observation_stems_fts_integrity` and
+    `observation_stems_sync`, the latter comparing the memories, the stems and
+    the index. `--repair` runs `restem_observations` before rebuilding the
+    indexes: the rebuild is from the stems table, so a memory the triggers never
+    saw — an import runs with them dropped — would otherwise stay unfindable
+    however often it ran. Like the vectors, the table is derived and local: not
+    replicated and not exported, and each machine stems with its own setting.
+
 ## Invariants
 
 - Every full-text index has its triggers, and `FULL_TEXT_INDEXES` /
@@ -381,11 +430,13 @@ there from any provenance, and how it says when something has gone wrong.
 ## Where it lives
 
 - `src/store/schema.rs` — the baseline, the migration list, the roll calls
+- `src/stemming.rs` — the SQL functions the stems triggers call
 - `src/store/semantic_stage.rs` — the vector table's only writer and reader
 - `src/store/diagnostics.rs` — every check, and the two repairs
 - `migrations/*.sql` — the SQL, owned here and read from here
 - `src/engram.rs` — adoption, and the Engram-to-Leteo translation
-- `src/store/tests/schema.rs`, `src/store/tests/diagnostics.rs`
+- `src/store/tests/schema.rs`, `src/store/tests/diagnostics.rs`,
+  `src/store/tests/stems.rs`
 
 ## Related
 

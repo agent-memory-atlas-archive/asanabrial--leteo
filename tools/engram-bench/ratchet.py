@@ -10,6 +10,15 @@ os.environ["BENCH_STATE"] = STATE
 from corpus import corpus, queries
 from mcpclient import MCP
 
+# The language the corpus's memories are written in, as the product reads it from
+# settings. Without it a store indexes every memory as English and the Spanish
+# stemmer never runs, so the Spanish half of the corpus would be measured against
+# the stemmer it was meant to be measured against.
+LETEO_HOME = os.path.join(STATE, "lhome")
+os.makedirs(LETEO_HOME, exist_ok=True)
+with open(os.path.join(LETEO_HOME, "settings.json"), "w") as settings:
+    json.dump({"language": "Spanish"}, settings)
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 FLOORS = os.path.join(HERE, "floors.json")
 PROJECTS = ("alpha-api", "beta-web")

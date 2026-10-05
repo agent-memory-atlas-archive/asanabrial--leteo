@@ -1105,14 +1105,29 @@ pub fn fts_terms(query: &str) -> Vec<String> {
 /// term is — and disagreeing quietly, since both would still be valid FTS5 and
 /// both would still return rows.
 pub fn fts_query(query: &str, any: bool) -> String {
-    let mut terms = fts_terms(query);
+    fts_join(&fts_terms(query), any)
+}
+
+/// Terms that are already quoted, joined into the one query a search runs.
+///
+/// Split out of [`fts_query`] so the stemmed indexes can be asked the same
+/// question in their own words: the Snowball index is queried with the terms
+/// stemmed, and the conjunction, the disjunction and the cap on the latter have
+/// to be the ones the other two indexes were asked with.
+pub fn fts_join(terms: &[String], any: bool) -> String {
     // Only the disjunction. A conjunction of two hundred terms matches almost
     // nothing and costs almost nothing to find out, and cutting it would
     // quietly answer a different question from the one somebody quoted.
     if any {
-        terms.truncate(MAX_ANY_TERMS);
+        terms
+            .iter()
+            .take(MAX_ANY_TERMS)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(" OR ")
+    } else {
+        fts_query_of(terms)
     }
-    terms.join(if any { " OR " } else { " " })
 }
 
 /// A word as one quoted full-text term, in the shape [`fts_terms`] writes.

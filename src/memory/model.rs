@@ -1071,6 +1071,8 @@ impl DoctorCheck {
         "prompt_fts_integrity",
         "observation_fts_sync",
         "observation_exact_fts_sync",
+        "observation_stems_fts_integrity",
+        "observation_stems_sync",
         "prompt_fts_sync",
         "observation_hash_sync",
         "observation_type_searchable",

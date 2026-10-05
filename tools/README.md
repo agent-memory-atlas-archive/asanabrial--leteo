@@ -183,9 +183,12 @@ asked, which is why `mem_save` now records the prompt a memory answers.
 
 ## `engram-bench` — a floor under search quality, and the same data on both engines
 
-The corpus is 170 synthetic memories in two projects and 117 queries of seven
+The corpus is 178 synthetic memories in two projects and 117 queries of seven
 kinds — paraphrase, short, Spanish, partial word, typo, several words, a long
-natural-language question — each with the one memory it should find. Two things
+natural-language question — each with the one memory it should find. Eight of the
+Spanish questions target Spanish-written counterparts of English memories; the
+ratchet names Spanish as the store's memory language in its settings, because a
+store that does not indexes every memory as English. Two things
 use it.
 
 `ratchet.py` needs nothing but Leteo and stock `python3`. It saves the corpus

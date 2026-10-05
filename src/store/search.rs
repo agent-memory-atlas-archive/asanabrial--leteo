@@ -7,6 +7,11 @@ use super::*;
 pub const FTS_STEMMED: &str = "observations_fts";
 /// The same memories indexed as they were written, with no stemmer.
 pub const FTS_EXACT: &str = "observations_exact";
+/// The same memories as their language's Snowball stemmer made them.
+///
+/// Read with the query stemmed the same way, once for every language the store
+/// holds a memory in. See [`crate::stemming`].
+pub const FTS_SNOWBALL: &str = "observations_stemmed";
 
 /// The vocabulary of the unstemmed index, as a table this connection reads.
 ///
@@ -52,6 +57,9 @@ pub struct Correction {
     /// The word the unstemmed index holds that the query was taken to mean.
     pub used: String,
 }
+
+/// The terms of a query with its unknown words replaced, and what was replaced.
+type CorrectedTerms = (Vec<String>, Vec<Correction>);
 
 /// The edit budget for a term of this many characters.
 fn typo_budget(chars: usize) -> usize {
@@ -466,7 +474,7 @@ impl Store {
 
         let any = options.mode == SearchMode::Any;
         let mut matched =
-            self.fused_observations(&normalize::fts_query(query, any), &options, limit)?;
+            self.fused_observations(&normalize::fts_terms(query), any, &options, limit)?;
         // And a word somebody half-remembers, before the question is loosened.
         //
         // The strict pass needs every word whole, so a fragment fails it
@@ -514,7 +522,7 @@ impl Store {
             && !any
             && let Some((corrected, said)) = self.corrected_fts(query)?
         {
-            let retried = self.fused_observations(&corrected, &options, limit)?;
+            let retried = self.fused_observations(&corrected, any, &options, limit)?;
             if !retried.is_empty() {
                 matched = retried;
                 corrections = said;
@@ -654,7 +662,7 @@ impl Store {
     /// still carries one unknown word fails exactly as the original did, so
     /// correcting the rest would cost a vocabulary read and buy no answer while
     /// reporting a substitution that changed nothing.
-    fn corrected_fts(&self, query: &str) -> Result<Option<(String, Vec<Correction>)>, StoreError> {
+    fn corrected_fts(&self, query: &str) -> Result<Option<CorrectedTerms>, StoreError> {
         let terms = normalize::fts_terms(query);
         if terms.is_empty() {
             return Ok(None);
@@ -716,7 +724,7 @@ impl Store {
                 None => return Ok(None),
             }
         }
-        Ok(Some((normalize::fts_query_of(&corrected), said)))
+        Ok(Some((corrected, said)))
     }
 
     /// Whether the stemmed index holds anything for one word.
@@ -736,7 +744,19 @@ impl Store {
         let known = statement.query_row(params![normalize::quote_fts_term(word)], |row| {
             row.get::<_, bool>(0)
         })?;
-        Ok(known)
+        // A word only the Snowball index reaches is known as well: correcting
+        // `migraciones` to some other word because `porter` has never seen that
+        // stem would answer a different question from the one asked.
+        Ok(known
+            || !self
+                .snowball_candidates(
+                    &[normalize::quote_fts_term(word)],
+                    false,
+                    &SearchOptions::default(),
+                    1,
+                    false,
+                )
+                .is_empty())
     }
 
     /// Creates the vocabulary table this connection reads, once.
@@ -851,23 +871,26 @@ impl Store {
     /// half-finished upgrade — searches the way it did before there were two.
     fn fused_observations(
         &self,
-        fts: &str,
+        terms: &[String],
+        any: bool,
         options: &SearchOptions,
         limit: usize,
     ) -> Result<Vec<Candidate>, StoreError> {
+        let fts = normalize::fts_join(terms, any);
         // Deeper than the answer, so the merge has places to compare. A memory
         // ninth in one list and second in the other is exactly the case this
         // exists for, and it cannot be seen from two lists of three.
         let depth = (limit * 3).max(30);
-        let stemmed = self.matching_observations(FTS_STEMMED, fts, options, depth, false)?;
-        let exact = match self.matching_observations(FTS_EXACT, fts, options, depth, false) {
+        let stemmed = self.matching_observations(FTS_STEMMED, &fts, options, depth, false)?;
+        let exact = match self.matching_observations(FTS_EXACT, &fts, options, depth, false) {
             Ok(exact) => exact,
             Err(error) => {
                 tracing::debug!(%error, "the unstemmed index is unreadable; searching the stemmed one alone");
                 Vec::new()
             }
         };
-        if exact.is_empty() {
+        let snowball = self.snowball_candidates(terms, any, options, depth, false);
+        if exact.is_empty() && snowball.is_empty() {
             let mut stemmed = stemmed;
             stemmed.truncate(limit);
             return Ok(stemmed);
@@ -875,12 +898,12 @@ impl Store {
 
         let mut fused: BTreeMap<i64, f64> = BTreeMap::new();
         let mut rows: BTreeMap<i64, Candidate> = BTreeMap::new();
-        for list in [stemmed, exact] {
+        for list in [stemmed, exact, snowball] {
             for (place, result) in list.into_iter().enumerate() {
                 *fused.entry(result.id).or_default() +=
                     1.0 / (FUSION_CONSTANT + place as f64 + 1.0);
                 // The stemmed list is walked first, so its score is the one
-                // kept for a memory both indexes found.
+                // kept for a memory more than one index found.
                 rows.entry(result.id).or_insert(result);
             }
         }
@@ -895,6 +918,114 @@ impl Store {
         });
         merged.truncate(limit);
         Ok(merged)
+    }
+
+    /// The languages the store holds a memory in that have a Snowball stemmer.
+    ///
+    /// Asked of the rows rather than of the setting, because a store keeps the
+    /// memories it was written with: a person who switched from Spanish to
+    /// English last month still has Spanish memories to find, and the setting no
+    /// longer says so. The question is over a small indexed column and is asked
+    /// once a search.
+    fn snowball_languages(&self) -> Vec<crate::settings::Interface> {
+        let read = || -> Result<Vec<String>, rusqlite::Error> {
+            let mut statement = self
+                .connection
+                .prepare_cached("SELECT DISTINCT language FROM observation_stems")?;
+            statement.query_map([], |row| row.get(0))?.collect()
+        };
+        match read() {
+            Ok(codes) => codes
+                .iter()
+                .filter_map(|code| crate::stemming::from_code(code))
+                .filter(|language| crate::stemming::algorithm(*language).is_some())
+                .collect(),
+            Err(error) => {
+                tracing::debug!(%error, "the stems are unreadable; searching without them");
+                Vec::new()
+            }
+        }
+    }
+
+    /// What the Snowball index makes of the same terms, best first.
+    ///
+    /// Each language present in the store stems the query its own way and the
+    /// answers are merged on a memory's best rank. Not an error when it cannot
+    /// run, the way an unreadable unstemmed index is not one: the stemmed index
+    /// answers alone, as it did before this one existed.
+    fn snowball_candidates(
+        &self,
+        terms: &[String],
+        any: bool,
+        options: &SearchOptions,
+        limit: usize,
+        partial: bool,
+    ) -> Vec<Candidate> {
+        let mut best: BTreeMap<i64, Candidate> = BTreeMap::new();
+        for language in self.snowball_languages() {
+            let stemmed: Vec<String> = terms
+                .iter()
+                .map(|term| {
+                    let stems =
+                        crate::stemming::stem_text(&normalize::unquote_fts_term(term), language);
+                    if stems.is_empty() {
+                        term.clone()
+                    } else {
+                        normalize::quote_fts_term(&stems)
+                    }
+                })
+                .collect();
+            let fts = normalize::fts_join(&stemmed, any);
+            match self.matching_observations(FTS_SNOWBALL, &fts, options, limit, partial) {
+                Ok(found) => {
+                    for candidate in found {
+                        match best.entry(candidate.id) {
+                            std::collections::btree_map::Entry::Occupied(mut seen) => {
+                                if candidate.rank < seen.get().rank {
+                                    seen.insert(candidate);
+                                }
+                            }
+                            std::collections::btree_map::Entry::Vacant(empty) => {
+                                empty.insert(candidate);
+                            }
+                        }
+                    }
+                }
+                Err(error) => {
+                    tracing::debug!(%error, "the Snowball index is unreadable; searching without it");
+                }
+            }
+        }
+        let mut found: Vec<Candidate> = best.into_values().collect();
+        found.sort_by(|left, right| left.rank.total_cmp(&right.rank));
+        found.truncate(limit);
+        found
+    }
+
+    /// `porter` and Snowball answers to one set of terms, as one list.
+    ///
+    /// For the relaxed stages, which keep a memory's best rank rather than fuse
+    /// places: they decide on bm25 against a floor, and a memory only the
+    /// Snowball index reaches must be able to clear it.
+    fn stemmed_candidates(
+        &self,
+        terms: &[String],
+        any: bool,
+        options: &SearchOptions,
+        limit: usize,
+    ) -> Result<Vec<Candidate>, StoreError> {
+        let fts = normalize::fts_join(terms, any);
+        let mut found = self.matching_observations(FTS_STEMMED, &fts, options, limit, true)?;
+        for candidate in self.snowball_candidates(terms, any, options, limit, true) {
+            match found.iter_mut().find(|seen| seen.id == candidate.id) {
+                Some(seen) if candidate.rank < seen.rank => *seen = candidate,
+                Some(_) => {}
+                None => found.push(candidate),
+            }
+        }
+        found.sort_by(|left, right| left.rank.total_cmp(&right.rank));
+        found.truncate(limit);
+        Ok(found)
     }
 
     /// The last resort: any of the words, and only what stands out among them.
@@ -916,12 +1047,11 @@ impl Store {
         options: &SearchOptions,
         limit: usize,
     ) -> Result<Vec<Candidate>, StoreError> {
-        let terms = normalize::fts_any_of(&normalize::fts_terms(query));
+        let terms = normalize::fts_terms(query);
         if terms.is_empty() {
             return Ok(Vec::new());
         }
-        let mut candidates =
-            self.matching_observations(FTS_STEMMED, &terms, options, RECALL_SAMPLE, true)?;
+        let mut candidates = self.stemmed_candidates(&terms, true, options, RECALL_SAMPLE)?;
         candidates.retain(|candidate| candidate.kind != crate::memory::model::SESSION_SUMMARY);
         // The median of two is not a distribution, and nothing here is worth
         // saying without one.
@@ -1148,14 +1278,13 @@ impl Store {
         // missing.
         let mut best: BTreeMap<i64, Candidate> = BTreeMap::new();
         for omitted in 0..terms.len() {
-            let kept = terms
+            let kept: Vec<String> = terms
                 .iter()
                 .enumerate()
                 .filter(|(index, _)| *index != omitted)
-                .map(|(_, term)| term.as_str())
-                .collect::<Vec<_>>()
-                .join(" ");
-            for result in self.matching_observations(FTS_STEMMED, &kept, options, limit, true)? {
+                .map(|(_, term)| term.clone())
+                .collect();
+            for result in self.stemmed_candidates(&kept, false, options, limit)? {
                 match best.entry(result.id) {
                     std::collections::btree_map::Entry::Occupied(mut seen) => {
                         if result.rank < seen.get().rank {

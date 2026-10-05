@@ -699,6 +699,7 @@ fn a_project_adopted_after_the_lowercasing_migration_is_still_folded() {
         // provenance — which since the first release is the only kind there is
         // to converge.
         let connection = Connection::open(&config.database_path).unwrap();
+        crate::stemming::register(&connection, Default::default()).unwrap();
         connection
             .execute_batch(
                 "UPDATE sessions SET project = 'My--Project';
@@ -752,6 +753,7 @@ fn session_summaries_are_retitled_by_what_each_session_was_for() {
     }
     {
         let connection = Connection::open(&config.database_path).unwrap();
+        crate::stemming::register(&connection, Default::default()).unwrap();
         // Three summaries with one name between them, which is the defect, and
         // the shape a real one has. The third has nothing worth lifting.
         for (id, body) in [
@@ -1500,6 +1502,13 @@ fn migration_18_repairs_through_a_text_primary_key_and_survives_a_null_id() {
                     '2026-08-31 12:00:00', '2026-08-31 12:00:00',
                     datetime('2026-08-31 12:00:00', '+6 months')
                 );
+                DROP TRIGGER obs_stems_insert;
+                DROP TRIGGER obs_stems_update;
+                DROP TRIGGER stems_fts_insert;
+                DROP TRIGGER stems_fts_delete;
+                DROP TRIGGER stems_fts_update;
+                DROP TABLE observations_stemmed;
+                DROP TABLE observation_stems;
                 DROP TABLE observations;
                 ALTER TABLE observations_text_pk RENAME TO observations;
                 PRAGMA user_version = 1;
