@@ -36,7 +36,8 @@ before any of it.
    question the best match is usually the answer. Recorded here so the factor is
    not re-proposed without a measurement that contradicts this one.
 
-3. **Six stages, in order, stopping at the first that answers.**
+3. **Six lexical stages, in order, stopping at the first that answers; a
+   seventh reads meaning, and is §15.**
    1. every word must match;
    2. failing that, every word as a prefix — a word somebody half-remembers;
    3. failing that, every word as a substring of the title — a fragment from
@@ -109,7 +110,8 @@ before any of it.
    rather than loosening it, so its rows match every word whole and are not
    marked `partial`; instead the answer names every substitution, "searched for
    X instead of Y", and that sentence is what tells the reader the words
-   changed. An empty answer has two possible
+   changed. A row the semantic stage added carries `semantic: true` instead,
+   and the answer says so once — §15. An empty answer has two possible
    reasons that call for opposite actions — the store has never heard of this,
    or it is filed in another project — and names the right one: where the
    project was inferred from the directory, the same question is asked once
@@ -328,12 +330,12 @@ before any of it.
     magnitude of margin above any legitimate question and refuses the pasted log
     that motivated the cap.
 
-15. **The semantic model is a file beside the binary, found in one list and
-    checked against hashes the binary pins.** A search stage by meaning reads a
-    static embedding model; this is what the model is and how it gets onto a
-    machine. At this head nothing searches with it yet: the stage comes in the next
-    change, with its own account. The model is run in-process, so there is no network at search time, no server
-    and no shell-out, and nothing leaves the machine.
+15. **When the words cannot answer, the search goes on to look by meaning.**
+    A seventh stage, after the six lexical ones, finds a memory that shares no
+    word with the question: a paraphrase, the same question asked in another
+    language, a memory written in a language the question was not. It is
+    in-process — a static embedding model read from a file, so no network at
+    search time, no server and no shell-out, and nothing leaves the machine.
 
     **The model.** `sentence-transformers/static-similarity-mrl-multilingual-v1`
     (Apache-2.0), truncated to its first 256 dimensions, quantised to int8, with
@@ -392,21 +394,142 @@ before any of it.
     says which condition holds -- verified and where, missing, or present and
     wrong -- and names the fix.
 
-    **What it costs**, measured on an Apple M-series machine, and stated here once:
+    **When it runs.** Only when the lexical stages answered nothing, or answered
+    from `nearest`, the weakest of them:
 
-    - **The binary** is 15,730,544 bytes, against 15,680,176 before this change:
-      the locator, the pins and the installer. The model runtime itself -- the
-      tokenizer and the loader -- is linked only where something loads the model,
-      which nothing does at this head, and none of the model is in the binary at
-      all.
-    - **The crate** is 1,053,447 bytes packaged, about 1 MB, and does not depend
+    1. On an **empty** answer it returns the memories whose cosine with the
+       question is at least `semantic::FLOOR`, 0.30. Below the floor the answer
+       stays empty.
+    2. On a **`nearest`** answer it merges the semantic list with the lexical
+       one by reciprocal rank fusion, as the two full-text indexes are merged in
+       §2, and with no floor — the lexical stage was answering anyway.
+    3. An answer from any stronger stage is never touched, and does not so much
+       as load the model. A search that answers is the search it was.
+
+    It is also off in `mode: any`, which asked for a disjunction, and when a topic
+    key answered. The floor is a cosine and not a rank because the stage has to
+    be able to say nothing: without one it answers every empty question, the
+    ones the store cannot answer included.
+
+    **What it may return.** Exactly what every other stage may. The question
+    "which memories can a search return at all" is one clause,
+    `visible_observations` in `src/store/search.rs`, and the ranked stages, the
+    title scan and this stage all read it: not deleted, not hidden by a judged
+    verdict (§9), inside the type, project and scope asked about. Session
+    summaries are left out, for §6's reason, and are not embedded.
+
+    **Where the vectors live.** In `observation_vectors`, one row per memory,
+    made lazily: when the stage fires it embeds whatever is in scope and has no
+    current vector, and keeps them. Whether one is current is a function of the
+    row — its content hash and title, and the model that made it — so every
+    write path is covered without any of them remembering to say so
+    ([`store-and-schema.md`](store-and-schema.md) §16). A store that never
+    reaches the stage never pays, and a store that cannot be written still
+    answers: the vectors are made for that question and thrown away.
+
+    **How it says so.** A row it added carries `semantic: true`, and the answer
+    carries one sentence saying such a row may contain none of the words asked
+    for. On a `nearest` answer only the rows the stage added are marked, not the
+    ones the words found. `leteo search` prints the same sentence on stderr.
+
+    **The retry runs the stage as well.** The sentence that says "N elsewhere"
+    on an empty answer is produced by asking the same question once more without
+    the project narrowing, and that question goes through the same search. It
+    is deliberate: the number is the number `all_projects` would return, which
+    is what the sentence promises, and a retry that skipped the stage would
+    report "nothing elsewhere" about a question the wider search answers. It
+    costs what the first firing in the wider scope costs.
+
+    **The setting.** `semantic_search` in `settings.json`, on unless it is
+    `false`. Off, the search is the lexical one and writes nothing. A library
+    caller that does not set `SearchOptions::semantic` gets the lexical search
+    too; the two surfaces an agent or a person searches through read the setting.
+
+    **What it was measured to buy**, against the same binary with the setting
+    off, so the only difference is the stage:
+
+    ```text
+    engram-bench (117 queries)   lexical   with the stage
+      ALL                          .835      .887
+      spanish                      .516      .790
+      multiword                    .923     1.000
+      paraphrase                   .826      .841
+      longnl                       .760      .775
+      partial / short / typo       .923 / .938 / 1.000, unchanged
+      empty answers                  9         3
+    ```
+
+    No kind falls.
+
+    The hard set, `tools/semantic/hardset/` — 2,028 questions that do not use the
+    target's words, **generated by an LLM and unchecked by native speakers**
+    (the Basque and Galician translations especially) — is where the stage has
+    something to do, and it is measured with a paired percentile bootstrap over
+    questions, 4,000 resamples:
+
+    ```text
+                                  n   lexical  +stage   delta [95% CI]
+      the hard set             2,028     .191    .291    +.101 [+.088, +.114]
+      English paraphrase         120     .175    .263    +.089 [+.048, +.136]
+      question in another lang.  960     .070    .190    +.121 [+.102, +.138]
+      translated memories        948     .315    .397    +.082 [+.064, +.102]
+    ```
+
+    The English paraphrases are checked to share no content word with their
+    target (`check_sets.py`). The gain is smaller than the .143 the same model
+    showed in simulation, and the difference is the floor: the simulation
+    answered every empty question and the product does not. Asked the whole
+    search over a copy of a real store, with questions built from their targets'
+    own words, no set moves, to four decimals, because the lexical stages answer
+    all of them. That is the property being checked — the stage does no harm
+    where it has nothing to do — and not evidence that it helps.
+
+    **What it costs**, measured on an Apple M-series machine:
+
+    - **The binary** is 17,206,608 bytes, against 15,730,544 with the installer
+      alone and 15,680,176 before either: the loader and its tokenizer, which the
+      linker keeps only where something loads the model, and none of the model.
+    - **The crate** is 1,076,718 bytes packaged, about 1 MB, and does not depend
       on the model's size, so a larger model can never again make it unpublishable.
       The model is 12.9 MB beside it.
-    - **Memory.** 15.7 MB resident for a process that has not loaded the model;
-      about 103 MB for one that has (which, at this head, only a test does),
-      because the int8 table is expanded to f32.
-      Loading reads and hashes the 13 MB of files first, which is what makes an
-      unverified file never load, and takes a few tens of milliseconds in all.
+    - **Memory** -- the one place it is stated. 15.7 MB resident for a search that
+      does not reach the stage; about 103 MB for a process that has loaded the
+      model, because the int8 table is expanded to f32; 121 MB at the peak of the
+      first firing on a 4,000-memory store. What bounds that peak is the chunk:
+      memories are embedded and kept 256 at a time, so the text and vectors held at
+      once do not grow with the store (the ids of what is stale do, at about a
+      hundred bytes each). A store that cannot be written is the exception: its
+      vectors are held until the question is answered, a kilobyte per memory in
+      scope.
+    - **Time.** An ordinary search is unchanged: a strict answer on a
+      4,150-memory real store took 6.2 ms before and 5.6 ms after. An empty question there goes
+      from 48.7 ms (the lexical stages, which are most of it) to 78.5 ms, p90
+      52.9 to 83.4; with the model read from a file it is 47.4 ms without the
+      model to 81.4 with it (p90 51.5 to 102.4), the stage being 12 ms to verify
+      and load the model and embed the question, 6 ms to find which vectors are
+      current and 6 ms to scan 4,048 of them. Hashing the 13 MB of model files
+      before loading them, which is what makes an unverified file never load, is a
+      few of those milliseconds. Through `mem_search` over MCP on the hard-set stores
+      the whole run's p50 is 1.8 against 1.9 ms and p90 3.3 against 3.6 ms,
+      because almost no question reaches the stage.
+    - **The first firing** on a store embeds every memory in scope: 0.51 s for
+      4,048 memories on the real-store copy, and the store grows by 5.5 MB
+      (1 KB a memory). The cost is linear in the store and paid once per memory.
+
+    **What it does not do.** It does not fix Basque, which the model was not
+    trained on: the 47% cross-lingual alignment of its UI strings, against
+    89–97% in the other twelve, is why Basque questions improve least
+    (`xl_eu` .000 to .037, against .08 to .17 for the others) and why the floor
+    costs it most. 0.25 is the measured alternative to 0.30; it answers 42% of
+    controls against 24% and keeps 67% of what can be rescued against 43%. It
+    does not make silence reliable: of the 117 engram-bench questions asked in
+    the project where their target does not exist, the stage turns 15 more into
+    answers (54 to 69), and 7 more of the 160 questions about nothing in either
+    project (114 to 121). The floor was calibrated on half the empty answers and
+    reported on the other half, with 55 controls a half, which is about ±12
+    points. It was not measured on real non-English questions put to a real
+    store. And it reads the first 128 tokens, so a memory whose subject is
+    stated late is found by its start.
 
 ## Invariants
 
@@ -424,6 +547,10 @@ before any of it.
 - Ranking transfers between SQLite builds; timing does not, and neither does
   query *construction*. A measurement of search quality made anywhere other than
   through this binary's own query builder is a measurement of something else.
+- The semantic stage never returns what another stage may not, and never runs
+  when a stronger stage answered. The first is one shared clause (§15), the
+  second is held by a test that asks a question each stronger stage answers and
+  finds no vector written.
 - Search quality has a floor that CI enforces. `tools/engram-bench/ratchet.py`
   saves a fixed synthetic corpus into a fresh store through `mem_save`, asks every
   query it defines, in several kinds, through `mem_search`, and fails when any
@@ -442,9 +569,10 @@ before any of it.
 - `src/memory/normalize.rs` — `fts_query`, `topic_key`, and the narrowing folds
 - `src/store/schema.rs` — the two indexes and the triggers that feed them
 - `src/store/tests/search.rs` — the stage-by-stage tests
-- `src/semantic/` — the model: where it is looked for, the hashes it must have, loading,
-  and `install`
-- `assets/model/`, `tools/semantic/` — the weights and the pipeline that makes them
+- `src/semantic/` (the model, where it is, its pins, `install`), `src/store/semantic_stage.rs` — the model, the stage, and
+  the fusion; `src/store/tests/semantic.rs` holds them
+- `assets/model/`, `tools/semantic/` — the weights and the pipeline that makes
+  them; `tools/semantic/hardset/` — the hard set
 - `tools/retrieval/` — the self-retrieval harness, and the reranked variant of
   the ranking statement it measures
 - `tools/engram-bench/ratchet.py`, `floors.json` — the quality and reply-size

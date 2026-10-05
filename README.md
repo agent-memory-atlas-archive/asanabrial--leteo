@@ -413,7 +413,7 @@ is written in the language of the conversation that produced it.
 
 ## Settings
 
-Those three and two more are kept in `settings.json`, in the data directory —
+Those three and three more are kept in `settings.json`, in the data directory —
 `~/.leteo/settings.json` unless you moved it. The Setup screen writes the file,
 and it is also meant to be opened by hand: a value it cannot read costs that one
 setting rather than the whole file. Nothing says so at the time, though, because
@@ -427,6 +427,7 @@ setting being read past.
 | `language` | free text | the language of each conversation |
 | `voice` | `all`, `reminders`, `quiet` | `all` |
 | `context_size` | `slim`, `full`, `deep` | `full` |
+| `semantic_search` | `true`, `false` | `true` |
 
 The two languages are written as the language's own name — `español`, not `es` —
 and read back forgivingly, because this is a file people type into: the English
@@ -435,9 +436,14 @@ name, the ISO code and the spelling without the accent all work.
 `voice` is how much of its own work Sardi says out loud — everything, the save
 reminder alone, or nothing. `context_size` is how many memories a session opens
 with: twenty, fifty or eighty, for a small context window or for a store that
-matters more than the budget.
+matters more than the budget. `semantic_search` is whether a search the words
+cannot answer goes on to look by meaning, in all thirteen languages, with a model
+that ships beside the binary and never touches a network when you search; results
+found that way are marked `semantic`. Turn it off if the memory it holds while it
+runs (stated in [`search.md`](openspec/specs/search.md) §15) is too much, or if you
+want only answers that contain your words.
 
-Two of the five are flags as well, because changing them should not mean
+Two of the six are flags as well, because changing them should not mean
 reconfiguring an agent. Either one on its own is a whole command:
 
 ```powershell

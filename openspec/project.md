@@ -30,7 +30,8 @@ enforced in only one of them is a rule that does not exist — see
 ```text
 src/
   store/       the database: schema, migrations, queries, diagnostics
-    search.rs      three-stage full-text search and ranking
+    search.rs      the lexical stages, their fusion, and the ranking
+    semantic_stage.rs  the semantic stage: vectors kept, read and merged
     schema.rs      the shape every database converges on, and the migrations
     diagnostics.rs doctor's checks and its repairs
     wire.rs        the replicated write paths, mirroring the local ones

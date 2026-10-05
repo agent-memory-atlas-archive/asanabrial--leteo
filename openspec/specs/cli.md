@@ -254,6 +254,20 @@ duties about what an answer explains.
     directory's project. The reply is the same outcome the tool serialises, with
     `sources` naming the ids that were replaced.
 
+15. **`leteo search` goes on to look by meaning when the words cannot answer,
+    and says so.** It asks the same search `mem_search` asks, with the stage on
+    unless the `semantic_search` setting beside the database says `false`
+    ([`search.md`](search.md) §15). A result the stage added carries
+    `"semantic": true` in the JSON on stdout, and stderr carries the sentence
+    `mem_search` answers with — that such a result may contain none of the words
+    asked for — in the place the relaxed-answer sentence would be. There is no
+    flag: the setting is the switch, and it is read on every search, so editing
+    the file takes effect on the next command. The first search that reaches the
+    stage on a store embeds what is in scope, which takes about half a second per
+    four thousand memories and is paid once. It needs the model, which is a file
+    and not part of the binary (16); with no verified model the search is the
+    lexical one, unchanged.
+
 16. **`leteo model install` puts the semantic model where Leteo looks for it, and
     `leteo setup` runs it when it is not there.** One command for every install
     that arrived without the model -- `cargo install`, a source build, a distro
@@ -266,7 +280,7 @@ duties about what an answer explains.
     `<data dir>/model/`; any refusal leaves what was installed as it was and exits
     non-zero. The reply is JSON naming the directory and the files. `setup` runs
     the same download when no location in [`search.md`](search.md) §15 holds a
-    verified model, unless the run is a `--dry-run`,
+    verified model, unless `semantic_search` is false or the run is a `--dry-run`,
     and never fails for want of it: it says on stderr what happened and what to
     run. `uninstall` leaves the model, which is not part of any agent's
     configuration.
