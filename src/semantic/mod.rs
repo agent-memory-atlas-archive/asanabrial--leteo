@@ -609,7 +609,17 @@ pub(crate) mod tests {
         let data = scratch.path().join("data");
         let explicit = scratch.path().join("explicit");
         let list = locations_for(Some(&linked.join("leteo")), &data, Some(&explicit));
-        let real = cellar.canonicalize().unwrap();
+        // The directory the executable resolves into, taken the way `locations_for`
+        // takes it. On Unix that is the Cellar behind the link; where the test
+        // cannot make a symlink the "link" is a plain file and resolves into its own
+        // directory, which Windows also spells with a `\\?\` prefix.
+        let real = linked
+            .join("leteo")
+            .canonicalize()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .to_path_buf();
         let expected_first = explicit.clone();
         assert_eq!(list.first(), Some(&expected_first));
         assert_eq!(list.last(), Some(&data.join("model")));
