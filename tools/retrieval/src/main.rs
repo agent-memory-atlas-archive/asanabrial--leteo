@@ -283,23 +283,6 @@ type QuestionSet<'a> = (&'a str, bool, usize, usize, &'a [(i64, String, String)]
 /// cause, the rule the issue sets for every kind of question.
 const REGRESSION: f64 = 0.02;
 
-/// The whole search, with and without the semantic stage, over the same
-/// questions — on a copy.
-///
-/// Everything above measures the first stage's statement and cannot see a
-/// stage added after it. This asks `Store::search`, the call both surfaces make,
-/// so a stage that changed what a question finds would show here.
-///
-/// A copy, because turning the stage on writes: the first search that reaches it
-/// embeds every memory in scope and keeps the vectors. `VACUUM INTO` makes the
-/// copy from a read-only connection, so the store named on the command line is
-/// still never written, and the copy is deleted.
-///
-/// The honest limit is the one the module header names. These questions are
-/// built from their targets' own words, so the lexical stages answer nearly all
-/// of them and the stage has almost nothing to do: that no set falls is the
-/// result, and it is not evidence that the stage helps. The hard set under
-/// `tools/semantic/hardset/` is the one that can show it helping.
 /// A private directory that is removed on every way out of the function that made it.
 ///
 /// The store copy used to sit at a predictable name in the shared temporary
@@ -341,6 +324,23 @@ impl Drop for Scratch {
     }
 }
 
+/// The whole search, with and without the semantic stage, over the same
+/// questions — on a copy.
+///
+/// Everything above measures the first stage's statement and cannot see a
+/// stage added after it. This asks `Store::search`, the call both surfaces make,
+/// so a stage that changed what a question finds would show here.
+///
+/// A copy, because turning the stage on writes: the first search that reaches it
+/// embeds every memory in scope and keeps the vectors. `VACUUM INTO` makes the
+/// copy from a read-only connection, so the store named on the command line is
+/// still never written, and the copy is deleted.
+///
+/// The honest limit is the one the module header names. These questions are
+/// built from their targets' own words, so the lexical stages answer nearly all
+/// of them and the stage has almost nothing to do: that no set falls is the
+/// result, and it is not evidence that the stage helps. The hard set under
+/// `tools/semantic/hardset/` is the one that can show it helping.
 fn pipeline(database: &str, sets: &[QuestionSet; 4]) -> Result<bool, Box<dyn std::error::Error>> {
     let scratch = Scratch::create()?;
     let copy = scratch.0.join("store.db");
