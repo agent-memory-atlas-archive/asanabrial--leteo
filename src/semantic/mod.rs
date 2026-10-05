@@ -86,18 +86,44 @@ pub const MAX_TOKENS: usize = 128;
 /// Basque score .177 without the floor and .044 with it.
 pub const FLOOR: f32 = 0.30;
 
+/// Where the repository keeps the model, relative to its root.
+///
+/// What the default download address assumes -- the files committed here are the
+/// ones fetched from a tag -- and what the tests that need the real model read it
+/// from, so the layout and the address cannot drift apart.
+pub const REPOSITORY_MODEL_DIR: &str = "assets/model";
+
+/// The directory `LETEO_MODEL_DIR` names, if it names one.
+///
+/// The one place the variable is read: the store's configuration and `setup` both
+/// ask this, so what a process takes from its environment is decided once. Under
+/// `cfg(test)` it answers nothing, so the unit tests do not depend on what the
+/// developer who runs them has exported; they hand the directory they mean in.
+pub fn explicit_dir() -> Option<PathBuf> {
+    if cfg!(test) {
+        return None;
+    }
+    std::env::var_os(MODEL_DIR_ENV)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+}
+
 /// Where the model is looked for, in order: the one list, and the only one.
 ///
-/// 1. `explicit`, when the caller was given a path (`LETEO_MODEL_DIR`).
-/// 2. `model/` beside the executable -- a release archive unpacked.
+/// 1. `explicit`, when the caller was given a path (`LETEO_MODEL_DIR`, read by
+///    [`explicit_dir`] and nowhere else).
+/// 2. `model/` beside the executable -- an archive unpacked, or a build that put
+///    it there.
 /// 3. `../share/leteo/model/` from the executable -- a prefix install, a package
 ///    manager's share directory, the Docker images.
 /// 4. `model/` in the data directory -- where `leteo model install` puts it.
 ///
-/// The executable is taken both as it was found and with symlinks resolved, in
-/// that order of directories, because package managers link a binary into a
-/// shared `bin/` from a versioned directory that holds the rest (Homebrew's
-/// Cellar): beside the link is not beside the file, and the other way round.
+/// The executable is taken with its symlinks resolved first, and then as it was
+/// found, in that order of directories, because package managers link a binary
+/// into a shared `bin/` from a versioned directory that holds the rest
+/// (Homebrew's Cellar): beside the link is not beside the file, and the other way
+/// round. The real file's directory is asked first because that is where whatever
+/// installed it put what belongs to it.
 /// Nothing in the list asks which channel installed the binary.
 pub fn locations(data_dir: &Path, explicit: Option<&Path>) -> Vec<PathBuf> {
     locations_for(std::env::current_exe().ok().as_deref(), data_dir, explicit)
@@ -165,7 +191,16 @@ fn inspect(directory: &Path) -> Directory {
                 }
                 files.push(bytes);
             }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            // A path that is not there, and a path that has a file where its
+            // directory should be (`NotADirectory`: `LETEO_MODEL_DIR` pointing at a
+            // file, say), are the same fact about this location -- nothing is
+            // installed here -- and not a model that is wrong.
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                ) =>
+            {
                 problems.push(format!("{name} is missing"));
             }
             Err(error) => {
@@ -420,9 +455,7 @@ pub(crate) mod tests {
     /// model find it. The packaged crate does not carry `assets/model/`, so a
     /// test that needs it says so and returns, in a tree that has none.
     pub(crate) fn repository_model() -> Option<PathBuf> {
-        let directory = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("assets")
-            .join("model");
+        let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join(REPOSITORY_MODEL_DIR);
         directory
             .join("model.safetensors")
             .is_file()
@@ -593,10 +626,16 @@ pub(crate) mod tests {
             "beside the executable comes before ../share: {list:?}"
         );
         #[cfg(unix)]
-        assert!(
-            list.iter().any(|p| *p == linked.join("model")),
-            "and beside the link, which is where a shared bin/ would hold it: {list:?}"
-        );
+        {
+            let beside_link = list
+                .iter()
+                .position(|p| *p == linked.join("model"))
+                .expect("and beside the link, which is where a shared bin/ would hold it");
+            assert!(
+                beside < beside_link,
+                "the real file's directory is asked before the link's: {list:?}"
+            );
+        }
         let mut unique = list.clone();
         unique.dedup();
         assert_eq!(unique, list);
@@ -605,6 +644,19 @@ pub(crate) mod tests {
             vec![data.join("model")],
             "no executable and no path is the data directory alone"
         );
+    }
+
+    /// A path with a file where its directory should be holds nothing, which is
+    /// not the same as holding something wrong: `LETEO_MODEL_DIR` aimed at a file
+    /// must not be reported as a model that does not verify.
+    #[test]
+    fn a_path_that_is_a_file_is_empty_and_not_wrong() {
+        let scratch = tempfile::TempDir::new().unwrap();
+        let file = scratch.path().join("not-a-directory");
+        std::fs::write(&file, b"x").unwrap();
+        let outcome = status(scratch.path(), Some(&file));
+        assert!(matches!(outcome, Status::Missing(_)), "{outcome:?}");
+        assert!(matches!(inspect(&file), Directory::Empty));
     }
 
     #[test]

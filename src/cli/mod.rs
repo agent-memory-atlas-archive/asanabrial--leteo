@@ -119,9 +119,6 @@ pub async fn run(cli: Cli) -> Result<()> {
                 };
                 crate::settings::save(&data_dir, &settings)?;
             }
-            if !*uninstall {
-                ensure_model(&cli, *dry_run).await;
-            }
             if let Some(agent) = agent.as_deref() {
                 let options = crate::setup::SetupOptions {
                     dry_run: *dry_run,
@@ -187,6 +184,12 @@ pub async fn run(cli: Cli) -> Result<()> {
                     "agents": agents,
                     "engram": engram_offer(&cli),
                 }))?;
+            }
+            // Last, after the agent is configured and the answer is printed:
+            // the model is optional and a download is the one slow thing here, so
+            // a bad network delays nothing a person asked for.
+            if !*uninstall {
+                ensure_model(&cli, *dry_run).await;
             }
             return Ok(());
         }

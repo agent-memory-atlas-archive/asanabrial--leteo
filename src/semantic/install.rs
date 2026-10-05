@@ -2,8 +2,8 @@
 //!
 //! One path, for every install that has no model beside it: `cargo install`, a
 //! build from source, a distro package, a manager nobody has written yet.
-//! Nothing here knows or asks which of them put the binary where it is. A release
-//! archive carries the model and never comes this way; this is for the rest.
+//! Nothing here knows or asks which of them put the binary where it is. An install
+//! that arrived with the model beside it never comes this way; this is for the rest.
 //!
 //! Both sources end in the same place and the same way. Every file is checked
 //! against the hashes compiled into the binary *before* anything is written where
@@ -16,46 +16,100 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
+use futures_util::StreamExt;
 
-use super::{Directory, MODEL_FILES, inspect, sha256_hex};
-
-/// What a release calls a model file: the model's own name, prefixed, because
-/// release assets share one flat namespace with the archives.
-const ASSET_PREFIX: &str = "leteo-model-";
+use super::{Directory, MODEL_FILES, REPOSITORY_MODEL_DIR, inspect, sha256_hex};
 
 /// The environment variable that replaces [`release_base`], for a mirror or a
 /// test. Documented in `cli.md`.
 pub const RELEASE_URL_ENV: &str = "LETEO_MODEL_URL";
 
-/// How long a download may take in all. The model is 13 MB.
-const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(300);
-
-/// The directory of the release that matches this binary: the model files are
-/// assets of the release whose tag is the crate's version.
+/// How long the whole install may take, all three files together.
 ///
-/// The hashes compiled into the binary decide whether what comes back is the
-/// model, so the URL only has to be a place to ask. A release that does not carry
-/// the files answers 404 and the install says so.
-pub fn release_base(overridden: Option<&str>) -> String {
-    overridden
-        .map(str::to_owned)
-        .or_else(|| {
-            std::env::var(RELEASE_URL_ENV)
-                .ok()
-                .filter(|value| !value.is_empty())
-        })
-        .unwrap_or_else(|| {
-            format!(
-                "{}/releases/download/v{}",
-                env!("CARGO_PKG_REPOSITORY").trim_end_matches('/'),
-                env!("CARGO_PKG_VERSION")
-            )
-        })
+/// One deadline around the lot and not one per request: a per-request timeout
+/// lets three slow files take three times as long, and a network that trickles
+/// bytes never trips a timeout that only watches for silence. The model is 13 MB;
+/// two minutes is a slow connection finishing it, and `setup` waits at most this
+/// long after the agent is configured.
+pub const INSTALL_DEADLINE: Duration = Duration::from_secs(120);
+
+/// How long to wait for a server to answer at all, inside the deadline.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// The most bytes a file may be before the download is abandoned.
+///
+/// Its size with a margin -- config.json is 432 bytes, the weights 12,596,056, the
+/// gzipped tokenizer 320,621 -- so a server that answers with something else, or
+/// never stops, is cut off at a known bound and not read into memory until the
+/// deadline. The hash decides whether what came back is the model; this only
+/// decides how much of a wrong answer is worth reading.
+fn size_cap(name: &str) -> usize {
+    match name {
+        "model.safetensors" => 16 * 1024 * 1024,
+        "tokenizer.json.gz" => 1024 * 1024,
+        _ => 64 * 1024,
+    }
 }
 
-/// The address of one model file under a release directory.
+/// The directory of the files of the tag that matches this binary.
+///
+/// The model is committed under [`REPOSITORY_MODEL_DIR`] at every tag, so the raw
+/// files of `v<version>` exist for every release without any release step having
+/// to publish them: `raw.githubusercontent.com/<owner>/<repo>/v<version>/<dir>`,
+/// the owner and repository taken from the crate's own `repository` field. The
+/// hashes compiled into the binary decide whether what comes back is the model, so
+/// the address only has to be a place to ask.
+///
+/// `overridden` (`--url`) wins, then `LETEO_MODEL_URL`; both name a directory that
+/// holds the three files under their own names.
+pub fn release_base(overridden: Option<&str>) -> String {
+    release_base_from(overridden, environment_url().as_deref())
+}
+
+/// [`release_base`] with the environment handed in, so a test depends on nothing
+/// the developer who runs it has exported.
+pub fn release_base_from(overridden: Option<&str>, environment: Option<&str>) -> String {
+    overridden
+        .or(environment)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .unwrap_or_else(default_base)
+}
+
+/// `LETEO_MODEL_URL`, read here and nowhere else; unit tests do not see it.
+fn environment_url() -> Option<String> {
+    if cfg!(test) {
+        return None;
+    }
+    std::env::var(RELEASE_URL_ENV)
+        .ok()
+        .filter(|value| !value.is_empty())
+}
+
+/// `(owner, repository)` from `CARGO_PKG_REPOSITORY`, which has to be a
+/// github.com address for the default download to mean anything.
+fn repository() -> Option<(&'static str, &'static str)> {
+    let rest = env!("CARGO_PKG_REPOSITORY")
+        .strip_prefix("https://github.com/")?
+        .trim_end_matches('/');
+    let rest = rest.strip_suffix(".git").unwrap_or(rest);
+    let (owner, name) = rest.split_once('/')?;
+    (!owner.is_empty() && !name.is_empty() && !name.contains('/')).then_some((owner, name))
+}
+
+fn default_base() -> String {
+    let (owner, name) = repository()
+        .expect("Cargo.toml's `repository` must be a github.com/<owner>/<repo> address");
+    format!(
+        "https://raw.githubusercontent.com/{owner}/{name}/v{}/{}",
+        env!("CARGO_PKG_VERSION"),
+        REPOSITORY_MODEL_DIR
+    )
+}
+
+/// The address of one model file under a directory of them.
 pub fn asset_url(base: &str, name: &str) -> String {
-    format!("{}/{ASSET_PREFIX}{name}", base.trim_end_matches('/'))
+    format!("{}/{name}", base.trim_end_matches('/'))
 }
 
 /// What an install put where.
@@ -66,7 +120,7 @@ pub struct Installed {
 }
 
 /// Installs from a directory that holds the three files, for a machine with no
-/// network: a release archive's `model/`, or a copy made elsewhere.
+/// network: the `model/` of an archive that carries one, or a copy made elsewhere.
 pub fn from_directory(source: &Path, data_dir: &Path) -> Result<Installed> {
     let bytes = match inspect(source) {
         Directory::Verified(bytes) => bytes,
@@ -80,10 +134,32 @@ pub fn from_directory(source: &Path, data_dir: &Path) -> Result<Installed> {
     place(data_dir, bytes)
 }
 
-/// Downloads the three files from `base` and installs them.
+/// Downloads the three files from `base` and installs them, within
+/// [`INSTALL_DEADLINE`].
 pub async fn from_release(base: &str, data_dir: &Path) -> Result<Installed> {
+    from_release_within(base, data_dir, INSTALL_DEADLINE).await
+}
+
+/// [`from_release`] with the deadline handed in.
+pub async fn from_release_within(
+    base: &str,
+    data_dir: &Path,
+    deadline: Duration,
+) -> Result<Installed> {
+    let bodies = tokio::time::timeout(deadline, fetch(base))
+        .await
+        .map_err(|_| {
+            anyhow::anyhow!(
+                "the download did not finish within {} seconds; nothing was installed",
+                deadline.as_secs_f32()
+            )
+        })??;
+    place(data_dir, bodies)
+}
+
+async fn fetch(base: &str) -> Result<[Vec<u8>; 3]> {
     let client = reqwest::Client::builder()
-        .timeout(DOWNLOAD_TIMEOUT)
+        .connect_timeout(CONNECT_TIMEOUT)
         .user_agent(concat!("leteo/", env!("CARGO_PKG_VERSION")))
         .build()
         .context("could not build an HTTP client")?;
@@ -98,11 +174,22 @@ pub async fn from_release(base: &str, data_dir: &Path) -> Result<Installed> {
         if !response.status().is_success() {
             bail!("{url} answered {}", response.status());
         }
-        let body = response
-            .bytes()
-            .await
-            .with_context(|| format!("the download of {url} did not finish"))?
-            .to_vec();
+        let cap = size_cap(name);
+        if response
+            .content_length()
+            .is_some_and(|length| length > cap as u64)
+        {
+            bail!("{url} is larger than the {cap} bytes {name} may be; nothing was installed");
+        }
+        let mut body = Vec::new();
+        let mut stream = response.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.with_context(|| format!("the download of {url} did not finish"))?;
+            if body.len() + chunk.len() > cap {
+                bail!("{url} is larger than the {cap} bytes {name} may be; nothing was installed");
+            }
+            body.extend_from_slice(&chunk);
+        }
         if sha256_hex(&body) != expected {
             bail!(
                 "{url} is not the file this build accepts ({name} does not match its pinned SHA-256); nothing was installed"
@@ -110,10 +197,7 @@ pub async fn from_release(base: &str, data_dir: &Path) -> Result<Installed> {
         }
         fetched.push(body);
     }
-    place(
-        data_dir,
-        <[Vec<u8>; 3]>::try_from(fetched).expect("one body per pinned file"),
-    )
+    Ok(<[Vec<u8>; 3]>::try_from(fetched).expect("one body per pinned file"))
 }
 
 /// Writes already-verified bytes into `<data dir>/model/`, all or nothing.
@@ -229,26 +313,105 @@ mod tests {
                 if corrupt == Some(*name) {
                     body[10] ^= 0xff;
                 }
-                (format!("/v/{ASSET_PREFIX}{name}"), body)
+                (format!("/v/{name}"), body)
             })
             .collect()
     }
 
+    /// The address is shaped by this crate's own `repository` field and version,
+    /// and by the directory the repository keeps the model in: the raw files of
+    /// the tag. Unit-tested and never fetched.
     #[test]
-    fn the_release_directory_is_the_one_of_this_version_and_asset_names_are_prefixed() {
-        let base = release_base(None);
-        assert!(
-            base.ends_with(&format!(
-                "/releases/download/v{}",
+    fn the_default_address_is_the_raw_files_of_the_tag_of_this_binary() {
+        let (owner, name) = repository().expect("Cargo.toml's repository is a github.com address");
+        assert_eq!(
+            release_base_from(None, None),
+            format!(
+                "https://raw.githubusercontent.com/{owner}/{name}/v{}/assets/model",
                 env!("CARGO_PKG_VERSION")
-            )),
-            "{base}"
+            )
+        );
+        assert_eq!(
+            asset_url(&release_base_from(None, None), "config.json"),
+            format!(
+                "https://raw.githubusercontent.com/{owner}/{name}/v{}/assets/model/config.json",
+                env!("CARGO_PKG_VERSION")
+            ),
+            "the files keep their own names"
         );
         assert_eq!(
             asset_url("http://h/v/", "config.json"),
-            "http://h/v/leteo-model-config.json"
+            "http://h/v/config.json"
         );
-        assert_eq!(release_base(Some("http://mirror/x")), "http://mirror/x");
+        assert_eq!(
+            release_base_from(Some("http://flag/x"), Some("http://env/y")),
+            "http://flag/x"
+        );
+        assert_eq!(
+            release_base_from(None, Some("http://env/y")),
+            "http://env/y"
+        );
+        assert_eq!(
+            release_base_from(None, Some("")),
+            release_base_from(None, None)
+        );
+    }
+
+    /// The path the address assumes is the path the tests read the model from, and
+    /// the three files are there under the names the address will ask for.
+    #[test]
+    fn the_directory_the_address_names_is_the_one_the_repository_keeps_the_model_in() {
+        assert!(release_base_from(None, None).ends_with(&format!("/{REPOSITORY_MODEL_DIR}")));
+        let Some(directory) = repository_model() else {
+            eprintln!("skipped: this tree has no assets/model");
+            return;
+        };
+        assert_eq!(
+            directory,
+            Path::new(env!("CARGO_MANIFEST_DIR")).join(REPOSITORY_MODEL_DIR)
+        );
+        for (name, _) in MODEL_FILES {
+            assert!(directory.join(name).is_file(), "{name}");
+        }
+    }
+
+    /// A body larger than the file may be is abandoned, not read to the end.
+    #[tokio::test]
+    async fn a_body_larger_than_the_file_may_be_is_cut_off() {
+        let data = tempfile::TempDir::new().unwrap();
+        let base = serve(vec![("/v/config.json".to_owned(), vec![b'x'; 200 * 1024])]);
+        let error = from_release(&base, data.path())
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("larger than"), "{error}");
+        assert_eq!(std::fs::read_dir(data.path()).unwrap().count(), 0);
+    }
+
+    /// One deadline for the whole install: a server that takes the connection and
+    /// says nothing is given up on, whatever each request would have waited.
+    #[tokio::test]
+    async fn a_server_that_never_answers_is_given_up_on_at_the_deadline() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            let held: Vec<_> = listener.incoming().flatten().collect();
+            std::thread::sleep(Duration::from_secs(5));
+            drop(held);
+        });
+        let data = tempfile::TempDir::new().unwrap();
+        let started = std::time::Instant::now();
+        let error = from_release_within(
+            &format!("http://{address}/v"),
+            data.path(),
+            Duration::from_millis(300),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("did not finish within"), "{error}");
+        assert!(started.elapsed() < Duration::from_secs(3));
+        assert_eq!(std::fs::read_dir(data.path()).unwrap().count(), 0);
     }
 
     #[test]

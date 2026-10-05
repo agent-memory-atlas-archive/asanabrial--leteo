@@ -329,10 +329,10 @@ before any of it.
     that motivated the cap.
 
 15. **The semantic model is a file beside the binary, found in one list and
-    checked against hashes the binary pins.** A seventh search stage, by meaning,
-    reads a static embedding model; this is what the model is and how it gets
-    onto a machine, and the stage that uses it comes with its own account. The
-    model is run in-process, so there is no network at search time, no server
+    checked against hashes the binary pins.** A search stage by meaning reads a
+    static embedding model; this is what the model is and how it gets onto a
+    machine. At this head nothing searches with it yet: the stage comes in the next
+    change, with its own account. The model is run in-process, so there is no network at search time, no server
     and no shell-out, and nothing leaves the machine.
 
     **The model.** `sentence-transformers/static-similarity-mrl-multilingual-v1`
@@ -359,21 +359,28 @@ before any of it.
     ordered list, `semantic::locations`, and nowhere else:
 
     1. the directory `LETEO_MODEL_DIR` names;
-    2. `model/` beside the executable, with symlinks resolved and as found
-       (a Homebrew `bin/` link points into the Cellar, which holds the rest);
+    2. `model/` beside the executable, the symlink-resolved directory first and
+       then the one it was found in (a Homebrew `bin/` link points into the
+       Cellar, which holds the rest);
     3. `../share/leteo/model/` from the executable;
     4. `model/` in the data directory.
 
-    A release archive carries the model beside the executable, and the Docker
-    images put it under `share/`. Any install that arrives without it -- `cargo
-    install`, a build from source, a distro package, a manager added later -- is
-    served by one path that knows nothing about which of them it is: `leteo model
-    install` downloads the three files from the GitHub release whose tag is the
-    binary's version into the data directory (`--url` or `LETEO_MODEL_URL`
-    replaces the address, `--from <directory>` copies from a local copy and
-    touches no network), and `leteo setup` runs it when no verified model is
-    found. It writes nothing until every file has verified, and replaces an
-    installed model by renaming a finished directory over it.
+    The Docker images put the model under `share/`. Every other install -- the
+    install scripts, `cargo install`, a build from source, a distro package, a
+    manager added later -- is served by one path that knows nothing about which of
+    them it is: `leteo model install` downloads the three files from the files
+    committed under `assets/model/` at the tag of the binary's version
+    (`raw.githubusercontent.com/<owner>/<repo>/v<version>/assets/model/`, with the
+    owner and repository taken from the crate's own `repository` field, so no
+    release step has to publish anything for it to work) into the data directory.
+    `--url` or `LETEO_MODEL_URL` names another directory of the three files under
+    their own names, and `--from <directory>` copies from a local copy and touches
+    no network. `leteo setup` runs it when no verified model is found, after the
+    agent is configured and never failing over it. The whole download has one
+    deadline of two minutes, and each file is cut off at a known bound (the
+    weights at 16 MiB, against 12,596,056 bytes). Nothing is written until every
+    file has verified, and an installed model is replaced by renaming a finished
+    directory over it.
 
     **The binary pins the model it accepts.** The SHA-256 of each file, as
     stored, is compiled into the binary (`semantic::MODEL_FILES`), and a test
@@ -384,6 +391,22 @@ before any of it.
     `doctor` (`semantic_model`, [`store-and-schema.md`](store-and-schema.md) §4)
     says which condition holds -- verified and where, missing, or present and
     wrong -- and names the fix.
+
+    **What it costs**, measured on an Apple M-series machine, and stated here once:
+
+    - **The binary** is 15,730,544 bytes, against 15,680,176 before this change:
+      the locator, the pins and the installer. The model runtime itself -- the
+      tokenizer and the loader -- is linked only where something loads the model,
+      which nothing does at this head, and none of the model is in the binary at
+      all.
+    - **The crate** is 1,053,447 bytes packaged, about 1 MB, and does not depend
+      on the model's size, so a larger model can never again make it unpublishable.
+      The model is 12.9 MB beside it.
+    - **Memory.** 15.7 MB resident for a process that has not loaded the model;
+      about 103 MB for one that has (which, at this head, only a test does),
+      because the int8 table is expanded to f32.
+      Loading reads and hashes the 13 MB of files first, which is what makes an
+      unverified file never load, and takes a few tens of milliseconds in all.
 
 ## Invariants
 

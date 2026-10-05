@@ -383,9 +383,7 @@ impl StoreConfig {
             max_context_results: 20,
             max_search_results: 20,
             dedupe_window: Duration::from_secs(15 * 60),
-            model_dir: std::env::var_os(crate::semantic::MODEL_DIR_ENV)
-                .filter(|value| !value.is_empty())
-                .map(PathBuf::from),
+            model_dir: crate::semantic::explicit_dir(),
         }
     }
 

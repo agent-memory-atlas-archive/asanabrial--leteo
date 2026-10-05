@@ -1811,8 +1811,12 @@ fn the_consolidate_command_merges_and_hides_the_sources() {
 /// The model of this checkout, or nothing in a tree that does not carry it (the
 /// packaged crate does not).
 fn repository_model() -> Option<PathBuf> {
-    let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/model");
-    if directory.join("model.safetensors").is_file() {
+    let directory =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join(leteo::semantic::REPOSITORY_MODEL_DIR);
+    if leteo::semantic::MODEL_FILES
+        .iter()
+        .all(|(name, _)| directory.join(name).is_file())
+    {
         Some(directory)
     } else {
         eprintln!("skipped: this tree has no assets/model");
@@ -1823,7 +1827,7 @@ fn repository_model() -> Option<PathBuf> {
 fn copy_model(into: &Path) {
     let from = repository_model().expect("a model to copy");
     std::fs::create_dir_all(into).unwrap();
-    for name in ["config.json", "model.safetensors", "tokenizer.json.gz"] {
+    for (name, _) in leteo::semantic::MODEL_FILES {
         std::fs::copy(from.join(name), into.join(name)).unwrap();
     }
 }

@@ -158,9 +158,9 @@ instead, including work that has not been released yet, ask for the repository:
 
 Search by meaning, for a question that shares no word with the memory it wants,
 reads a 13 MB model that lives in a file beside the binary and not inside it. The
-release archives, the Homebrew and Scoop packages and the Docker images carry it.
-An install that arrives without it -- `cargo install`, a build from source, a
-package that left it out -- fetches it once:
+Docker images carry it. Every other install -- the install scripts, `cargo
+install`, a build from source, a package manager -- fetches it once, from the files
+committed at the tag of its own version:
 
 ```bash
 leteo model install                      # downloads the model of this version, checks it
@@ -580,7 +580,7 @@ only when the command line does not answer the same question.
 | `LETEO_DATABASE` | `--database` | Explicit local SQLite path |
 | `LETEO_TOOLS` | `mcp --tools` | `agent`, `admin`, `all`, or single tool names. Every tool when nothing names any |
 | `LETEO_MODEL_DIR` | — | A directory holding the semantic search model, looked in before anywhere else |
-| `LETEO_MODEL_URL` | `model install --url` | Where `leteo model install` and `leteo setup` fetch the model from, instead of the GitHub release of this version |
+| `LETEO_MODEL_URL` | `model install --url` | Where `leteo model install` and `leteo setup` fetch the model from, instead of the files committed at this version's tag: a directory holding the three files under their own names |
 | `LETEO_PROJECT` | `mcp --project` | Project the MCP server trusts for the whole process; without it, the working directory decides |
 | `LETEO_AGENT_CLI` | `conflicts scan --semantic` | Agent CLI that judges conflict candidates: `claude` or `opencode` |
 | `LETEO_SYSTEM_LANGUAGE` | — | Language this machine works in, when `LANG` does not say. Read once, to offer it in `leteo setup` |

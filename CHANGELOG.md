@@ -10,12 +10,12 @@ All notable changes to Leteo are documented in this file.
   puts it there.** A 13 MB static embedding model, verified against SHA-256s the
   binary was built with before a byte of it is used, found through one ordered list
   (`LETEO_MODEL_DIR`, beside the executable, `../share/leteo/model`, the data
-  directory). Release archives and the Docker images carry it; any install that
-  arrives without it -- `cargo install`, a build from source, a package that left it
-  out -- fetches it with `leteo model install` (or `--from <directory>` with no
-  network), which `leteo setup` runs when it finds none. `leteo doctor` reports
+  directory). The Docker images carry it; every other install fetches it with
+  `leteo model install` from the files committed at the tag of its own version (or
+  `--from <directory>` with no network), which `leteo setup` runs, after the agent is
+  configured, when it finds none. `leteo doctor` reports
   whether the model is verified, missing or wrong. Search does not use it yet. The
-  binary grows by 1.5 MB and the crate stays about 1 MB (#124).
+  binary grows by 50 KB and the crate stays about 1 MB (#124).
 
 ### Changed
 

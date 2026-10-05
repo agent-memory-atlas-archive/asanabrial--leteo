@@ -172,7 +172,7 @@ pub(super) async fn ensure_model(cli: &Cli, dry_run: bool) {
     let Ok(data_dir) = data_directory(cli) else {
         return;
     };
-    let explicit = std::env::var_os(crate::semantic::MODEL_DIR_ENV).map(PathBuf::from);
+    let explicit = crate::semantic::explicit_dir();
     let status = crate::semantic::status(&data_dir, explicit.as_deref());
     if matches!(status, crate::semantic::Status::Verified(_)) {
         return;

@@ -1,9 +1,10 @@
 # The semantic model
 
 Not part of the binary's code, but the origin of the one binary asset: the
-embedding model under `assets/model/`. A release packs it beside the binary and
-publishes it as release assets; the semantic search stage loads it from a file
-and only after checking every file against the hashes the binary was built with.
+embedding model under `assets/model/`, committed at every tag. The binary loads
+it from a file, and only after checking every file against the hashes it was built
+with; an install without it fetches the files of its own tag with
+`leteo model install`.
 Nothing ships whose origin cannot be traced to a command in this directory.
 
 ## What the model is
