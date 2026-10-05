@@ -86,7 +86,14 @@ there from any provenance, and how it says when something has gone wrong.
    `sqlite_integrity`, `foreign_keys`, three full-text `*_integrity` checks,
    three `*_sync` row-count checks, `observation_hash_sync`,
    `observation_type_searchable`, `full_text_triggers`, `topic_key_uniqueness`,
-   `settings_readable`, `journal_mode`, `busy_timeout`.
+   `settings_readable`, `semantic_model`, `journal_mode`, `busy_timeout`.
+   `semantic_model` is the one check about a file and not the database, and says
+   which of three conditions holds: the model found and verified (and where),
+   not installed, or present and not the model this build accepts, each with the
+   command that mends it (`leteo model install`, or `--from <directory>`). A
+   model that is simply not installed is an optional thing absent and does not
+   make the store unhealthy -- it is in the report and not in `issues` -- while
+   one that is there and wrong does, because something replaced or damaged it.
    Every code is listed
    once in `DoctorCheck::CODES`, and tests hold the list to the checks that run.
 

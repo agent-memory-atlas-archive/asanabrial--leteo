@@ -4,6 +4,19 @@ All notable changes to Leteo are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **The semantic search model is a file beside the binary, and `leteo model install`
+  puts it there.** A 13 MB static embedding model, verified against SHA-256s the
+  binary was built with before a byte of it is used, found through one ordered list
+  (`LETEO_MODEL_DIR`, beside the executable, `../share/leteo/model`, the data
+  directory). The Docker images carry it; every other install fetches it with
+  `leteo model install` from the files committed at the tag of its own version (or
+  `--from <directory>` with no network), which `leteo setup` runs, after the agent is
+  configured, when it finds none. `leteo doctor` reports
+  whether the model is verified, missing or wrong. Search does not use it yet. The
+  binary grows by 50 KB and the crate stays about 1 MB (#124).
+
 ### Changed
 
 - **The opening block and `mem_context` had no size bound.** They were bounded by a

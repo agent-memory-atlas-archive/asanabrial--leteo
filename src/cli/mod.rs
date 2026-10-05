@@ -185,7 +185,28 @@ pub async fn run(cli: Cli) -> Result<()> {
                     "engram": engram_offer(&cli),
                 }))?;
             }
+            // Last, after the agent is configured and the answer is printed:
+            // the model is optional and a download is the one slow thing here, so
+            // a bad network delays nothing a person asked for.
+            if !*uninstall {
+                ensure_model(&cli, *dry_run).await;
+            }
             return Ok(());
+        }
+        Command::Model {
+            action: ModelCommand::Install { from, url },
+        } => {
+            let data_dir = data_directory(&cli)?;
+            let installed = match from {
+                Some(source) => {
+                    crate::semantic::install::from_directory(&absolutize(source)?, &data_dir)?
+                }
+                None => {
+                    let base = crate::semantic::install::release_base(url.as_deref());
+                    crate::semantic::install::from_release(&base, &data_dir).await?
+                }
+            };
+            return print_json(&installed);
         }
         Command::Uninstall { yes } => {
             // Without `--yes` this is a dry run rather than a prompt. The
@@ -986,6 +1007,7 @@ pub async fn run(cli: Cli) -> Result<()> {
         Command::Setup { .. }
         | Command::Cloud { .. }
         | Command::CurrentProject
+        | Command::Model { .. }
         | Command::Uninstall { .. } => {
             unreachable!("stateless command handled before opening the store")
         }

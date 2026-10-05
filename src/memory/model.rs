@@ -1018,6 +1018,17 @@ impl DoctorCheck {
         }
     }
 
+    /// A check that holds and has something to say: where a thing was found, or
+    /// that an optional thing is not there. Not an issue, so `healthy` is
+    /// unchanged, and the sentence is in the report for whoever asks.
+    pub fn noted(code: &str, detail: impl Into<String>) -> Self {
+        Self {
+            code: code.to_owned(),
+            ok: true,
+            detail: Some(detail.into()),
+        }
+    }
+
     pub fn failed(code: &str, detail: impl Into<String>) -> Self {
         Self {
             code: code.to_owned(),
@@ -1041,6 +1052,7 @@ impl DoctorCheck {
         "observation_type_searchable",
         "topic_key_uniqueness",
         "settings_readable",
+        "semantic_model",
         "full_text_triggers",
         "journal_mode",
         "busy_timeout",
