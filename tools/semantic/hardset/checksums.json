@@ -1,0 +1,43 @@
+{
+  "note": "SHA-256 of every file under data/ as stored (gzip, deterministic: tools/semantic/pack_gz.py) and of what each decompresses to. check_sets.py refuses to run on anything else, and the decompressed hash is the one that matters: another zlib may write other valid bytes for the same questions.",
+  "files": {
+    "absent.json.gz": "4d541e098bc1cb6c8077b72bcb2bf18d615e61077ab5d62046cbc9de8a17a3ff",
+    "mem_de.json.gz": "7eceaa6b1abc1ccc30115c5604b4386c68254daea00819cfdf26d4107800f303",
+    "mem_es.json.gz": "567a6ec5d79aa3c5dc70ee5d39dabb44c499929f58c456708dfc19db40762202",
+    "mem_eu.json.gz": "1b31be88a4ea04195eeca1adc27fdecade523b8b7d58ca1cec11f0490da1e822",
+    "mem_gl.json.gz": "605710d6788e627cfae474808b87dc31a0b44dca025ead64dfd5eda0984a7ac6",
+    "para_en.json.gz": "99428e5fa07e6e80604f8f6a6b813584c10cb7dbaa3adeb079ee6505b27b84ab",
+    "xl_ca.json.gz": "1e324734b3d6a11782fdd59aeca8a1913940cfd12af1d3b96a054dc39454538e",
+    "xl_de.json.gz": "0bcbb8f15b7f105c9b236be18dd7ea18171154a97f3b7b986ef170ff7d75a24d",
+    "xl_es.json.gz": "f05f64aa057c9c2fea50769ede820255f35ec5e8efda2301db140075101c118a",
+    "xl_eu.json.gz": "236d9760a38c08d4ee1ae32584b758ffee9a211479041dd332f33b2287089bb2",
+    "xl_fr.json.gz": "8b6fc4b4b72917deaf0d8fcc3881d87bba92447c2dfcce36483b0ceafda3ac1e",
+    "xl_gl.json.gz": "ecb3c22db8b5362ba6abbf891f37b5c92f31986383442dd2722ba96501aca4ca",
+    "xl_it.json.gz": "32ab44fe6053b5491d7e2cb196890a2b94aca0fda4c8065b1fdb8f0a0f7130d1",
+    "xl_nl.json.gz": "0f666e83cedeb0be84eb56a4aaa13d4c4f6bdc35763c5f88a5c01b7a3f0495b7",
+    "xl_pl.json.gz": "56e194320216afd561a2f31b0ffa9de365c44043ed69634a2600d32cecbe876e",
+    "xl_pt.json.gz": "e7a80c343d49f37b768caf08584990761dcc62d240b582fc658c245c4162db88",
+    "xl_ro.json.gz": "1363f1c35610f420aa8d2b1546d5212a1ede1e33d2a0e52d75325b590b8a8e06",
+    "xl_sv.json.gz": "521c5dca853b9faab35dc1805ecf8f35c994e9a656ebc8f196dd930392433466"
+  },
+  "decompressed": {
+    "absent.json": "a4a52bbf82c7ea081e97978f6760cd5fe1424445eee49e61c0d344c7b31d8559",
+    "mem_de.json": "a22ab64d822ff140ae27783dcfc1542ba3c2f0dc0037e0069314d16c493332f0",
+    "mem_es.json": "eeff6d64b9df2579a8250353099277056149f3ac89438d38c61fea55b1a6106f",
+    "mem_eu.json": "b05f6d2198e3546051ba12c402717ded982dd50645f6926a8d3bb695c7d4d16e",
+    "mem_gl.json": "00dc39847b2b172a007ebfb98def5806c16333119c753e646eaecec6523a09ba",
+    "para_en.json": "37467e7fcbfff78defa9f7802fcc4b9a2e0b7998c240072fba63314b14c0ec6d",
+    "xl_ca.json": "6afbb7f4bdea769848a68b59a9526db76b7ba57bf4479439ebb64d1d3ffcbd71",
+    "xl_de.json": "d37ef79e9d41c12e0c98097425b6519e69ff95ab29ba331cd7fddc70652f8f71",
+    "xl_es.json": "07c1dbcb6e256f185935a3f68aa2ec059c85686f214a71ea111ca021a4cdfa79",
+    "xl_eu.json": "f9d2286d65db26ff050b6f87200da9a86a19a1251609dd6b3f58b14e04e53a2b",
+    "xl_fr.json": "26874e1fc0a9209558cf0d1658ae6e3c965991c3f148ddf9e615bff1ef73dfe6",
+    "xl_gl.json": "1d21bd6c74250cb501f808e1791bf04352dabd9bde09ceac45589ea16537c064",
+    "xl_it.json": "6ffd6c7dfc6330c1edd7e9a57848ffca94b04fa018c4f87ebb1b6f657f7d2f81",
+    "xl_nl.json": "17b2030902a3570f51b2e18c67497f05c180b6c04eb0189e0ab91fe5a558d32e",
+    "xl_pl.json": "a2729e2ca75a9305cd6c54c943d3d16d3e7265adaff6e652f321646f7e339ba6",
+    "xl_pt.json": "bddd35c9e7e54b619a1c0246b72ccb46e0c7b3d4a0c8835031f134c643c36fde",
+    "xl_ro.json": "44c6e73722a4446c482de9e0a60561c986855e28d807435cb2c4d5d04c900e4a",
+    "xl_sv.json": "7d79f81829afce3af581acfea5e0fdf25fb33b0b6df190ae4735bff849892d81"
+  }
+}
