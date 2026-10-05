@@ -366,6 +366,12 @@ pub struct StoreConfig {
     pub max_context_results: usize,
     pub max_search_results: usize,
     pub dedupe_window: Duration,
+    /// A directory to look for the semantic model in before anywhere else.
+    ///
+    /// From `LETEO_MODEL_DIR` unless a caller sets it; see
+    /// [`crate::semantic::locations`] for the rest of the list, which is the only
+    /// place the order is written.
+    pub model_dir: Option<PathBuf>,
 }
 
 impl StoreConfig {
@@ -377,6 +383,9 @@ impl StoreConfig {
             max_context_results: 20,
             max_search_results: 20,
             dedupe_window: Duration::from_secs(15 * 60),
+            model_dir: std::env::var_os(crate::semantic::MODEL_DIR_ENV)
+                .filter(|value| !value.is_empty())
+                .map(PathBuf::from),
         }
     }
 
@@ -706,6 +715,17 @@ impl Store {
 
     pub fn database_path(&self) -> &Path {
         &self.config.database_path
+    }
+
+    /// The directory the database, the settings and an installed model share.
+    pub fn data_dir(&self) -> &Path {
+        self.config.database_path.parent().unwrap_or(Path::new("."))
+    }
+
+    /// The semantic model's directory as configured, for the surfaces that
+    /// report on it.
+    pub fn model_dir(&self) -> Option<&Path> {
+        self.config.model_dir.as_deref()
     }
 }
 

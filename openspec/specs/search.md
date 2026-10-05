@@ -328,6 +328,63 @@ before any of it.
     magnitude of margin above any legitimate question and refuses the pasted log
     that motivated the cap.
 
+15. **The semantic model is a file beside the binary, found in one list and
+    checked against hashes the binary pins.** A seventh search stage, by meaning,
+    reads a static embedding model; this is what the model is and how it gets
+    onto a machine, and the stage that uses it comes with its own account. The
+    model is run in-process, so there is no network at search time, no server
+    and no shell-out, and nothing leaves the machine.
+
+    **The model.** `sentence-transformers/static-similarity-mrl-multilingual-v1`
+    (Apache-2.0), truncated to its first 256 dimensions, quantised to int8, with
+    its WordPiece vocabulary pruned to the 49,203 pieces the thirteen interface
+    languages use. It is 12.9 MB in three files — `model.safetensors`,
+    `config.json`, and the tokenizer stored as 321 KB of deterministic gzip and
+    decompressed when the model loads — run by `model2vec-rs` (pure Rust,
+    `fancy-regex`, no `onig`). `tools/semantic/` rebuilds the files from the
+    original and `checksums.json` records what each hashes to, stored and
+    decompressed; the attribution is in `NOTICE`. A memory is embedded from its first 128 tokens, title first: that
+    beat 64 and 256, and at 512 the semantic MRR of bodies fell from .57 to .35.
+    It was chosen over Model2Vec models distilled from multilingual teachers,
+    which come to 19.0 MB: on semantic-only MRR@10 over a copy of a real store it
+    scored .62 on titles against .51 for the bge-m3 distillation and .38 for the
+    e5-small one, and on the hard set it beat the bge-m3 one by .049
+    [.035, .063], paired.
+
+    **Where the model is, and how it arrives.** Nothing is embedded in the
+    binary: a model compiled in ties the crate's size, and with it whether the
+    crate can be published at all, to the model's, and the crate was 11 MB against
+    crates.io's 10 MiB. Every install loads the model from a file and behaves the
+    same at run time; only how the file arrives differs. It is looked for in one
+    ordered list, `semantic::locations`, and nowhere else:
+
+    1. the directory `LETEO_MODEL_DIR` names;
+    2. `model/` beside the executable, with symlinks resolved and as found
+       (a Homebrew `bin/` link points into the Cellar, which holds the rest);
+    3. `../share/leteo/model/` from the executable;
+    4. `model/` in the data directory.
+
+    A release archive carries the model beside the executable, and the Docker
+    images put it under `share/`. Any install that arrives without it -- `cargo
+    install`, a build from source, a distro package, a manager added later -- is
+    served by one path that knows nothing about which of them it is: `leteo model
+    install` downloads the three files from the GitHub release whose tag is the
+    binary's version into the data directory (`--url` or `LETEO_MODEL_URL`
+    replaces the address, `--from <directory>` copies from a local copy and
+    touches no network), and `leteo setup` runs it when no verified model is
+    found. It writes nothing until every file has verified, and replaces an
+    installed model by renaming a finished directory over it.
+
+    **The binary pins the model it accepts.** The SHA-256 of each file, as
+    stored, is compiled into the binary (`semantic::MODEL_FILES`), and a test
+    holds the list to `tools/semantic/checksums.json`, which the pipeline writes.
+    `MODEL_ID` carries the start of the weights' hash, so the name stored beside
+    every vector changes whenever the bytes do. A file that is missing or does not
+    hash to its pin is never loaded: the stage is off and search is lexical only.
+    `doctor` (`semantic_model`, [`store-and-schema.md`](store-and-schema.md) §4)
+    says which condition holds -- verified and where, missing, or present and
+    wrong -- and names the fix.
+
 ## Invariants
 
 - The index is kept level with its table by triggers and by nothing else.
@@ -362,6 +419,9 @@ before any of it.
 - `src/memory/normalize.rs` — `fts_query`, `topic_key`, and the narrowing folds
 - `src/store/schema.rs` — the two indexes and the triggers that feed them
 - `src/store/tests/search.rs` — the stage-by-stage tests
+- `src/semantic/` — the model: where it is looked for, the hashes it must have, loading,
+  and `install`
+- `assets/model/`, `tools/semantic/` — the weights and the pipeline that makes them
 - `tools/retrieval/` — the self-retrieval harness, and the reranked variant of
   the ranking statement it measures
 - `tools/engram-bench/ratchet.py`, `floors.json` — the quality and reply-size

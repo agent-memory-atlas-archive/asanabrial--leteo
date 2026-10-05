@@ -42,9 +42,11 @@ src/
   hooks/       the five lifecycle events, their budgets, and what they emit
   cli/         the command-line surface
   recall/…     recall.rs, the opening context an agent is handed
+  semantic/    the model the semantic search stage reads: where it is, the hashes it must have, and how it is installed
   sync/, cloud/  optional replication to a PostgreSQL peer
   setup/, tui/   installing into an agent, and the interactive configuration
 migrations/    the SQL, embedded at build time; never edited once released
+assets/model/  the embedding model a release packs beside the binary (tools/semantic/ rebuilds it)
 tests/         integration tests that run the built binary
 openspec/      these documents
 ```

@@ -154,6 +154,25 @@ which is the faster half of that sentence. To build whatever is on `main`
 instead, including work that has not been released yet, ask for the repository:
 `cargo install --git https://github.com/asanabrial/leteo`.
 
+### The search model
+
+Search by meaning, for a question that shares no word with the memory it wants,
+reads a 13 MB model that lives in a file beside the binary and not inside it. The
+release archives, the Homebrew and Scoop packages and the Docker images carry it.
+An install that arrives without it -- `cargo install`, a build from source, a
+package that left it out -- fetches it once:
+
+```bash
+leteo model install                      # downloads the model of this version, checks it
+leteo model install --from ./model       # from a copy, with no network
+```
+
+`leteo setup` does the same when it finds none. Until a verified model is there,
+search works by words only, as it always did, and `leteo doctor` says which of
+three things is true: found and verified (and where), not installed, or there
+and not the model this build accepts. The model is only ever loaded after every
+file has been checked against hashes the binary was built with.
+
 ### Without installing anything
 
 Most MCP documentation assumes `npx`, so there is a wrapper on npm that fetches
@@ -552,14 +571,16 @@ installation needs into each agent's own configuration file, and the choices you
 make in the interface are kept in [`settings.json`](#settings). Neither of them
 sets a variable in your environment.
 
-All but the last are a command-line flag as well, and the flag wins: the
-variable is read only when the command line does not answer the same question.
+Most are a command-line flag as well, and the flag wins: the variable is read
+only when the command line does not answer the same question.
 
 | Variable | Flag | Purpose |
 | --- | --- | --- |
 | `LETEO_DATA_DIR` | `--data-dir` | Local data directory; defaults to `~/.leteo` |
 | `LETEO_DATABASE` | `--database` | Explicit local SQLite path |
 | `LETEO_TOOLS` | `mcp --tools` | `agent`, `admin`, `all`, or single tool names. Every tool when nothing names any |
+| `LETEO_MODEL_DIR` | — | A directory holding the semantic search model, looked in before anywhere else |
+| `LETEO_MODEL_URL` | `model install --url` | Where `leteo model install` and `leteo setup` fetch the model from, instead of the GitHub release of this version |
 | `LETEO_PROJECT` | `mcp --project` | Project the MCP server trusts for the whole process; without it, the working directory decides |
 | `LETEO_AGENT_CLI` | `conflicts scan --semantic` | Agent CLI that judges conflict candidates: `claude` or `opencode` |
 | `LETEO_SYSTEM_LANGUAGE` | — | Language this machine works in, when `LANG` does not say. Read once, to offer it in `leteo setup` |

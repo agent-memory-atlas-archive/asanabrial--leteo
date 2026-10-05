@@ -254,6 +254,23 @@ duties about what an answer explains.
     directory's project. The reply is the same outcome the tool serialises, with
     `sources` naming the ids that were replaced.
 
+16. **`leteo model install` puts the semantic model where Leteo looks for it, and
+    `leteo setup` runs it when it is not there.** One command for every install
+    that arrived without the model -- `cargo install`, a source build, a distro
+    package, a manager added later -- with no case for any of them. It downloads
+    the three files from the GitHub release whose tag is the binary's version
+    (`--url` or `LETEO_MODEL_URL` names another directory of assets), or copies
+    them from a directory with `--from`, which touches no network. Every file is
+    checked against the SHA-256 compiled into the binary before anything is
+    written, the three go into a directory of their own, and that is renamed into
+    `<data dir>/model/`; any refusal leaves what was installed as it was and exits
+    non-zero. The reply is JSON naming the directory and the files. `setup` runs
+    the same download when no location in [`search.md`](search.md) §15 holds a
+    verified model, unless the run is a `--dry-run`,
+    and never fails for want of it: it says on stderr what happened and what to
+    run. `uninstall` leaves the model, which is not part of any agent's
+    configuration.
+
 ## Invariants
 
 - Every documented command exists, and every command is documented. A test in
