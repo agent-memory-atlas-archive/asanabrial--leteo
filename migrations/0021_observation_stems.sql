@@ -24,10 +24,13 @@
 -- it: each machine stems with its own setting.
 --
 -- The triggers are what make every write path stem, structurally. Nothing in
--- Rust has to remember: an insert, a revision, a project rename, a replicated
--- write and an import all reach `observations`, and these fire on it. The cost
--- is that a connection which has not registered the functions cannot write a
--- memory, and fails saying so rather than leaving a row its index cannot find.
+-- Rust has to remember: an insert, a revision, a project rename and a
+-- replicated write all reach `observations`, and these fire on it. An import
+-- is the exception, because it drops the triggers to build the indexes once at
+-- the end; it stems the rows it wrote with `restem_observations` before the
+-- rebuild. The cost is that a connection which has not registered both
+-- functions cannot insert a memory or edit its text, and fails saying so rather
+-- than leaving a row its index cannot find.
 --
 -- `ON DELETE CASCADE` for the three hard-delete paths, as the vectors table
 -- does. Foreign keys are on for every connection, and the cascade fires the
@@ -36,8 +39,10 @@
 -- Existing rows are stemmed here, in the language the setting names when this
 -- runs. That is not what the writer of an old memory necessarily had, and it is
 -- the only answer there is: nothing recorded one. A store whose setting is
--- `auto` gets English, which stems nothing, and re-stems the day the setting is
--- named.
+-- `auto` gets English, which stems nothing, and its rows stay English: a row
+-- keeps the language it was written in, and a rule that handed old rows to a new
+-- setting could not tell a memory written in English from one written before the
+-- setting was named. The rows a later write that changes the text touches take the language it names.
 
 DROP TRIGGER IF EXISTS obs_stems_insert;
 DROP TRIGGER IF EXISTS obs_stems_update;

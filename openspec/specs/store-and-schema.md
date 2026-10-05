@@ -369,18 +369,29 @@ there from any provenance, and how it says when something has gone wrong.
     existing triggers are bare `AFTER UPDATE`, so a column written there
     re-indexes the memory twice. Unlike the vectors it is not recomputed lazily.
     The index has to agree with the row on every write, and a lazy check would
-    mean a write on the read path, so five triggers keep it: `obs_stems_insert`
-    and `obs_stems_update` on `observations` (the latter `AFTER UPDATE OF` the six
-    columns the stems read, so a pin or a duplicate count does not re-stem), and
-    `stems_fts_insert`, `stems_fts_delete` and `stems_fts_update` on the table.
-    All five are in `FULL_TEXT_TRIGGERS`, read from the migration by
-    `doctor --repair`, and the index is in `FULL_TEXT_INDEXES`.
+    mean a write on the read path, so six triggers keep it. On `observations`:
+    `obs_stems_insert`; `obs_stems_update`, which fires `AFTER UPDATE OF` the
+    three text columns — `title`, `content`, `topic_key` — and only when one of
+    their values changed, and writes the row afresh in the connection's language;
+    and `obs_stems_identifiers`, which fires on `tool_name`, `type` or `project`
+    and refreshes those three copies, leaving the language and the stems alone.
+    That split is migration 22: migration 21 had one trigger over all six
+    columns, so a project merge or a project-only replicated update run after the
+    setting changed turned a Spanish memory into an English one with no stems.
+    The value comparison is there because `UPDATE OF` fires for a column named in
+    the `SET` clause whether or not its value changed, and a replicated update
+    names every column of the row it carries. On the table: `stems_fts_insert`,
+    `stems_fts_delete` and `stems_fts_update`. All six are in
+    `FULL_TEXT_TRIGGERS`, read from the migrations by `doctor --repair` (newest
+    definition first), and the index is in `FULL_TEXT_INDEXES`.
 
     The triggers call `leteo_stem` and `leteo_stem_language`, which `Store::open`
     registers before the schema is prepared. That is what makes every write path
     stem without any of them knowing, and it is also the price: a connection that
-    has not registered them cannot write a memory and fails with "no such
-    function" rather than leaving a row its index cannot find. The language is
+    has not registered them cannot insert a memory or edit its text and fails
+    with "no such function" rather than leaving a row its index cannot find. A
+    delete, and an edit of `tool_name`, `type` or `project` alone, call neither
+    and are not refused. The language is
     `Settings::language` read when the store is opened, so a long-running server
     stems in the language it started with; a test sets
     `StoreConfig::memory_language`.
@@ -388,17 +399,25 @@ there from any provenance, and how it says when something has gone wrong.
     **The backfill is deterministic and says what it assumes.** Migration 21 stems
     every existing row in the language the setting names when it runs — a
     migration cannot know what its writer used, because nothing recorded it. A
-    setting that names no language stems nothing (English is `porter`'s), and the
-    rows are re-stemmed by `doctor --repair` once it does. Only rows whose `id` is
-    an integer are stemmed: a database that predates the baseline can carry a
+    setting that names no language stems nothing (English is `porter`'s), and
+    those rows stay English: a row keeps the language it was recorded under, and
+    `doctor --repair` does not hand it to a setting named later, because a row
+    recorded as English cannot be told from a memory its writer wrote in English.
+    The language is the one decision the repair does not make; what it does make
+    is the stems — a row recorded under a language that has gained a stemmer since
+    is stemmed by it. Only rows whose `id` is an integer are stemmed: a database that predates the baseline can carry a
     TEXT or NULL id, which is not a parent a row here can reference.
 
     `doctor` reports the index as `observation_stems_fts_integrity` and
-    `observation_stems_sync`, the latter comparing the memories, the stems and
-    the index. `--repair` runs `restem_observations` before rebuilding the
-    indexes: the rebuild is from the stems table, so a memory the triggers never
-    saw — an import runs with them dropped — would otherwise stay unfindable
-    however often it ran. Like the vectors, the table is derived and local: not
+    `observation_stems_sync`, the latter comparing the memories that can have
+    stems (integer ids), the stems and the index. `--repair` runs
+    `restem_observations` before rebuilding the indexes: the rebuild is from the
+    stems table, so a memory the triggers never saw — an import runs with them
+    dropped, and restores them only after this step — would otherwise stay
+    unfindable however often it ran. It writes only the rows whose stems differ
+    from what they should be, so on a level store it writes none, and it deletes
+    a stems row whose memory is gone, which a connection with foreign keys off
+    can leave and which would otherwise keep the check red for good. Like the vectors, the table is derived and local: not
     replicated and not exported, and each machine stems with its own setting.
 
 ## Invariants

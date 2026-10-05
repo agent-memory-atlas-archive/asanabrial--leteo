@@ -18,12 +18,17 @@ fn reopen_in(temp: &TempDir, language: Interface) -> Store {
     Store::open(config).unwrap()
 }
 
-/// What a question finds by the strict pass alone, so that a widened or
-/// nearest rescue cannot stand in for the stemmer being asked about.
+/// What a question finds by the strict pass alone, so that neither a widened or
+/// nearest rescue nor a corrected term can stand in for the stemmer being asked
+/// about.
 fn strict(store: &Store, query: &str) -> Vec<String> {
-    store
-        .search(query, SearchOptions::default())
-        .unwrap()
+    let (found, _, corrections) = store
+        .search_with_more_and_corrections(query, SearchOptions::default())
+        .unwrap();
+    if !corrections.is_empty() {
+        return Vec::new();
+    }
+    found
         .into_iter()
         .filter(|result| !result.partial)
         .map(|result| result.observation.title)
@@ -43,6 +48,69 @@ fn languages(store: &Store) -> Vec<(String, String)> {
         .unwrap()
         .collect::<Result<_, _>>()
         .unwrap()
+}
+
+/// One memory and one question per language, the question reaching the memory
+/// only through another inflection of a word it holds, at least three edits from
+/// it so neither `porter` nor the typo stage can answer. The English store is the
+/// control, as in the Spanish test below.
+#[test]
+fn every_language_with_a_stemmer_finds_a_memory_by_another_inflection() {
+    let cases = [
+        (
+            Interface::Spanish,
+            "Cuánto tarda la reindexación completa",
+            "reindexar",
+        ),
+        (
+            Interface::Portuguese,
+            "A reindexação completa leva quatro minutos",
+            "reindexar",
+        ),
+        (
+            Interface::French,
+            "Meilisearch tolère les fautes de frappe",
+            "tolérait",
+        ),
+        (
+            Interface::German,
+            "Wir müssen jeden Aufruf verarbeiten",
+            "Verarbeitungen",
+        ),
+        (
+            Interface::Italian,
+            "La reindicizzazione completa dura quattro minuti",
+            "reindicizzare",
+        ),
+        (
+            Interface::Romanian,
+            "Meilisearch tolerează greșeli de scriere",
+            "greșelilor",
+        ),
+        (
+            Interface::Dutch,
+            "We willen alle teksten vertalen",
+            "vertalingen",
+        ),
+        (
+            Interface::Swedish,
+            "Migrering av sökningen",
+            "migreringarna",
+        ),
+    ];
+    for (language, title, question) in cases {
+        let (_temp, mut store) = store_in(language);
+        store
+            .add_observation(observation("s1", title, "Anteckning."))
+            .unwrap();
+        assert_eq!(strict(&store, question), [title], "{language:?}");
+
+        let (_other, mut english) = store_in(Interface::English);
+        english
+            .add_observation(observation("s1", title, "Anteckning."))
+            .unwrap();
+        assert!(strict(&english, question).is_empty(), "{language:?}");
+    }
 }
 
 /// `porter` is an English algorithm, and `ejecuta` and `ejecutaron` are two words
@@ -374,4 +442,236 @@ fn doctor_names_a_store_whose_stems_went_missing_and_the_repair_puts_them_back()
     store.rebuild_full_text_indexes().unwrap();
     assert!(store.doctor().unwrap().healthy);
     assert_eq!(strict(&store, "ejecutaron"), ["El cron ejecuta"]);
+}
+
+/// The languages the setting offers that still have no second stemmer are four,
+/// and `search.md` §16 names them and what each lacks. A fifth gaining an arm, or
+/// one of the four gaining one, is a reason to edit that paragraph.
+#[test]
+fn the_languages_without_a_stemmer_are_the_four_the_spec_names() {
+    let without: Vec<Interface> = Interface::ALL
+        .into_iter()
+        .filter(|language| *language != Interface::English)
+        .filter(|language| crate::stemming::algorithm(*language).is_none())
+        .collect();
+    assert_eq!(
+        without,
+        [
+            Interface::Catalan,
+            Interface::Galician,
+            Interface::Basque,
+            Interface::Polish
+        ]
+    );
+}
+
+fn language_of(store: &Store, title: &str) -> String {
+    store
+        .connection
+        .query_row(
+            "SELECT s.language FROM observation_stems s JOIN observations o ON o.id = s.observation_id
+             WHERE o.title = ?1",
+            [title],
+            |row| row.get(0),
+        )
+        .unwrap()
+}
+
+/// A Spanish memory in a store whose setting has since become English, which is
+/// the starting point of every identifier-only test below.
+fn spanish_memory_in_an_english_store() -> (TempDir, Store) {
+    let (temp, mut store) = store_in(Interface::Spanish);
+    store
+        .add_observation(observation("s1", "El cron ejecuta", "Cada noche."))
+        .unwrap();
+    drop(store);
+    let store = reopen_in(&temp, Interface::English);
+    (temp, store)
+}
+
+#[test]
+fn a_project_merge_keeps_the_language_a_memory_was_stemmed_in() {
+    let (_temp, mut store) = spanish_memory_in_an_english_store();
+    store.merge_project("leteo", "otro").unwrap();
+
+    assert_eq!(language_of(&store, "El cron ejecuta"), "es");
+    let options = SearchOptions {
+        project: Some("otro".to_owned()),
+        ..Default::default()
+    };
+    assert_eq!(store.search("ejecutaron", options).unwrap().len(), 1);
+}
+
+/// What adoption runs on every project spelling it carries, and the one
+/// statement of that shape that reaches `observations` with the stems table
+/// already there: adoption itself runs before migration 21 exists.
+#[test]
+fn normalising_a_project_name_keeps_the_language_a_memory_was_stemmed_in() {
+    let (_temp, store) = spanish_memory_in_an_english_store();
+    store
+        .connection
+        .execute("UPDATE OR REPLACE observations SET project = 'Otro'", [])
+        .unwrap();
+
+    assert_eq!(language_of(&store, "El cron ejecuta"), "es");
+    let copied: String = store
+        .connection
+        .query_row("SELECT project FROM observation_stems", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(copied, "Otro");
+}
+
+/// A replicated update names every column of the row it carries, the text among
+/// them, so what keeps the language is that the text did not change.
+#[test]
+fn a_replicated_update_that_only_moves_the_project_keeps_the_language() {
+    let (temp, mut store) = store_in(Interface::Spanish);
+    let mutation = |seq: i64, project: &str| SyncMutation {
+        seq,
+        target_key: "cloud".to_owned(),
+        entity: "observation".to_owned(),
+        entity_key: "obs-remote-1".to_owned(),
+        op: crate::sync::OP_UPSERT.to_owned(),
+        payload: serde_json::json!({
+            "sync_id": "obs-remote-1",
+            "session_id": "s1",
+            "type": "discovery",
+            "title": "Nota remota",
+            "content": "El cron ejecuta la conciliación.",
+            "project": project,
+            "scope": "project",
+            "created_at": "2026-01-01 00:00:00",
+            "updated_at": "2026-01-01 00:00:00",
+        })
+        .to_string(),
+        source: "remote".to_owned(),
+        project: project.to_owned(),
+        occurred_at: "2026-01-01 00:00:00".to_owned(),
+        acked_at: None,
+    };
+    store
+        .apply_pulled_sync_mutation("cloud", &mutation(1, "leteo"))
+        .unwrap();
+    drop(store);
+
+    let mut store = reopen_in(&temp, Interface::English);
+    store
+        .apply_pulled_sync_mutation("cloud", &mutation(2, "otro"))
+        .unwrap();
+
+    assert_eq!(language_of(&store, "Nota remota"), "es");
+    let options = SearchOptions {
+        project: Some("otro".to_owned()),
+        ..Default::default()
+    };
+    assert_eq!(store.search("ejecutaron", options).unwrap().len(), 1);
+}
+
+/// The other half of the rule: a write that changes the text is a new memory as
+/// far as stemming goes, and takes the language of the connection that wrote it.
+#[test]
+fn an_edit_of_the_text_takes_the_language_of_the_connection_that_made_it() {
+    let (_temp, mut store) = spanish_memory_in_an_english_store();
+    let id: i64 = store
+        .connection
+        .query_row("SELECT id FROM observations", [], |row| row.get(0))
+        .unwrap();
+    store
+        .update_observation(
+            id,
+            None,
+            UpdateObservation {
+                content: Some("Cada madrugada.".to_owned()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(language_of(&store, "El cron ejecuta"), "en");
+}
+
+/// `UPDATE OF content` fires for a statement that names the column whether or
+/// not its value changed, so the guard is on the values.
+#[test]
+fn a_statement_that_names_the_text_without_changing_it_keeps_the_language() {
+    let (_temp, store) = spanish_memory_in_an_english_store();
+    store
+        .connection
+        .execute(
+            "UPDATE observations SET title = title, content = content, type = 'decision'",
+            [],
+        )
+        .unwrap();
+    assert_eq!(language_of(&store, "El cron ejecuta"), "es");
+}
+
+/// Foreign keys are on for every connection of this crate, so the cascade keeps
+/// the table level; a tool that wrote with them off can leave a row whose memory
+/// is gone, and the report must be able to say so and the repair to clear it.
+#[test]
+fn a_stems_row_whose_memory_is_gone_is_reported_and_the_repair_removes_it() {
+    let (_temp, mut store) = store_in(Interface::Spanish);
+    store
+        .add_observation(observation("s1", "El cron ejecuta", "Cada noche."))
+        .unwrap();
+    store
+        .connection
+        .execute_batch(
+            "PRAGMA foreign_keys = OFF;
+             INSERT INTO observation_stems(observation_id, language, title, content)
+             VALUES (9999, 'es', 'huerfano', 'huerfano');
+             PRAGMA foreign_keys = ON;",
+        )
+        .unwrap();
+    let report = store.doctor().unwrap();
+    assert!(
+        report
+            .checks
+            .iter()
+            .any(|check| check.code == "observation_stems_sync" && !check.ok),
+        "{:?}",
+        report.issues
+    );
+
+    store.rebuild_full_text_indexes().unwrap();
+    assert!(store.doctor().unwrap().healthy);
+    assert_eq!(languages(&store).len(), 1);
+}
+
+/// A repair of a level store writes nothing, which is what keeps it from firing
+/// the index triggers once for every memory ahead of the rebuild. The writes are
+/// counted by temporary triggers, because `total_changes` also counts what the
+/// rebuild writes into the index.
+#[test]
+fn a_repair_of_a_store_that_is_level_writes_no_stems() {
+    let (_temp, mut store) = store_in(Interface::Spanish);
+    store
+        .add_observation(observation("s1", "El cron ejecuta", "Cada noche."))
+        .unwrap();
+    store
+        .connection
+        .execute_batch(
+            "CREATE TEMP TABLE stem_writes(n INTEGER);
+             CREATE TEMP TRIGGER count_stem_inserts AFTER INSERT ON main.observation_stems
+             BEGIN INSERT INTO stem_writes VALUES (1); END;
+             CREATE TEMP TRIGGER count_stem_updates AFTER UPDATE ON main.observation_stems
+             BEGIN INSERT INTO stem_writes VALUES (1); END;",
+        )
+        .unwrap();
+    crate::store::schema::rebuild_present_indexes(&store.connection).unwrap();
+    let writes: i64 = store
+        .connection
+        .query_row("SELECT COUNT(*) FROM stem_writes", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(writes, 0);
+}
+
+/// The triggers restored after an import are the ones the migrations define,
+/// including the one migration 22 replaced.
+#[test]
+fn the_restore_reads_the_newest_definition_of_a_trigger() {
+    let sql = crate::store::schema::full_text_trigger_sql("obs_stems_update").unwrap();
+    assert!(sql.contains("WHEN new.title IS NOT old.title"), "{sql}");
+    assert!(crate::store::schema::full_text_trigger_sql("obs_stems_identifiers").is_some());
 }

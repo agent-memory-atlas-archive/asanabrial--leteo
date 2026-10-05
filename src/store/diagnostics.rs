@@ -255,16 +255,20 @@ impl Store {
             }
         }
 
-        // Back, and then the indexes built from the rows that are now there.
-        // In this order: a trigger restored after the rebuild would be right,
-        // and one restored before it would fire on nothing, so either works —
-        // what must not happen is committing without both.
+        // The indexes built from the rows that are now there, and then the
+        // triggers back.
+        //
+        // In this order and not the other: the rebuild begins by writing the
+        // stems of every memory that has none, and with the triggers already
+        // restored each of those writes would also be indexed one row at a
+        // time, which is the cost dropping them was for, ahead of a rebuild
+        // that replaces it. What must not happen is committing without both.
+        crate::store::schema::rebuild_present_indexes(&tx)?;
         for name in dropped {
             if let Some(sql) = crate::store::schema::full_text_trigger_sql(name) {
                 tx.execute_batch(sql)?;
             }
         }
-        crate::store::schema::rebuild_present_indexes(&tx)?;
 
         tx.commit()?;
         Ok(result)
@@ -380,6 +384,15 @@ impl Store {
         // stems table against the memories, and the index against the stems.
         let stems_rows =
             query_count(&self.connection, "SELECT COUNT(*) FROM observation_stems").unwrap_or(-1);
+        // Only a memory with an integer id can have stems, so only those are
+        // owed any. A database that predates the baseline can carry a TEXT id,
+        // which no repair can give a row here, and counting it would report a
+        // mismatch that nothing could clear.
+        let stemmable = query_count(
+            &self.connection,
+            "SELECT COUNT(*) FROM observations WHERE typeof(id) = 'integer'",
+        )
+        .unwrap_or(-1);
         let stems_fts_rows = indexed_row_count(&self.connection, "observations_stemmed");
         let prompt_fts_rows = indexed_row_count(&self.connection, "prompts_fts");
         // Whether every memory's hash still describes the memory.
@@ -472,18 +485,16 @@ impl Store {
             None => DoctorCheck::passed("observation_stems_fts_integrity"),
             Some(detail) => DoctorCheck::failed("observation_stems_fts_integrity", detail.clone()),
         });
-        record(
-            if observations == stems_rows && stems_rows == stems_fts_rows {
-                DoctorCheck::passed("observation_stems_sync")
-            } else {
-                DoctorCheck::failed(
-                    "observation_stems_sync",
-                    format!(
-                        "Snowball observation index row mismatch: table={observations}, stems={stems_rows}, fts={stems_fts_rows}; {REBUILD_REMEDY}"
-                    ),
-                )
-            },
-        );
+        record(if stemmable == stems_rows && stems_rows == stems_fts_rows {
+            DoctorCheck::passed("observation_stems_sync")
+        } else {
+            DoctorCheck::failed(
+                "observation_stems_sync",
+                format!(
+                    "Snowball observation index row mismatch: memories that can have stems={stemmable}, stems={stems_rows}, fts={stems_fts_rows}; {REBUILD_REMEDY}"
+                ),
+            )
+        });
         record(if prompts == prompt_fts_rows {
             DoctorCheck::passed("prompt_fts_sync")
         } else {

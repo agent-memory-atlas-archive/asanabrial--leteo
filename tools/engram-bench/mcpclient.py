@@ -13,13 +13,13 @@ if os.sep in LETEO or (os.altsep and os.altsep in LETEO):
     LETEO = os.path.abspath(LETEO)
 os.makedirs(BENCH, exist_ok=True)
 
-def engine_cmd(engine, project):
+def engine_cmd(engine, project, home=None):
     cwd = os.path.join(BENCH, "work", project)
     os.makedirs(cwd, exist_ok=True)
     if engine == "engram":
         home = os.path.join(BENCH, "ehome")
         return [ENGRAM, "mcp"], cwd, dict(os.environ, HOME=home, ENGRAM_DATA_DIR=os.path.join(home, "data"))
-    home = os.path.join(BENCH, "lhome")
+    home = home or os.path.join(BENCH, "lhome")
     os.makedirs(home, exist_ok=True)
     env = dict(os.environ, HOME=home, LETEO_DATA_DIR=home)
     # The server runs from `cwd` above, so a relative model directory would be
@@ -31,8 +31,8 @@ def engine_cmd(engine, project):
     return [LETEO, "mcp", "--database", os.path.join(home, "leteo.db")], cwd, env
 
 class MCP:
-    def __init__(self, engine, project):
-        cmd, cwd, env = engine_cmd(engine, project)
+    def __init__(self, engine, project, home=None):
+        cmd, cwd, env = engine_cmd(engine, project, home)
         self.p = subprocess.Popen(cmd, cwd=cwd, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                   stderr=subprocess.DEVNULL, text=True, bufsize=1)
         self.n = 0

@@ -3,7 +3,7 @@
 //! FTS5 takes its tokenizer from a fixed list, so a stemmer written in Rust
 //! cannot be named in `tokenize =`. The words are stemmed *before* they reach an
 //! index instead, by the two SQL functions registered here, and the index that
-//! holds them (`observations_stems`) tokenises plain `unicode61`. The query side
+//! holds them (`observations_stemmed`) tokenises plain `unicode61`. The query side
 //! applies the same function, so a word and the stem it was indexed under meet.
 //!
 //! Which languages have a stemmer is the one table in [`algorithm`]; every other
@@ -18,13 +18,26 @@ use crate::settings::Interface;
 /// The Snowball algorithm for a language, where this build has one.
 ///
 /// English is absent on purpose: `porter` already indexes every memory, and a
-/// row's English stems are those. Galician has no Snowball algorithm at all, and
-/// Catalan, Basque and Polish are not in `rust-stemmers`; a row in any of them
-/// is recorded under its language and gets `porter` alone until one is added
-/// here.
+/// row's English stems are those. Catalan, Basque and Polish have official
+/// Snowball algorithms (snowballstem.org lists all three) that `rust-stemmers`
+/// 1.2.0 does not carry, so they need code generated from Snowball's own
+/// sources and vendored. Galician has no Snowball algorithm at all. A row in any
+/// of the four is recorded under its language and gets `porter` alone until one
+/// is added here.
+///
+/// A language added here needs a set in `tools/engram-bench/inflection_sets.py`
+/// and a floor for it: a stemmer that no query can tell from `porter` is not
+/// shipping anything.
 pub fn algorithm(language: Interface) -> Option<Algorithm> {
     match language {
         Interface::Spanish => Some(Algorithm::Spanish),
+        Interface::Portuguese => Some(Algorithm::Portuguese),
+        Interface::French => Some(Algorithm::French),
+        Interface::German => Some(Algorithm::German),
+        Interface::Italian => Some(Algorithm::Italian),
+        Interface::Romanian => Some(Algorithm::Romanian),
+        Interface::Dutch => Some(Algorithm::Dutch),
+        Interface::Swedish => Some(Algorithm::Swedish),
         _ => None,
     }
 }
@@ -77,8 +90,10 @@ pub fn stem_text(text: &str, language: Interface) -> String {
 
 /// Makes the two functions the stem triggers call available on a connection.
 ///
-/// `leteo_stem_language()` is what a row written on this connection is recorded
-/// under. It is fixed for the life of the connection: a long-running server
+/// Both are needed by an insert or an edit of a memory's text, because the
+/// triggers call them; a delete or an edit of `tool_name`, `type` or `project`
+/// calls neither. `leteo_stem_language()` is what a row written on this
+/// connection is recorded under. It is fixed for the life of the connection: a long-running server
 /// keeps stemming in the language it opened with until it is restarted.
 ///
 /// Every connection that writes `observations` has to have registered these,

@@ -926,7 +926,9 @@ impl Store {
     /// memories it was written with: a person who switched from Spanish to
     /// English last month still has Spanish memories to find, and the setting no
     /// longer says so. The question is over a small indexed column and is asked
-    /// once a search.
+    /// by every stage that reads the Snowball index, which is a few times a
+    /// search that falls through to the relaxed stages and once for one the
+    /// strict pass answers.
     fn snowball_languages(&self) -> Vec<crate::settings::Interface> {
         let read = || -> Result<Vec<String>, rusqlite::Error> {
             let mut statement = self

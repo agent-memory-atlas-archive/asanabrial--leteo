@@ -191,6 +191,19 @@ ratchet names Spanish as the store's memory language in its settings, because a
 store that does not indexes every memory as English. Two things
 use it.
 
+Those Spanish questions share whole words with their memories, so `porter` and the
+exact index answer them and the kind cannot show the stemmer working. That is
+what `inflection_sets.py` is for: for every language with a Snowball stemmer, eight
+questions that reach their memory only through another inflection of a word it
+holds, at least three edits from it. `inflection.py` scores each set on the strict
+pass alone, in a store of its own with that language named in its settings, and the
+ratchet holds a floor per language under `inflection` in `floors.json`.
+`python3 tools/engram-bench/inflection.py --porter-only` runs the same stores
+with English named, which is the control: a set earns its place only if it scores
+far lower there. `inflection_check.py` verifies the edit distances against the typo
+budget in `src/store/search.rs`, and needs `pip install snowballstemmer` to say
+which words a stemmer folds together.
+
 `ratchet.py` needs nothing but Leteo and stock `python3`. It saves the corpus
 into a fresh store in a temporary directory through `mem_save`, runs every query
 through `mem_search` at limit 20, and compares mean reciprocal rank per kind and

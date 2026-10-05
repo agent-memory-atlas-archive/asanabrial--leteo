@@ -9,11 +9,12 @@ os.environ["BENCH_STATE"] = STATE
 
 from corpus import corpus, queries
 from mcpclient import MCP
+import inflection
 
 # The language the corpus's memories are written in, as the product reads it from
 # settings. Without it a store indexes every memory as English and the Spanish
-# stemmer never runs, so the Spanish half of the corpus would be measured against
-# the stemmer it was meant to be measured against.
+# stemmer never runs, so the Spanish half of the corpus would be measured without
+# the stemmer it was meant to be measuring.
 LETEO_HOME = os.path.join(STATE, "lhome")
 os.makedirs(LETEO_HOME, exist_ok=True)
 with open(os.path.join(LETEO_HOME, "settings.json"), "w") as settings:
@@ -107,7 +108,11 @@ def measure():
 
     mrr = {k: sum(1 / r for r in rs if r) / len(rs) for k, rs in ranks.items()}
     hit1 = {k: sum(r == 1 for r in rs) / len(rs) for k, rs in ranks.items()}
-    return dict(mrr=mrr, hit1=hit1, counts={k: len(v) for k, v in ranks.items()}, bytes=sizes,
+    # Their own stores, one per language, because the language a memory is stemmed
+    # in is the store's setting; they are not part of `ALL`, whose kinds are
+    # measured in one store written in Spanish.
+    strict = inflection.measure(STATE)
+    return dict(mrr=mrr, hit1=hit1, inflection=strict, counts={k: len(v) for k, v in ranks.items()}, bytes=sizes,
                 empty={k: empty[k] for k in ranks}, median_ms=statistics.median(millis))
 
 
@@ -117,6 +122,7 @@ def propose(got):
         "mrr": {k: math.floor(got["mrr"][k] * 1000 + 1e-9) / 1000 for k in sorted(got["mrr"])},
         "bytes": {k: (v // 100 + 1) * 100 for k, v in sorted(got["bytes"].items())},
         "empty": {"ALL": got["empty"]["ALL"]},
+        "inflection": {k: math.floor(v["mrr"] * 1000 + 1e-9) / 1000 for k, v in sorted(got["inflection"].items())},
     }
 
 
@@ -126,6 +132,15 @@ def judge(got, floors):
         breaches.append(f"kinds differ: floors name {sorted(floors['mrr'])}, the corpus has {sorted(got['mrr'])}")
     if set(floors["bytes"]) != set(got["bytes"]):
         breaches.append(f"byte measurements differ: floors name {sorted(floors['bytes'])}, measured {sorted(got['bytes'])}")
+    if set(floors["inflection"]) != set(got["inflection"]):
+        breaches.append(f"inflection languages differ: floors name {sorted(floors['inflection'])}, "
+                        f"the sets are {sorted(got['inflection'])}")
+    for code, floor in floors["inflection"].items():
+        value = got["inflection"].get(code, {}).get("mrr")
+        if value is not None and value < floor:
+            breaches.append(f"strict-pass MRR {code}: measured {value:.3f}, floor {floor:.3f}")
+        elif value is not None and value - floor >= floors["raise_margin"]:
+            raisable.append(f"strict-pass MRR {code}: measured {value:.3f} is {value - floor:.3f} above its floor {floor:.3f}")
     for kind, floor in floors["mrr"].items():
         value = got["mrr"].get(kind)
         if value is None:
@@ -171,6 +186,8 @@ def main():
     print(f"{n} queries evaluated, median warm search {got['median_ms']:.1f} ms (printed, not gated)")
     for k in sorted(got["mrr"]):
         print(f"  {k:10} n={got['counts'][k]:3}  hit@1 {got['hit1'][k]:.3f}  MRR {got['mrr'][k]:.3f}  floor {floors['mrr'].get(k, float('nan')):.3f}  empty {got['empty'][k]:3}")
+    for k, v in sorted(got["inflection"].items()):
+        print(f"  strict {k:3}  n={v['n']:3}  hit@1 {v['hit1']:.3f}  MRR {v['mrr']:.3f}  floor {floors['inflection'].get(k, float('nan')):.3f}")
     for k, v in sorted(got["bytes"].items()):
         print(f"  {k:15} {v:6} bytes  ceiling {floors['bytes'].get(k, 0)}")
     breaches, raisable = judge(got, floors)
