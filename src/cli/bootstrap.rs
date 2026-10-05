@@ -167,11 +167,15 @@ pub(super) fn engram_offer(cli: &Cli) -> Option<serde_json::Value> {
 /// it and does nothing, and every other one fetches it. Setup never fails over
 /// it -- the stage is optional and search works without it -- but it says what
 /// happened and what to run, on stderr, because stdout is JSON something may be
-/// reading. Not on a dry run, which must change nothing.
+/// reading. Not on a dry run, which must change nothing, and not when the
+/// `semantic_search` setting turned the stage off.
 pub(super) async fn ensure_model(cli: &Cli, dry_run: bool) {
     let Ok(data_dir) = data_directory(cli) else {
         return;
     };
+    if !crate::settings::load(&data_dir).semantic_search() {
+        return;
+    }
     let explicit = crate::semantic::explicit_dir();
     let status = crate::semantic::status(&data_dir, explicit.as_deref());
     if matches!(status, crate::semantic::Status::Verified(_)) {

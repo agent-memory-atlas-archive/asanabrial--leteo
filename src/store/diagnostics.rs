@@ -584,14 +584,28 @@ impl Store {
         // not an unhealthy store, so a missing model is noted and a present one
         // that is not the model this build accepts is an issue.
         record(
-            match crate::semantic::status(self.data_dir(), self.model_dir()) {
-                status @ crate::semantic::Status::Verified(_) => {
-                    DoctorCheck::noted("semantic_model", status.explain())
+            if !self
+                .config
+                .database_path
+                .parent()
+                .map(crate::settings::load)
+                .unwrap_or_default()
+                .semantic_search()
+            {
+                DoctorCheck::noted(
+                    "semantic_model",
+                    "semantic search is turned off by the semantic_search setting, so the model is not looked for",
+                )
+            } else {
+                match crate::semantic::status(self.data_dir(), self.model_dir()) {
+                    status @ crate::semantic::Status::Verified(_) => {
+                        DoctorCheck::noted("semantic_model", status.explain())
+                    }
+                    status @ crate::semantic::Status::Missing(_) => {
+                        DoctorCheck::noted("semantic_model", status.explain())
+                    }
+                    status => DoctorCheck::failed("semantic_model", status.explain()),
                 }
-                status @ crate::semantic::Status::Missing(_) => {
-                    DoctorCheck::noted("semantic_model", status.explain())
-                }
-                status => DoctorCheck::failed("semantic_model", status.explain()),
             },
         );
         record(match shared_topic_keys(&self.connection) {

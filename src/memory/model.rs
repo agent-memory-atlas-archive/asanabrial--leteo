@@ -127,6 +127,12 @@ impl Observation {
 pub struct SearchResult {
     #[serde(flatten)]
     pub observation: Observation,
+    /// How well this ranked, lower being better, on the scale of the stage that
+    /// answered: a bm25 for the full-text stages, the negated cosine when the
+    /// semantic stage answered an empty question, the negated fused score when it
+    /// was merged into a `nearest` answer. It orders the rows of one answer and
+    /// is comparable with nothing outside it -- not another answer, not another
+    /// stage's.
     pub rank: f64,
     /// Whether this was found by matching only *some* of the words asked for.
     ///
@@ -136,6 +142,16 @@ pub struct SearchResult {
     /// handing over labelled.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub partial: bool,
+    /// Whether the semantic stage had a hand in finding this, by meaning
+    /// rather than by the words asked for.
+    ///
+    /// Absent from the output when false, the way `partial` is, and for the
+    /// same reason: the reader is entitled to know which kind of match it has.
+    /// A memory that matched by meaning shares no promise about its words — it
+    /// may contain none of them — and an agent that is told so can check the
+    /// body before relying on it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub semantic: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -673,6 +689,14 @@ pub struct SearchOptions {
     pub scope: Option<String>,
     pub limit: Option<usize>,
     pub mode: SearchMode,
+    /// Whether the semantic stage may run after the lexical ones.
+    ///
+    /// Off for a caller that does not say, which keeps every library caller and
+    /// every test on the lexical search it had. The two surfaces an agent or a
+    /// person searches through set it from the `semantic_search` setting, which
+    /// is on unless somebody turned it off: the default is the setting's, and
+    /// lives there.
+    pub semantic: bool,
 }
 
 /// A memory named, without its body.

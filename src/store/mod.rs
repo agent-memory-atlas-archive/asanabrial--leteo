@@ -720,6 +720,13 @@ impl Store {
         self.config.database_path.parent().unwrap_or(Path::new("."))
     }
 
+    /// Points the store at another model directory, for a test that needs the
+    /// directory to be the wrong one after the store is open.
+    #[cfg(test)]
+    pub(crate) fn set_model_dir_for_tests(&mut self, directory: Option<PathBuf>) {
+        self.config.model_dir = directory;
+    }
+
     /// The semantic model's directory as configured, for the surfaces that
     /// report on it.
     pub fn model_dir(&self) -> Option<&Path> {
@@ -1046,6 +1053,8 @@ pub use prompts::PROMPT_ATTRIBUTION_MINUTES;
 mod projects;
 
 mod relations;
+
+mod semantic_stage;
 
 mod replication;
 
