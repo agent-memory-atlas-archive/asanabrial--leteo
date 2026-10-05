@@ -68,6 +68,11 @@ All notable changes to Leteo are documented in this file.
 
 ### Fixed
 
+- **The uninstall scripts no longer count a binary that cannot start as one that
+  judged the model.** `uninstall.sh` treated any executable as having run, so a
+  binary that failed to start (exit 126 or 127) left the model files behind and
+  pointed at a report that was never printed; `uninstall.ps1` now agrees with it
+  and retries the data files after a failed run, as the shell script already did.
 - **A body over the storage bound was cut without saying so.** `mem_save` and
   `mem_update` stored at most `max_observation_length` bytes — 50,000 — and the
   tail was gone, while the reply said nothing: `content_truncated` describes the

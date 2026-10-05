@@ -174,7 +174,10 @@ enum Directory {
     Verified([Vec<u8>; 3]),
 }
 
-fn sha256_hex(bytes: &[u8]) -> String {
+/// The one SHA-256 the pins are compared with, for loading a model and for
+/// deciding whether removal may take a file; two copies is how one of them would
+/// come to accept what the other refuses.
+pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
 }
 

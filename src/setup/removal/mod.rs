@@ -194,9 +194,7 @@ fn remove_model(removed: &mut Removal, data_dir: &Path) {
     // link, once resolved and once not, and each file would otherwise be judged
     // and reported under both spellings.
     let mut judged = std::collections::HashSet::new();
-    let real_data_dir = data_dir
-        .canonicalize()
-        .unwrap_or_else(|_| data_dir.to_path_buf());
+    let real_data_dir = resolved(data_dir);
     for directory in crate::semantic::locations_for(removed.binary.as_deref(), data_dir, None) {
         if std::fs::symlink_metadata(&directory).is_ok_and(|meta| meta.file_type().is_symlink()) {
             if has_model_named_entry(&directory) {
@@ -207,9 +205,7 @@ fn remove_model(removed: &mut Removal, data_dir: &Path) {
             }
             continue;
         }
-        let real_directory = directory
-            .canonicalize()
-            .unwrap_or_else(|_| directory.clone());
+        let real_directory = resolved(&directory);
         let mut took_any = false;
         for (name, pin) in crate::semantic::MODEL_FILES {
             let file = directory.join(name);
@@ -267,10 +263,7 @@ fn remove_model(removed: &mut Removal, data_dir: &Path) {
             // store beside the model would be reported as a stranger, or the
             // directory removed here before `remove_data_directory` judged it.
             if let Some(parent) = directory.parent()
-                && parent
-                    .canonicalize()
-                    .unwrap_or_else(|_| parent.to_path_buf())
-                    != real_data_dir
+                && resolved(parent) != real_data_dir
                 && parent.file_name().is_some_and(|name| name == "leteo")
                 && parent
                     .parent()
@@ -292,8 +285,25 @@ fn has_model_named_entry(directory: &Path) -> bool {
 }
 
 fn hashes_to(file: &Path, pin: &str) -> std::io::Result<bool> {
-    use sha2::{Digest, Sha256};
-    Ok(hex::encode(Sha256::digest(std::fs::read(file)?)) == pin)
+    Ok(crate::semantic::sha256_hex(&std::fs::read(file)?) == pin)
+}
+
+/// A path as the filesystem resolves it: through every link that exists, with
+/// whatever does not exist yet kept as written.
+///
+/// Every comparison of two locations goes through this, so both sides are
+/// normalised the same way. `canonicalize` alone fails on a path that is not
+/// there, and falling back to the raw path then sets an unresolved spelling
+/// against a resolved one -- a data directory that does not exist yet, under a
+/// link, would not equal the same directory reached from the other side.
+fn resolved(path: &Path) -> PathBuf {
+    if let Ok(real) = path.canonicalize() {
+        return real;
+    }
+    match (path.parent(), path.file_name()) {
+        (Some(parent), Some(name)) => resolved(parent).join(name),
+        _ => path.to_path_buf(),
+    }
 }
 
 /// Removes a directory that is empty, and says why one that stayed did.

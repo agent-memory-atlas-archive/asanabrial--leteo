@@ -159,6 +159,86 @@ rm -f "$P/bin/leteo"
 isolated LETEO_INSTALL_DIR="$P/bin" sh "$P/bin/uninstall.sh" --yes >"$ROOT/uninstall.log" 2>&1 || { cat "$ROOT/uninstall.log"; failed=1; }
 check "uninstall.sh alone removed the model and share/leteo, and not share/" none_left "$P"
 
+# The `ran` gate of both uninstall scripts. The by-name removal of the model does
+# not look at content, so it may run only behind a binary that never judged the
+# model; behind one that did, it would take a file the binary kept because its
+# hash is not the pin. Nothing else exercises that: the by-name path is only
+# correct when the binary is gone, and the other flows here never leave a file
+# the binary would keep.
+PLANTED="somebody else's config, not the pinned one"
+# An agent whose config the binary cannot parse makes `complete()` false, so it
+# exits non-zero after judging the model. A malformed file and not a permission
+# bit, because a runner that is root ignores the permission.
+fail_an_agent() { printf '{not json' > "$ROOT/home/.claude.json"; }
+heal_the_agent() { rm -f "$ROOT/home/.claude.json"; }
+plant_in() { printf '%s' "$PLANTED" > "$1/config.json"; }
+planted_survived() { [ "$(cat "$1/config.json" 2>/dev/null)" = "$PLANTED" ]; }
+cites_a_report() { grep -q "the report from leteo uninstall above" "$ROOT/uninstall.log"; }
+not() { ! "$@"; }
+seed_store() { mkdir -p "$ROOT/data" && : > "$ROOT/data/leteo.db"; }
+store_gone() { [ ! -e "$ROOT/data/leteo.db" ]; }
+lacks_model_files() {
+    for name in $(model_names); do [ ! -e "$1/$name" ] || return 1; done
+}
+
+echo "-- uninstall.sh behind a binary that ran, kept a file, and exited non-zero"
+P="$ROOT/d"
+install_into "$P"
+plant_in "$P/share/leteo/model"
+fail_an_agent
+isolated LETEO_INSTALL_DIR="$P/bin" sh "$P/bin/uninstall.sh" --yes >"$ROOT/uninstall.log" 2>&1 || { cat "$ROOT/uninstall.log"; failed=1; }
+heal_the_agent
+check "the binary exited non-zero, so the run is the one this flow means" grep -q "leteo uninstall failed" "$ROOT/uninstall.log"
+check "the file whose hash is not its pin survived the by-name removal" planted_survived "$P/share/leteo/model"
+check "and the message cites the report the binary printed" cites_a_report
+
+echo "-- uninstall.sh behind a binary that cannot start"
+P="$ROOT/e"
+install_into "$P"
+# Executable, and exec fails: the shell answers 126 or 127 without running a line.
+printf '#!/nonexistent-interpreter\n' > "$P/bin/leteo"
+chmod +x "$P/bin/leteo"
+seed_store
+isolated LETEO_INSTALL_DIR="$P/bin" sh "$P/bin/uninstall.sh" --yes >"$ROOT/uninstall.log" 2>&1 || { cat "$ROOT/uninstall.log"; failed=1; }
+check "and so are the data files, which nothing else is left to remove" store_gone
+check "the model is removed by name, as for a binary that is gone" none_left "$P"
+check "and the message does not cite a report that was never printed" not cites_a_report
+
+echo "-- uninstall.ps1, where PowerShell is available, behind the same two binaries"
+command -v pwsh >/dev/null 2>&1 || { echo "install check could not run: the uninstall.ps1 flow needs pwsh" >&2; exit 2; }
+# The model beside the executable, which is where uninstall.ps1 looks, and a
+# Linux binary under the name Windows gives it: PowerShell runs it as it is.
+windows_layout() {
+    mkdir -p "$1/bin"
+    cp "$BINARY" "$1/bin/leteo.exe"
+    cp -R assets/model "$1/bin/model"
+}
+run_ps1() {
+    isolated LETEO_INSTALL_DIR="$1/bin" pwsh -NoProfile -NonInteractive -File scripts/uninstall.ps1 -Yes >"$ROOT/uninstall.log" 2>&1 \
+        || { cat "$ROOT/uninstall.log"; failed=1; }
+}
+cites_a_report_ps1() { grep -q "the report from leteo uninstall above" "$ROOT/uninstall.log"; }
+
+P="$ROOT/f"
+windows_layout "$P"
+plant_in "$P/bin/model"
+fail_an_agent
+run_ps1 "$P"
+heal_the_agent
+check "ps1: the binary exited non-zero" grep -q "leteo uninstall exited with" "$ROOT/uninstall.log"
+check "ps1: the file whose hash is not its pin survived" planted_survived "$P/bin/model"
+check "ps1: and the message cites the report" cites_a_report_ps1
+
+P="$ROOT/g"
+windows_layout "$P"
+printf '#!/nonexistent-interpreter\n' > "$P/bin/leteo.exe"
+chmod +x "$P/bin/leteo.exe"
+seed_store
+run_ps1 "$P"
+check "ps1: the data files are removed by name, which nothing else is left to do" store_gone
+check "ps1: a binary that cannot start leaves the model removed by name" lacks_model_files "$P/bin/model"
+check "ps1: and the message does not cite a report" not cites_a_report_ps1
+
 echo "-- the npm wrapper, against a local release"
 for tool in node openssl python3; do
     command -v "$tool" >/dev/null 2>&1 || { echo "install check could not run: the npm flow needs $tool" >&2; exit 2; }

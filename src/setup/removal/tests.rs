@@ -577,3 +577,18 @@ fn a_model_that_was_never_installed_is_not_a_failure_or_a_mention() {
         removed.remaining
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn a_missing_path_under_a_link_resolves_like_the_one_that_exists() {
+    let temp = TempDir::new().unwrap();
+    let real = temp.path().join("real");
+    std::fs::create_dir_all(&real).unwrap();
+    let link = temp.path().join("link");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+
+    assert_eq!(
+        resolved(&link.join("not-yet").join("deeper")),
+        real.canonicalize().unwrap().join("not-yet").join("deeper")
+    );
+}

@@ -86,24 +86,29 @@ fi
 # still here. It resolves fifteen agents' config files and strips the MCP server,
 # the hooks and the memory-protocol block from each; doing that here by hand
 # would be a second, worse copy of the same knowledge.
-# `ran` is whether the binary judged the model files at all, whatever it exited
-# with: it exits non-zero on any incomplete removal, an agent-config error for
-# one, after it has already kept the model files it did not recognise. It takes
-# a model file only when the file hashes to the pin it was built with, and the
-# by-name removal below does not look at content, so it must not run behind a
-# binary that has decided to keep a file. `handled` is the narrower claim that
-# it finished, and gates only the data files, which the binary and this script
-# name identically, so trying them again after a failure undoes no judgment.
+# `ran` is whether the binary started and so judged the model files, whatever it
+# exited with: it exits non-zero on any incomplete removal, an agent-config error
+# for one, after it has already kept the model files it did not recognise. It
+# takes a model file only when the file hashes to the pin it was built with, and
+# the by-name removal below does not look at content, so it must not run behind a
+# binary that has decided to keep a file. A binary that is executable and still
+# cannot start -- the wrong architecture, a truncated download -- judged
+# nothing, and the shell says so with 126 or 127 before any of it ran; counting
+# that as a run left the model behind and cited a report that was never printed.
+# `handled` is the narrower claim that it finished, and gates only the data
+# files, which the binary and this script name identically, so trying them again
+# after a failure undoes no judgment.
 ran=0
 handled=0
 if [ -x "$BINARY" ]; then
     say "  removing agent configuration and memories"
-    ran=1
-    if "$BINARY" uninstall --yes; then
-        handled=1
-    else
-        say "  leteo uninstall failed; carrying on with the files"
-    fi
+    status=0
+    "$BINARY" uninstall --yes || status=$?
+    case "$status" in
+        0) ran=1; handled=1 ;;
+        126|127) say "  could not start leteo uninstall; carrying on with the files" ;;
+        *) ran=1; say "  leteo uninstall failed; carrying on with the files" ;;
+    esac
 else
     say "  no binary to ask, removing the data directory directly"
 fi
