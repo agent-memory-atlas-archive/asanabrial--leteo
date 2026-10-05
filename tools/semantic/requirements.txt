@@ -1,0 +1,9 @@
+# The versions the shipped weights were built with. The build is deterministic
+# for these; a different numpy or tokenizers may serialise the same tensors in
+# different bytes, which `build_model.py --check` then reports.
+numpy==2.5.3
+tokenizers==0.22.2
+safetensors==0.8.0
+model2vec==0.9.0
+huggingface_hub==1.33.0
+datasets==5.0.1

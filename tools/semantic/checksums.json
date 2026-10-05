@@ -1,0 +1,30 @@
+{
+  "source": "sentence-transformers/static-similarity-mrl-multilingual-v1",
+  "source_revision": "b68f4122911bcffcd6e1f695f2d99cd6788972d8",
+  "dims": 256,
+  "dtype": "int8",
+  "technical_text_commit": "058b2e3",
+  "corpus": {
+    "ca": "e075dc25e8e1ad1b3dc1f926f73995538be75c2d0ec7cdee2a430368b2a5db8f",
+    "de": "f19fe090530f8e09af3f6a25fbcba306aa98cbc66ac62e1a724fe0c15bd54351",
+    "en": "75bc93e3cf2332feacd1609840d3d32cba432f6248acad99a7fa830ef3ca37d5",
+    "es": "357cdc0777cd80d59dd8fb81583d9b0380320bf22283011040788364a53c5bf5",
+    "eu": "68cb3658f74989e7ecfd3cf8903a82f3082edd7fcee2693b584ac91414985d33",
+    "fr": "84ae891052db17c5eebf0f087048a041d8380126b899dcb124859ec3a8f74d58",
+    "gl": "88ce197d85dca631f3bfc59a5da808ad8a9558bb4d0407b8b0979c75ffff33a2",
+    "it": "1303db25cf364e2ad25b00e811d29bc9eefabf8b08fc03c477d6d40a77e746a1",
+    "nl": "e9acbd87c67aa0402367138c00bf0369b523f006f982ab2f719c0ffe1c492f96",
+    "pl": "f1b3ba8cb02fc207beafb4159df78f864510a15d487e9cc34b3ede0c24dfae70",
+    "pt": "6db8ebdfd43259b047e0f16b70ca87186a5db681a1fb221efa802e3bf507abab",
+    "ro": "e424ea7a03e24827595db1b5f63021e2227d5394484f04b148c5383ca0103450",
+    "sv": "c1067c7184683d37c9fd0ed9fcf4bec44db6726faf113c27a2196e992f4c6494"
+  },
+  "files": {
+    "config.json": "8500f7ac6a4c66d3cb249f579cc6272acb06161dd8fa47cd0cbe917740c990cb",
+    "model.safetensors": "25d1b8a51d496419f4f0cda355e0ac1dc4d671e6f4ef7330b2f90e62da104694",
+    "tokenizer.json.gz": "91a107a2a2d936609852477fa11110f19bb0765ce5c76d4c51c385809d67df3c"
+  },
+  "decompressed": {
+    "tokenizer.json": "2a9ff59e75baf64f944e4b5bc8546e732f34b1b61999d851d41d86fd8b0e5eeb"
+  }
+}
