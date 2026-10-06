@@ -14,7 +14,8 @@
 #   CARGO_INSTALL_ROOT, CARGO_HOME  where the binary goes, as Cargo reads them
 #   LETEO_SETUP_AGENTS              agents to configure, as slugs separated by
 #                                   spaces; `none` configures nothing. Unset
-#                                   means every agent the binary supports.
+#                                   means the agents that already have Leteo
+#                                   configured, and no others.
 
 set -eu
 
@@ -83,22 +84,34 @@ say 'Installing the model and configuring agents'
 "$LETEO" model install --from "$REPOSITORY/assets/model" \
     || fail "'$LETEO model install --from $REPOSITORY/assets/model' failed."
 
-# `leteo setup` with no agent walks through a wizard on a terminal and prints
-# the list of agents anywhere else, configuring nothing. A script cannot rely
-# on which of the two it gets, so the agents are named: the slugs come from the
-# binary's own list, which keeps a second copy of the registry out of this file.
-# No `--instructions` or `--hooks`: a typed flag is refused for an agent that
-# cannot take it (OpenCode has no lifecycle hooks, Pi no instruction file), and
-# one refusal would stop the loop. Plain `setup <agent>` writes the MCP entry,
-# which is what has to follow the binary to its new location; instructions and
-# hooks stay a deliberate `leteo setup <agent> --instructions --hooks`.
+# Which agents get setup run again. `leteo setup` with no agent configures
+# nothing off a terminal (it lists the agents) and is a wizard on one, so the
+# agents are named. By default only those that already carry Leteo are named: a
+# rebuild moves the binary, and what has to follow it is an existing entry, not
+# a new one in an agent this developer never set up. The question is put to the
+# binary rather than to the agents' files: `leteo uninstall` without `--yes` is
+# a preview that changes nothing, and its `was_configured` is the same
+# `is_configured` check `setup` itself uses. The `dry_run` guard keeps a future
+# change to that default from turning this into a removal.
+# Plain `setup <agent>`, with no `--instructions` or `--hooks`: a typed flag is
+# refused for an agent that cannot take it (OpenCode has no lifecycle hooks, Pi
+# no instruction file), and one refusal would stop the loop. Plain setup writes
+# the MCP entry, which is what has to follow the binary to its new location;
+# instructions and hooks stay a deliberate `leteo setup <agent> --instructions
+# --hooks`.
 AGENTS="${LETEO_SETUP_AGENTS:-}"
 if [ -z "$AGENTS" ]; then
-    LISTING="$("$LETEO" setup </dev/null)" \
-        || fail "'$LETEO setup' failed while listing the supported agents."
-    AGENTS="$(printf '%s\n' "$LISTING" | sed -n 's/^ *"slug": *"\([^"]*\)".*/\1/p')"
-    [ -n "$AGENTS" ] \
-        || fail "'$LETEO setup' listed no agents to configure."
+    PREVIEW="$("$LETEO" uninstall </dev/null)" \
+        || fail "'$LETEO uninstall' failed while looking for configured agents."
+    printf '%s\n' "$PREVIEW" | grep -q '"dry_run": true' \
+        || fail "'$LETEO uninstall' did not report a preview; refusing to read it as a list of agents."
+    AGENTS="$(printf '%s\n' "$PREVIEW" | awk '
+        /"agent":/ { gsub(/[",]/, "", $2); agent = $2 }
+        /"was_configured": true/ { print agent }')"
+    if [ -z "$AGENTS" ]; then
+        say "No agent has Leteo configured, so none is set up again. Run '$LETEO setup <agent>' to add one."
+        AGENTS='none'
+    fi
 fi
 if [ "$AGENTS" != 'none' ]; then
     for agent in $AGENTS; do

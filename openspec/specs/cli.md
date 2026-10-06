@@ -318,12 +318,18 @@ duties about what an answer explains.
     `leteo model install --from <checkout>/assets/model` (§16: an unreleased build
     has no tag to download from), `leteo setup <agent>` for each agent and
     `leteo doctor`. `leteo setup` with no agent is not used to configure: off a
-    terminal it only lists the agents, and on one it is a wizard, so the scripts
-    read the slugs from that listing, or from `LETEO_SETUP_AGENTS` (`none` skips
-    the step), and name each agent. The agent step is plain `setup <agent>`, the
-    MCP entry only, because a typed `--instructions` or `--hooks` is refused for
-    an agent that cannot take it and one refusal would end the run. Every
-    failure names the command and exits non-zero.
+    terminal it only lists the agents, and on one it is a wizard. The scripts
+    name the agents instead, and by default only those that already have Leteo
+    configured, so a rebuild repoints existing entries and never creates one for
+    an agent that has none. They ask the binary: `leteo uninstall` without
+    `--yes` is a preview that changes nothing, and its per-agent `was_configured`
+    is the `is_configured` check `setup` uses (§5); a reply that is not marked
+    `dry_run` is refused. No configured agent is reported and is not an error.
+    `LETEO_SETUP_AGENTS` names the agents instead (`none` skips the step). The
+    agent step is plain `setup <agent>`, the MCP entry only, because a typed
+    `--instructions` or `--hooks` is refused for an agent that cannot take it and
+    one refusal would end the run. Every failure names the command and exits
+    non-zero.
 
 ## Invariants
 

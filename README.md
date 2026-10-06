@@ -174,12 +174,13 @@ builds in release mode with `--locked`, and installs into Cargo's own root —
 `CARGO_INSTALL_ROOT`, then `CARGO_HOME`, then `~/.cargo` — never into the
 directory the release installers use, so a source build does not overwrite a
 release install. It then installs the model from `assets/model/` in the checkout
-(an unreleased build has no release tag to download it from), runs `setup` for
-every supported agent and finishes with `doctor`. `setup` here writes only the
+(an unreleased build has no release tag to download it from), runs `setup` again
+for each agent that already has Leteo configured, and finishes with `doctor`. `setup` here writes only the
 MCP entry, which is what has to follow the binary to its new path; add
-`--instructions` or `--hooks` to an agent yourself where you want them. Set
-`LETEO_SETUP_AGENTS` to a space-separated list of agent names to configure just
-those, or to `none` to configure no agent. Any step that fails stops the script
+`--instructions` or `--hooks` to an agent yourself where you want them. An agent
+that does not have Leteo yet is left alone; add one with `leteo setup <agent>`.
+Set `LETEO_SETUP_AGENTS` to a space-separated list of agent names to set up
+exactly those, or to `none` to set up no agent. Any step that fails stops the script
 with a non-zero exit and names the command that failed. To try it without
 touching your own store or agent files, point `HOME`, `CARGO_INSTALL_ROOT` and
 `LETEO_DATA_DIR` at a temporary directory.
