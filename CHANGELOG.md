@@ -16,7 +16,12 @@ before installing it beside an older Leteo: **0.3.0 migrates the store to schema
 (`this database is at schema version 22, but this build of Leteo understands
 18`) rather than reading a store it does not know, so upgrade every agent's
 Leteo together — `leteo setup <agent>` again repoints an agent at the new
-binary. The semantic model is part of this tag, so `leteo model install` now
+binary. Leteo takes no copy before it migrates: if you may want 0.2.x back,
+copy `leteo.db` together with its `-wal` and `-shm` files from the data
+directory (`~/.leteo` unless `LETEO_DATA_DIR` moved it) before the first 0.3.0
+run. That first open runs
+migrations 19 to 22 once, stemming every memory and rebuilding the full-text
+index. The semantic model is part of this tag, so `leteo model install` now
 finds it for an install that arrived without one; at v0.2.1 there was nothing
 to fetch.
 
