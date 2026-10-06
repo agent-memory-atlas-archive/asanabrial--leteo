@@ -24,10 +24,19 @@ cd "$(dirname "$0")/../.."
 REPO="$(pwd -P)"
 command -v pwsh >/dev/null 2>&1 || { echo "build-install check could not run: it needs pwsh" >&2; exit 2; }
 
+# `mktemp` on a line of its own, so that its failure stops the check. Folded into
+# `cd "$(mktemp -d)"` it became `cd ""`, which sh and dash accept, and `$T` was
+# the checkout itself, which the trap below then deleted (issue #191). No
+# directory of its own is a check that could not run, never one that ran.
+T="$(mktemp -d)" || { echo "build-install check could not run: mktemp -d failed" >&2; exit 2; }
 # Physical paths throughout: PowerShell reports the working directory without
 # symbolic links, and a root made absolute from a relative one has to compare
 # equal to the path asserted here.
-T="$(cd "$(mktemp -d)" && pwd -P)"
+T="$(cd "$T" && pwd -P)"
+case "$T" in
+    /*) [ -d "$T" ] && [ "$T" != "$REPO" ] ;;
+    *) false ;;
+esac || { echo "build-install check could not run: no temporary directory of its own" >&2; exit 2; }
 trap 'rm -rf "$T"' EXIT INT TERM
 STUB="$T/stub"
 mkdir -p "$STUB" "$T/home" "$T/cwd"
@@ -270,6 +279,22 @@ for runner in sh ps1; do
     expect "an install that leaves no executable fails" failed_status
     expect "and says where it looked" said "$R/c/bin/leteo"
 done
+
+echo "-- the check itself: a temporary directory it cannot make"
+# A copy of this file in a scratch tree beside a file nobody committed, run with
+# a `mktemp` that fails. The copy removes its own temporary directory on exit,
+# so one that fell back to the tree it was started from takes that tree with it
+# (issue #191). The scratch tree lives under $T, so a failure here costs nothing.
+SCRATCH="$T/scratch"
+mkdir -p "$SCRATCH/tree/tools/build-install" "$SCRATCH/bin"
+cp "$REPO/tools/build-install/check.sh" "$SCRATCH/tree/tools/build-install/check.sh"
+: > "$SCRATCH/tree/uncommitted"
+printf '#!/bin/sh\necho "stand-in mktemp: told to fail" >&2\nexit 1\n' > "$SCRATCH/bin/mktemp"
+chmod +x "$SCRATCH/bin/mktemp"
+STATUS=0
+PATH="$SCRATCH/bin:$PATH" sh "$SCRATCH/tree/tools/build-install/check.sh" >"$T/out" 2>&1 || STATUS=$?
+expect "a temporary directory it cannot make is a check that could not run" [ "$STATUS" -eq 2 ]
+expect "and the tree it was started from is left as it was" [ -f "$SCRATCH/tree/uncommitted" ]
 
 if [ "$failed" -ne 0 ]; then
     echo "build-install check FAILED ($ran assertions)"
