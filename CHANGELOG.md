@@ -4,7 +4,32 @@ All notable changes to Leteo are documented in this file.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-07
+
+Search by meaning, stemming in the language a memory was written in, and a
+script that builds a checkout and installs it. Read this before installing it
+beside an older Leteo: **0.3.0 migrates the store to schema version 22, and no
+0.2.x binary can open it afterwards.** One that tries says so and refuses
+(`this database is at schema version 22, but this build of Leteo understands
+18`) rather than reading a store it does not know, so upgrade every agent's
+Leteo together — `leteo setup <agent>` again repoints an agent at the new
+binary. The semantic model is part of this tag, so `leteo model install` now
+finds it for an install that arrived without one; at v0.2.1 there was nothing
+to fetch.
+
 ### Added
+
+- **`scripts/build-install.sh` and `build-install.ps1` build the checkout they sit in
+  and install it.** They build with the pinned toolchain and `--locked`, install
+  into Cargo's own root (`CARGO_INSTALL_ROOT`, then `CARGO_HOME`, then `~/.cargo`)
+  and never the release installers' directory, install the model from
+  `assets/model/` without a network, run `setup` again only for the agents that
+  already have Leteo — asked of the binary through the `uninstall` preview, whose
+  reply is refused unless it is one — and finish with `doctor`. Every failing
+  step stops the run and names its command. `tools/build-install/check.sh` runs
+  both behind stand-in `rustup`, `cargo` and `leteo` in CI, and refuses to run
+  rather than delete the checkout when `mktemp` fails, which the first version of
+  it did not (#188, #191).
 
 - **Memories are stemmed in the language they were written in, Spanish first.**
   `porter` stays on every memory, and each one gains the Snowball stems of the
