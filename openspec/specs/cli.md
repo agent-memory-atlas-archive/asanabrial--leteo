@@ -323,10 +323,14 @@ duties about what an answer explains.
     configured, so a rebuild repoints existing entries and never creates one for
     an agent that has none. They ask the binary: `leteo uninstall` without
     `--yes` is a preview that changes nothing, and its per-agent `was_configured`
-    is the `is_configured` check `setup` uses (§5); a reply that is not marked
-    `dry_run` is refused. No configured agent is reported and is not an error.
-    `LETEO_SETUP_AGENTS` names the agents instead (`none` skips the step). The
-    agent step is plain `setup <agent>`, the MCP entry only, because a typed
+    is the `is_configured` check `setup` uses (§5). That it removes nothing is
+    the command's own rule, not the scripts'; they only refuse to read a reply not
+    marked `dry_run` as a list of agents. No configured agent is reported and is not an error.
+    `LETEO_SETUP_AGENTS` names the agents instead; empty or only blanks is unset,
+    and the exact word `none`, alone, skips the step. A reply with no agent
+    entries at all is an error naming `leteo uninstall`, not "no agent
+    configured". The agent step is plain `setup <agent>`, the MCP entry only, and
+    it resets that entry's `--tools` and `--project` to the defaults. A typed
     `--instructions` or `--hooks` is refused for an agent that cannot take it and
     one refusal would end the run. Every failure names the command and exits
     non-zero.

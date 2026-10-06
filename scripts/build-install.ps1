@@ -1,5 +1,6 @@
 # Builds this checkout and installs the result on Windows, with the search model
-# from the same checkout and every agent pointed at the new binary.
+# from the same checkout, and points the agents that already have Leteo
+# configured at the new binary.
 #
 # Run from any PowerShell location:
 #
@@ -11,10 +12,11 @@
 #
 # Variables, all optional:
 #   CARGO_INSTALL_ROOT, CARGO_HOME  where the binary goes, as Cargo reads them
-#   LETEO_SETUP_AGENTS              agents to configure, as slugs separated by
-#                                   spaces; `none` configures nothing. Unset
+#   LETEO_SETUP_AGENTS              agents to set up, as slugs separated by
+#                                   whitespace. Unset, empty or only blanks
 #                                   means the agents that already have Leteo
-#                                   configured, and no others.
+#                                   configured, and no others. The exact word
+#                                   `none`, alone, sets up no agent.
 
 [CmdletBinding()]
 param()
@@ -79,7 +81,7 @@ try {
     Pop-Location
 }
 
-$leteo = Join-Path $installRoot 'bin\leteo.exe'
+$leteo = Join-Path (Join-Path $installRoot 'bin') 'leteo.exe'
 if (-not (Test-Path -LiteralPath $leteo -PathType Leaf)) {
     throw "Cargo reported success, but the installed executable was not found at '$leteo'."
 }
@@ -89,41 +91,63 @@ Invoke-Checked $leteo @('--version')
 
 # The model in this checkout, not the one `model install` would download for the
 # binary's version tag: an unreleased build has no such tag to match.
-Invoke-Checked $leteo @('model', 'install', '--from', (Join-Path $repository 'assets\model'))
+Invoke-Checked $leteo @('model', 'install', '--from', (Join-Path (Join-Path $repository 'assets') 'model'))
 
 # Which agents get setup run again. `leteo setup` with no agent configures
 # nothing off a terminal (it lists the agents) and is a wizard on one, so the
 # agents are named. By default only those that already carry Leteo are named: a
 # rebuild moves the binary, and what has to follow it is an existing entry, not
 # a new one in an agent this developer never set up. The question is put to the
-# binary rather than to the agents' files: `leteo uninstall` without `--yes` is
-# a preview that changes nothing, and its `was_configured` is the same
-# `is_configured` check `setup` itself uses. The `dry_run` guard keeps a future
-# change to that default from turning this into a removal.
+# binary rather than to the agents' files: its `was_configured` is the same
+# `is_configured` check `setup` itself uses.
+#
+# The command is `leteo uninstall` without `--yes`, which is a preview and
+# removes nothing (src/cli/mod.rs, `dry_run: !*yes`); that is what keeps this
+# safe. The `dry_run` check below only refuses to read a reply that is not a
+# preview as a list of agents. It runs after the command and could not undo a
+# removal, so it is not the safeguard.
+#
+# A reply with no `agents` field is an error naming the command, and not "no
+# agent configured": the second means the binary listed agents and none had
+# Leteo.
+#
 # Plain `setup <agent>`, with no `--instructions` or `--hooks`: a typed flag is
 # refused for an agent that cannot take it (OpenCode has no lifecycle hooks, Pi
 # no instruction file), and one refusal would stop the loop. Plain setup writes
 # the MCP entry, which is what has to follow the binary to its new location;
 # instructions and hooks stay a deliberate `leteo setup <agent> --instructions
-# --hooks`.
-if ($env:LETEO_SETUP_AGENTS) {
-    $agents = @($env:LETEO_SETUP_AGENTS -split '\s+' | Where-Object { $_ })
+# --hooks`. It also resets that entry's `--tools` and `--project` to the
+# defaults, so an entry edited by hand needs the edit again.
+#
+# LETEO_SETUP_AGENTS is read the same way as in build-install.sh: blanks
+# collapsed, and nothing left means unset; `none` is the whole value, exactly
+# (case-sensitive).
+$requested = @($env:LETEO_SETUP_AGENTS -split '\s+' | Where-Object { $_ })
+if ($requested.Count -gt 0) {
+    $agents = $requested
 } else {
     $preview = (& $leteo uninstall | Out-String)
     if ($LASTEXITCODE -ne 0) {
         throw "'$leteo uninstall' failed while looking for configured agents."
     }
-    $report = $preview | ConvertFrom-Json
+    try {
+        $report = $preview | ConvertFrom-Json
+    } catch {
+        throw "'$leteo uninstall' printed a reply that is not JSON: $($_.Exception.Message)"
+    }
     if ($report.dry_run -ne $true) {
         throw "'$leteo uninstall' did not report a preview; refusing to read it as a list of agents."
     }
+    if (-not ($report.PSObject.Properties.Name -contains 'agents') -or @($report.agents).Count -eq 0) {
+        throw "'$leteo uninstall' listed no agents, so the reply could not be read."
+    }
     $agents = @($report.agents | Where-Object { $_.was_configured -eq $true } | ForEach-Object { $_.agent })
     if ($agents.Count -eq 0) {
-        Write-Host 'No agent has Leteo configured, so none is set up again. Run `leteo setup <agent>` to add one.'
+        Write-Host "No agent has Leteo configured, so none is set up again. Run '$leteo setup <agent>' to add one."
         $agents = @('none')
     }
 }
-if (-not ($agents.Count -eq 1 -and $agents[0] -eq 'none')) {
+if (-not ($agents.Count -eq 1 -and $agents[0] -ceq 'none')) {
     foreach ($agent in $agents) {
         Invoke-Checked $leteo @('setup', $agent)
     }

@@ -1,6 +1,7 @@
 #!/bin/sh
 # Builds this checkout and installs the result on macOS or Linux, with the
-# search model from the same checkout and every agent pointed at the new binary.
+# search model from the same checkout, and points the agents that already have
+# Leteo configured at the new binary.
 #
 # Run from any location:
 #
@@ -12,10 +13,11 @@
 #
 # Variables, all optional:
 #   CARGO_INSTALL_ROOT, CARGO_HOME  where the binary goes, as Cargo reads them
-#   LETEO_SETUP_AGENTS              agents to configure, as slugs separated by
-#                                   spaces; `none` configures nothing. Unset
+#   LETEO_SETUP_AGENTS              agents to set up, as slugs separated by
+#                                   whitespace. Unset, empty or only blanks
 #                                   means the agents that already have Leteo
-#                                   configured, and no others.
+#                                   configured, and no others. The exact word
+#                                   `none`, alone, sets up no agent.
 
 set -eu
 
@@ -89,25 +91,46 @@ say 'Installing the model and configuring agents'
 # agents are named. By default only those that already carry Leteo are named: a
 # rebuild moves the binary, and what has to follow it is an existing entry, not
 # a new one in an agent this developer never set up. The question is put to the
-# binary rather than to the agents' files: `leteo uninstall` without `--yes` is
-# a preview that changes nothing, and its `was_configured` is the same
-# `is_configured` check `setup` itself uses. The `dry_run` guard keeps a future
-# change to that default from turning this into a removal.
+# binary rather than to the agents' files: its `was_configured` is the same
+# `is_configured` check `setup` itself uses.
+#
+# The command is `leteo uninstall` without `--yes`, which is a preview and
+# removes nothing (src/cli/mod.rs, `dry_run: !*yes`); that is what keeps this
+# safe. The `dry_run` check below only refuses to read a reply that is not a
+# preview as a list of agents. It runs after the command and could not undo a
+# removal, so it is not the safeguard.
+#
+# The reply is JSON read with POSIX tools, which is a coupling to its shape:
+# every entry carries an `agent` string and a `was_configured` boolean, `agent`
+# first. Braces and commas are turned into line breaks and blanks removed so
+# that pretty or compact output reads the same, but a renamed field breaks it.
+# That is why a reply with no agent entries at all is an error naming the
+# command, and not "no agent configured": the second means the binary listed
+# agents and none had Leteo.
+#
 # Plain `setup <agent>`, with no `--instructions` or `--hooks`: a typed flag is
 # refused for an agent that cannot take it (OpenCode has no lifecycle hooks, Pi
 # no instruction file), and one refusal would stop the loop. Plain setup writes
 # the MCP entry, which is what has to follow the binary to its new location;
 # instructions and hooks stay a deliberate `leteo setup <agent> --instructions
-# --hooks`.
-AGENTS="${LETEO_SETUP_AGENTS:-}"
+# --hooks`. It also resets that entry's `--tools` and `--project` to the
+# defaults, so an entry edited by hand needs the edit again.
+#
+# LETEO_SETUP_AGENTS is read the same way as in build-install.ps1: blanks
+# collapsed, and nothing left means unset; `none` is the whole value, exactly.
+AGENTS="$(printf '%s' "${LETEO_SETUP_AGENTS:-}" | tr -s ' \t\n' ' ' | sed 's/^ //; s/ $//')"
 if [ -z "$AGENTS" ]; then
     PREVIEW="$("$LETEO" uninstall </dev/null)" \
         || fail "'$LETEO uninstall' failed while looking for configured agents."
-    printf '%s\n' "$PREVIEW" | grep -q '"dry_run": true' \
+    FLAT="$(printf '%s' "$PREVIEW" | tr -d ' \t\r' | awk '{ gsub(/[{},]/, "\n"); print }')"
+    printf '%s\n' "$FLAT" | grep -q '^"dry_run":true$' \
         || fail "'$LETEO uninstall' did not report a preview; refusing to read it as a list of agents."
-    AGENTS="$(printf '%s\n' "$PREVIEW" | awk '
-        /"agent":/ { gsub(/[",]/, "", $2); agent = $2 }
-        /"was_configured": true/ { print agent }')"
+    ENTRIES="$(printf '%s\n' "$FLAT" | awk '
+        /^"agent":"/ { agent = $0; sub(/^"agent":"/, "", agent); sub(/".*/, "", agent); print "listed " agent }
+        /^"was_configured":true$/ { print "configured " agent }')"
+    printf '%s\n' "$ENTRIES" | grep -q '^listed ' \
+        || fail "'$LETEO uninstall' listed no agents, so the reply could not be read."
+    AGENTS="$(printf '%s\n' "$ENTRIES" | sed -n 's/^configured //p')"
     if [ -z "$AGENTS" ]; then
         say "No agent has Leteo configured, so none is set up again. Run '$LETEO setup <agent>' to add one."
         AGENTS='none'

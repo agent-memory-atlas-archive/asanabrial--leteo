@@ -484,3 +484,9 @@ jobs:
       # the runner image carries; a runner without it fails the step rather than
       # skipping the wrapper.
       - run: sh tools/semantic/check_install.sh target/release/leteo
+      # `scripts/build-install.sh` and `.ps1` run behind stand-in `rustup`, `cargo`
+      # and `leteo`, so nothing is built and no store or agent file is touched:
+      # the install root, the order of the steps, which agents are set up again,
+      # and that a step's failure stops the run and names it. The `.ps1` runs
+      # under the `pwsh` this runner image carries; without it the step fails.
+      - run: sh tools/build-install/check.sh
