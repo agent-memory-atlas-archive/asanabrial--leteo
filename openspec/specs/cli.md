@@ -352,6 +352,8 @@ duties about what an answer explains.
 - `src/cli/mod.rs` — the commands
 - `scripts/build-install.sh`, `scripts/build-install.ps1` — build and install
   the checkout (§17)
+- `tools/build-install/check.sh` — runs both behind stand-in `rustup`, `cargo`
+  and `leteo` (§17)
 - `src/cli/projects.rs` — read scoping and project resolution
 - `tests/cli_integration.rs`, `tests/documented_commands.rs`,
   `tests/repository_guards.rs`
