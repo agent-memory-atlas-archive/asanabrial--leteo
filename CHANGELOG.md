@@ -6,9 +6,12 @@ All notable changes to Leteo are documented in this file.
 
 ## [0.3.0] - 2026-10-07
 
-Search by meaning, stemming in the language a memory was written in, and a
-script that builds a checkout and installs it. Read this before installing it
-beside an older Leteo: **0.3.0 migrates the store to schema version 22, and no
+Search by meaning, by half-remembered words and through typos, stemming in the
+language a memory was written in, a history of what an update replaced, a way to
+merge duplicate memories, and a script that builds a checkout and installs it.
+**`mem_update`, `mem_delete`, `mem_pin` and `mem_unpin` now require
+`expected_project`**, so an agent that calls them without it is refused. Read this
+before installing it beside an older Leteo: **0.3.0 migrates the store to schema version 22, and no
 0.2.x binary can open it afterwards.** One that tries says so and refuses
 (`this database is at schema version 22, but this build of Leteo understands
 18`) rather than reading a store it does not know, so upgrade every agent's
@@ -76,6 +79,43 @@ to fetch.
   in `settings.json`. Basque is the weak language: the model was not trained on it
   (#124).
 
+- **Romanian is the thirteenth interface language.** `interface` and
+  `voice_language` accept `ro` (or `română`), and the screens, the Sardi voice lines
+  and the subagent-capture headings are translated. The translation is
+  machine-made with no native speaker having read it, so expect the odd awkward
+  sentence (#13).
+
+- **Command Code is the fifteenth agent `leteo setup` configures.** `leteo setup
+  command-code` registers the MCP server in `~/.commandcode/mcp.json` in the entry
+  shape Command Code reads (`transport: "stdio"`, `enabled: true`) and writes the
+  instruction block to `~/.commandcode/AGENTS.md`; removal and `leteo uninstall`
+  take both back out. There are no hooks yet: Command Code sends a different
+  payload from the one `leteo hook` reads, so a session is not opened or
+  closed for it automatically (#43).
+
+- **An update no longer destroys the text it replaced.** A topic-key save and a
+  content-changing `mem_update` overwrote title and body in place, so the memories
+  an agent curated most were exactly the ones that lost their history. Each such
+  write now keeps the superseded title and body in `observation_versions` (migration
+  19), the newest twenty per memory; a metadata-only change, a deduplicated save
+  and an insert keep nothing. `mem_get_observation` takes `include_history` and
+  returns them whole, newest first; `mem_save` and `mem_update` answer
+  `replaced_bytes`, with a `hint` naming that read when the new body is under half
+  of what it replaced. Versions replicate and travel through `leteo export` and
+  `import`. Restoring is an ordinary `mem_update` with the old text; there is no
+  restore tool (#127).
+
+- **`mem_consolidate` merges memories, and a superseded memory stops listing.**
+  `mem_consolidate` and `leteo consolidate` insert one replacement and record a
+  judged `supersedes` relation from it to each source, in one transaction: a source
+  in another project, or one the store does not hold, refuses with nothing written,
+  and the replacement is filed where the sources are. Before this a judged
+  `supersedes` was only a caveat beside a memory that kept appearing everywhere;
+  now its target is left out of search, the opening block, `mem_context` and
+  every other listing. Nothing is deleted, so reversing the relation brings the
+  memory back, and `mem_get_observation` still returns it by id with its caveat
+  (#132).
+
 ### Changed
 
 - **The opening block and `mem_context` had no size bound.** They were bounded by a
@@ -107,6 +147,43 @@ to fetch.
   whole inventory. `mem_doctor`'s per-project detail carries the same last activity, so
   a project past the ceiling can still be asked for it (#129).
 
+- **Search finds a word somebody half-remembered.** Search matched whole tokens and
+  stems, so a fragment failed the strict pass exactly as an unknown word did and the
+  widened retry answered by dropping it: on the benchmark's partial-word set
+  (`pgxpo`, `storyb`, `telemetr`) MRR was 0.231. When the strict pass finds nothing
+  each word is now retried as a prefix, and then as a substring of a title (`telemetr`
+  is not the start of `OpenTelemetry`); both add no word and drop none, and mark their
+  results `partial`. MRR on that set is 0.923, with no other kind moving by more than
+  0.02. A trigram index would have done it for 18.5 MB on a 9.3 MB corpus and was
+  declined; the title scan costs no bytes and about 3 ms on a 5,243-memory store
+  (#123).
+
+- **Search corrects a misspelled word, and says which.** A typo that stemming did not
+  happen to collapse (`limitting` does; `conection` does not) found nothing. A word the
+  index has never held is now replaced by the nearest word the unstemmed vocabulary does
+  hold (one edit up to five characters, two above), all or none, and only when the
+  uncorrected query found nothing. The reply names every correction: `mem_search`
+  carries a `hint` and `leteo search` prints the same sentence on stderr. Typo MRR on
+  the benchmark goes from 0.615 to 1.000 and overall from 0.784 to 0.835; a corrected
+  query costs 20 to 30 ms on a 42,538-term store, and one that answers does not touch
+  the vocabulary (#126).
+
+- **A search query over 8,192 bytes is refused, naming the cap.** A pasted log was
+  tokenised whole and the strict pass built one term per distinct word, so the cost of
+  the input was paid before any stage could answer: 18.5 ms at 8 KiB, 132.5 ms at 64 KiB
+  on a 4,000-memory corpus, close to linear in the terms. `mem_search` answers
+  `query_too_long`, a code of its own beside `invalid_search`, and `leteo search` fails
+  with `search query is N bytes, over the 8192-byte maximum` (#130).
+
+- **A memory write names the project it expects the memory to be in.**
+  `mem_update`, `mem_delete`, `mem_pin` and `mem_unpin` acted on a bare id, and ids are
+  not private to a project: `mem_search` with `all_projects` hands out other projects'
+  ids, so an agent in one repository could revise, pin or hard-delete another's memory
+  by mistake. They now require `expected_project`, compared with the row's project
+  inside the write transaction, and refuse with `project_mismatch` and nothing changed.
+  Moving a memory takes both ends: `expected_project` is where it is, `project` where it
+  goes. Reads, the CLI and the TUI are unchanged (#116).
+
 ### Fixed
 
 - **The uninstall scripts no longer count a binary that cannot start as one that
@@ -114,6 +191,56 @@ to fetch.
   binary that failed to start (exit 126 or 127) left the model files behind and
   pointed at a report that was never printed; `uninstall.ps1` now agrees with it
   and retries the data files after a failed run, as the shell script already did.
+  CI now runs both scripts behind a binary that judged the model and one that
+  cannot start (#177).
+
+- **Changing a remote split a project in two without a word.** The project is
+  re-derived from `origin` on every call, so adding a remote to a repository named by
+  its directory, renaming it or pointing it at a fork filed the next write under a new
+  name while the memories already recorded stayed under the old one, and neither half
+  could see the other. `mem_save` and `mem_session_start` now check what sessions this
+  directory recorded, and when it was another project they answer `ambiguous_project`
+  naming both sides and `leteo projects consolidate`; an explicit `project` still
+  resolves it, and a directory whose sessions agree is not asked. The session-start
+  hook cannot prompt, so it warns, and says when it could not look; passive capture
+  continues under the recorded project. The extra read costs 235 µs at 500 sessions and
+  2.24 ms at 5,000 (#131).
+
+- **`setup` pinned a path `brew upgrade` deletes, and nothing noticed.** For a Homebrew
+  install `setup` wrote `<prefix>/Cellar/leteo/<version>/bin/leteo` into every agent
+  config; the upgrade removed that directory, every hook and the MCP server then failed,
+  and a hook fails silently by design, so memory stopped being recorded with no signal.
+  `setup` now writes the stable link when the binary sits under a versioned directory
+  (Homebrew's Cellar, mise's and asdf's `installs/`) and the link exists, and `leteo
+  doctor` reports an absolute binary path in any agent's MCP or hook configuration that
+  no longer exists, as `missing_binaries` naming the file (#117).
+
+- **Adopting an Engram v3 database re-armed what Engram had quarantined and could abort
+  on a database that had synced.** `leteo import --from-engram` copied quarantined and
+  superseded `sync_mutations` back in as pending; it folded two spellings of a project
+  into two rows, not one; and it copied `sync_mutations` before the `sync_state` its
+  foreign key points to, which failed the whole adoption. Quarantined and superseded
+  mutations are now left out, the project fold merges, the order is fixed, and the
+  report carries a `dropped` list naming every source table and column Leteo could not
+  carry (the hard-delete tombstones among them) instead of skipping them silently
+  (#118).
+
+- **Claude Code cut the server instructions short.** It delivers the first 2,048
+  characters of an MCP server's instructions and appends `… [truncated]`;
+  Leteo's were 2,246, so every session lost the whole paragraph on summaries and the
+  tail of the one on conflicts. The block is rewritten shorter with every rule still
+  stated, and a test counts it against `SERVER_INSTRUCTIONS_LIMIT` in the unit the client
+  counts (#111).
+
+- **Opening a store could be aborted, or report a repair that did not land, when an
+  adopted table's `id` was not an integer.** Migration 18's review-clock write-back
+  addressed rows by `id`; on a table adopted with its own column definitions a TEXT
+  primary key (`'007'`) never matched the bound integer, nothing updated, and the repair
+  still counted itself. It addresses `rowid` now. The refusal for a database stamped
+  with a pre-release schema version also named a remedy that cannot be reached (export
+  and import into a fresh store); it says to set `PRAGMA user_version = 0` and reopen,
+  or start fresh (#85).
+
 - **A body over the storage bound was cut without saying so.** `mem_save` and
   `mem_update` stored at most `max_observation_length` bytes — 50,000 — and the
   tail was gone, while the reply said nothing: `content_truncated` describes the
@@ -190,7 +317,26 @@ to fetch.
   binary carries neither `VCRUNTIME140.dll` nor any `api-ms-win-crt-*.dll`
   afterward. The cost is 209,408 bytes on a 19 MB executable (+1.1%);
   measured interleaving 30 runs of each binary, neither `leteo --version` nor
-  `leteo hook user-prompt-submit` came out measurably slower.
+  `leteo hook user-prompt-submit` came out measurably slower. The README now states
+  the floor, Windows 10 or later, and the release job reads the import table of the
+  `leteo.exe` it is about to archive (`scripts/check-windows-imports.ps1`) and fails on
+  any DLL outside an allow-list, so a `RUSTFLAGS` that replaces the link flags goes red
+  instead of shipping (#100, #102, #103).
+
+### Internal
+
+- Search quality and reply size are now held in CI: a ratchet loads a synthetic
+  170-memory corpus into a fresh store, asks 117 questions and fails when any kind's MRR
+  or the bytes of a search or `mem_context` cross `tools/engram-bench/floors.json`
+  (#128). A pin-and-recency rerank in Engram's style was measured through the shipped
+  query and declined: neutral on bodies, and on title-shaped questions MRR fell from
+  0.8666 to 0.8042 (#115). The measured comparison with Engram is generated by one
+  command into `docs/comparison-with-engram.md` (#135).
+- CI can be dispatched against a head a publication just pushed, and skips the suite
+  when a pull-request run already covers that head (#57). The setup tests no longer
+  write to the real agent configuration when `CLAUDE_CONFIG_DIR` or another root is
+  set: a `cargo test` run inside Claude Code had overwritten the author's
+  `settings.json` (#136).
 
 ## [0.2.1] - 2026-09-02
 
