@@ -41,7 +41,7 @@ cat > "$STUB/leteo.template" <<'SH'
 printf '%s\n' "$0" >> "$FAKE_LOG.exe"
 printf 'leteo %s\n' "$*" >> "$FAKE_LOG"
 case "${FAKE_FAIL:-}" in
-    "$*") echo "stand-in leteo: told to fail on '$*'" >&2; exit 1 ;;
+    "$*") echo "stand-in leteo: told to fail" >&2; exit 1 ;;
 esac
 if [ "${1:-}" = uninstall ]; then
     case "${FAKE_PREVIEW:-normal}" in
