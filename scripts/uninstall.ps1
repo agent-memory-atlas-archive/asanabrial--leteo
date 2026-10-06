@@ -104,14 +104,18 @@ if (-not $Yes) {
 # exited with: it exits non-zero on any incomplete removal, after it has already
 # kept the model files it did not recognise. The by-name removal of the model
 # below does not look at content, so it must not run behind it. Started is read
-# from the line `leteo uninstall --yes` prints on stderr before it judges
-# anything, the same line uninstall.sh looks for, and not from an exit code or an
-# exception type: PowerShell throws when a start fails, but nothing says the
-# exception was not raised after the process had begun, and an exit of 126 or 127
-# is as likely to be the binary's own. `$handled` is the narrower claim that it
-# finished, and gates only the data files, which the binary and this script name
-# identically, so trying them again after a failure undoes no judgment.
+# from what the binary itself printed, not from an exit code or an exception
+# type: PowerShell throws when a start fails, but nothing says the exception was
+# not raised after the process had begun, and an exit of 126 or 127 is as likely
+# to be the binary's own. Either of two things counts, as in uninstall.sh: the
+# line `leteo uninstall --yes` prints before it judges anything, and a line of
+# its JSON report, which is what a binary built before that line existed prints
+# and which an older archive can leave beside this script. `$handled` is the
+# narrower claim that it finished, and gates only the data files, which the
+# binary and this script name identically, so trying them again after a failure
+# undoes no judgment.
 $startedMarker = 'leteo uninstall: started'
+$reportLine = '^  "model_removed": (true|false),?$'
 $ran = $false
 $handled = $false
 if (Test-Path $binary) {
@@ -123,8 +127,10 @@ if (Test-Path $binary) {
         # line it is looking for.
         $ErrorActionPreference = 'Continue'
         & $binary uninstall --yes 2>&1 | ForEach-Object {
-            $line = "$_"
-            if ($line -eq $startedMarker) { $script:ran = $true }
+            # Windows PowerShell 5.1 hands stderr over as an ErrorRecord, and a
+            # console may end a line with a carriage return.
+            $line = "$_".TrimEnd("`r", "`n")
+            if ($line -eq $startedMarker -or $line -match $reportLine) { $script:ran = $true }
             Say $line
         }
         $code = $LASTEXITCODE

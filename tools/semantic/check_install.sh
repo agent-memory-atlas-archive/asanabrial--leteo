@@ -237,6 +237,19 @@ ran_and_failed() {
     chmod +x "$1"
 }
 
+# A binary from before the marker line existed: it ran, kept a file, printed its
+# report and failed, and an older archive can leave it beside a newer script.
+# The report is the shape `print_json` makes of a `Removal`.
+pre_marker_and_ran() {
+    cat > "$1" <<'STUB'
+#!/bin/sh
+[ "$1" = uninstall ] || exit 1
+printf '{\n  "dry_run": false,\n  "model_removed": false,\n  "remaining": []\n}\n'
+exit 1
+STUB
+    chmod +x "$1"
+}
+
 echo "-- uninstall.sh behind a binary that started and failed before removing anything"
 P="$ROOT/h"
 install_into "$P"
@@ -246,6 +259,15 @@ seed_store
 isolated LETEO_INSTALL_DIR="$P/bin" sh "$P/bin/uninstall.sh" --yes >"$ROOT/uninstall.log" 2>&1 || { cat "$ROOT/uninstall.log"; failed=1; }
 check "the data files are retried by name" store_gone
 check "the file the binary may have kept survived" planted_survived "$P/share/leteo/model"
+check "and the message cites the report" cites_a_report
+
+echo "-- uninstall.sh behind a binary from before the marker that ran and failed"
+P="$ROOT/j"
+install_into "$P"
+plant_in "$P/share/leteo/model"
+pre_marker_and_ran "$P/bin/leteo"
+isolated LETEO_INSTALL_DIR="$P/bin" sh "$P/bin/uninstall.sh" --yes >"$ROOT/uninstall.log" 2>&1 || { cat "$ROOT/uninstall.log"; failed=1; }
+check "the file the binary kept survived, marker or not" planted_survived "$P/share/leteo/model"
 check "and the message cites the report" cites_a_report
 
 echo "-- the npm wrapper, against a local release"
@@ -414,6 +436,14 @@ seed_store
 run_ps1 "$P"
 check "ps1: the data files are retried by name after a binary that ran and failed" store_gone
 check "ps1: the file in the data directory's model survived" planted_survived "$ROOT/data/model"
+check "ps1: and the message cites the report" cites_a_report
+
+P="$ROOT/k"
+windows_layout "$P"
+plant_in "$P/bin/model"
+pre_marker_and_ran "$P/bin/leteo.exe"
+run_ps1 "$P"
+check "ps1: behind a binary from before the marker, the file it kept survived" planted_survived "$P/bin/model"
 check "ps1: and the message cites the report" cites_a_report
 fi
 
