@@ -154,6 +154,40 @@ which is the faster half of that sentence. To build whatever is on `main`
 instead, including work that has not been released yet, ask for the repository:
 `cargo install --git https://github.com/asanabrial/leteo`.
 
+### Building your own checkout
+
+To install what is in your working copy, run the script for your system from any
+directory:
+
+```bash
+# Linux and macOS
+scripts/build-install.sh
+```
+
+```powershell
+# Windows
+scripts\build-install.ps1
+```
+
+It needs `rustup` and `cargo`, installs Rust 1.97.0 if that toolchain is missing,
+builds in release mode with `--locked`, and installs into Cargo's own root —
+`CARGO_INSTALL_ROOT`, then `CARGO_HOME`, then `~/.cargo` — never into the
+directory the release installers use, so a source build does not overwrite a
+release install. It then installs the model from `assets/model/` in the checkout
+(an unreleased build has no release tag to download it from), runs `setup` again
+for each agent that already has Leteo configured, and finishes with `doctor`. `setup` here writes only the
+MCP entry, which is what has to follow the binary to its new path, and it
+resets that entry's `--tools` and `--project` to the defaults, so an entry you
+edited by hand needs the edit again. Add
+`--instructions` or `--hooks` to an agent yourself where you want them. An agent
+that does not have Leteo yet is left alone; add one with `leteo setup <agent>`.
+Set `LETEO_SETUP_AGENTS` to a space-separated list of agent names to set up
+exactly those, or to the word `none`, alone, to set up no agent; empty or blank
+means unset. Any step that fails stops the script
+with a non-zero exit and names the command that failed. To try it without
+touching your own store or agent files, point `HOME`, `CARGO_INSTALL_ROOT` and
+`LETEO_DATA_DIR` at a temporary directory.
+
 ### The search model
 
 Search by meaning, for a question that shares no word with the memory it wants,

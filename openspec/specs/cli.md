@@ -308,6 +308,33 @@ duties about what an answer explains.
     `tools/semantic/check_install.sh` runs both scripts behind a binary that
     ran, kept a file and failed, and behind one that cannot start.
 
+17. **`scripts/build-install.sh` and `build-install.ps1` install the checkout
+    they sit in.** They are the developer's counterpart to the release
+    installers: they build with the pinned toolchain (`rustup run 1.97.0 cargo
+    build --release --locked`), install with `cargo install --root <root> --path .
+    --locked --force`, where the root is `CARGO_INSTALL_ROOT`, then `CARGO_HOME`,
+    then `~/.cargo`, made absolute, and never the release installers' directory.
+    They require the installed executable to exist, then run `leteo --version`,
+    `leteo model install --from <checkout>/assets/model` (§16: an unreleased build
+    has no tag to download from), `leteo setup <agent>` for each agent and
+    `leteo doctor`. `leteo setup` with no agent is not used to configure: off a
+    terminal it only lists the agents, and on one it is a wizard. The scripts
+    name the agents instead, and by default only those that already have Leteo
+    configured, so a rebuild repoints existing entries and never creates one for
+    an agent that has none. They ask the binary: `leteo uninstall` without
+    `--yes` is a preview that changes nothing, and its per-agent `was_configured`
+    is the `is_configured` check `setup` uses (§5). That it removes nothing is
+    the command's own rule, not the scripts'; they only refuse to read a reply not
+    marked `dry_run` as a list of agents. No configured agent is reported and is not an error.
+    `LETEO_SETUP_AGENTS` names the agents instead; empty or only blanks is unset,
+    and the exact word `none`, alone, skips the step. A reply with no agent
+    entries at all is an error naming `leteo uninstall`, not "no agent
+    configured". The agent step is plain `setup <agent>`, the MCP entry only, and
+    it resets that entry's `--tools` and `--project` to the defaults. A typed
+    `--instructions` or `--hooks` is refused for an agent that cannot take it and
+    one refusal would end the run. Every failure names the command and exits
+    non-zero.
+
 ## Invariants
 
 - Every documented command exists, and every command is documented. A test in
@@ -323,6 +350,10 @@ duties about what an answer explains.
 
 - `src/cli/args.rs` — the parser, and the single list of hook event names
 - `src/cli/mod.rs` — the commands
+- `scripts/build-install.sh`, `scripts/build-install.ps1` — build and install
+  the checkout (§17)
+- `tools/build-install/check.sh` — runs both behind stand-in `rustup`, `cargo`
+  and `leteo` (§17)
 - `src/cli/projects.rs` — read scoping and project resolution
 - `tests/cli_integration.rs`, `tests/documented_commands.rs`,
   `tests/repository_guards.rs`
