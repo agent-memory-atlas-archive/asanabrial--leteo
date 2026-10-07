@@ -4,6 +4,16 @@ All notable changes to Leteo are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Catalan, Basque and Polish memories are stemmed in their own language.**
+  `stemming::algorithm` now carries the three through `snowball_stemmers_rs`,
+  so `migracions` finds a memory about `migració`. The setting already offered
+  them; they got `porter` alone. The eight languages `rust-stemmers` already
+  carried keep it, because the two implementations disagree on words they
+  already index and the ratchet's floors are held to its stems. Each new
+  language has an inflection set and a 1.000 floor (#183).
+
 ## [0.3.0] - 2026-10-07
 
 Search by meaning, by half-remembered words and through typos, stemming in the
