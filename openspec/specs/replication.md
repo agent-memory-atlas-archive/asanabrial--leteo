@@ -107,15 +107,21 @@ this describes what happens when it does not have to.
 
 ## Known gaps
 
-- **There is no client half of the chunked export protocol.** The server speaks
-  it and a peer would answer, but nothing on this side ever starts one. Four
-  functions used to sit here waiting to be finished — about 110 lines, no
-  caller, and the reason this file's coverage looked worse than its behaviour —
-  and they were deleted rather than left: unfinished code that nothing reaches
-  reads as a feature to whoever finds it, and costs a coverage number nobody can
-  act on. Replication works without it, one mutation at a time over the journal;
-  the chunked path is an optimisation for a first sync of a large store, and it
-  is a thing to write when there is a peer to measure it against.
+- **There is no client half of the chunked export protocol, and none is
+  planned.** The server speaks it and a peer would answer, but nothing on this
+  side ever starts one. Four functions used to sit here waiting to be finished —
+  about 110 lines, no caller, and the reason this file's coverage looked worse
+  than its behaviour — and they were deleted rather than left: unfinished code
+  that nothing reaches reads as a feature to whoever finds it, and costs a
+  coverage number nobody can act on. Replication works without the chunks, one
+  mutation at a time over the journal, and that is the decision rather than a
+  way station. Serverless sharing — a transport that carries a project's
+  memories in files, git or otherwise, with no server to run — was weighed and
+  set aside: a file transport beside the journal would carry a second wire
+  format and a second set of conflict rules for the one path no peer has asked
+  to measure, while the cloud server already covers every share this project has
+  (see [`cli.md`](cli.md) — `leteo cloud`). Recording it here keeps the gap from
+  reading as work waiting to be done.
 - The remaining uncovered paths need a live PostgreSQL peer, so they are
   `#[ignore]`d rather than skipped silently.
 
