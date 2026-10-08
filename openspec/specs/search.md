@@ -607,8 +607,15 @@ before any of it.
     against. English is `porter`'s, and one language the setting offers has no
     arm at all:
 
-    - **Galician has no Snowball algorithm at all.** Nothing to add; it needs a
-      stemmer from somewhere else, or stays on `porter`.
+    - **Galician stays on `porter`.** Snowball has no Galician algorithm, and
+      the languages close to it were measured against a Galician set rather than
+      assumed. Portuguese, which the crate already carries and which Galician is
+      usually grouped with, folds one of that set's eight queries, because it
+      leaves the `-ción` family untouched and that family is most of Galician's
+      technical vocabulary; Spanish folds six, but it is a different language
+      and a borrow rather than a source. So no arm ships: the set is in
+      `tools/engram-bench/inflection_sets.py`, it scores 0.000 on `main` and
+      0.000 under `--porter-only`, and its floor is that 0.000.
 
     A row in a language with no arm here records its language and gets `porter`
     alone, and the rows recorded under a language are re-stemmed by the repair
@@ -647,10 +654,12 @@ before any of it.
     runner refuses to run if a deliberately mangled word is ever answered without
     saying so, because then it could not tell the stages apart. One store per
     language, with that language named in its settings; `inflection_check.py`
-    verifies the edit distances and that a stemmer folds each query word onto its
-    memory. A stemmer ships only if its set separates the stemming store from the
-    same store told it writes English: all eight languages score MRR 1.000 with
-    their stemmer and 0.000 without it. A question is worth keeping only if
+    verifies the edit distances and, where the language has an arm, that its
+    stemmer folds each query word onto its memory. A stemmer ships only if its
+    set separates the stemming store from the same store told it writes English:
+    every language with an arm scores MRR 1.000 with its stemmer and 0.000
+    without it, and a language with no arm has only its distances checked and
+    scores 0.000. A question is worth keeping only if
     `porter` cannot answer it: French's first draft had four that share an
     English suffix, `-ation` and `-er`, and `porter` answered them. The floors are in `floors.json` under `inflection`.
 
