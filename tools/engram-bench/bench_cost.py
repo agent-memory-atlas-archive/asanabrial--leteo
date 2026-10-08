@@ -1,12 +1,11 @@
 import json, os, shutil, statistics as st, subprocess, time, uuid
-from mcpclient import MCP, BENCH, ENGRAM, LETEO
+from mcpclient import MCP, BENCH, ENGRAM, LETEO, ENGRAM_QUIET_ENV
 PORT = "17437"
 bindir = os.path.join(BENCH, "bin"); os.makedirs(bindir, exist_ok=True)
 if not os.path.exists(os.path.join(bindir, "engram")): os.symlink(ENGRAM, os.path.join(bindir, "engram"))
 EHOME, LHOME = os.path.join(BENCH, "ehome"), os.path.join(BENCH, "lhome")
 eenv = dict(os.environ, HOME=EHOME, ENGRAM_DATA_DIR=os.path.join(EHOME, "data"), ENGRAM_PORT=PORT,
-            ENGRAM_NO_UPDATE_CHECK="1",
-            PATH=bindir + ":" + os.environ["PATH"])
+            PATH=bindir + ":" + os.environ["PATH"], **ENGRAM_QUIET_ENV)
 lenv = dict(os.environ, HOME=LHOME, LETEO_DATA_DIR=LHOME, LETEO_DATABASE=os.path.join(LHOME, "leteo.db"))
 cwd = os.path.join(BENCH, "work", "alpha-api")
 def pct(xs): xs = sorted(xs); return st.median(xs), xs[int(0.9 * len(xs))]
