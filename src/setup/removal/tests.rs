@@ -281,6 +281,72 @@ fn keep_data_leaves_the_store_where_it_is() {
     );
 }
 
+#[test]
+fn keep_data_in_a_preview_says_the_store_would_stay() {
+    // `--keep-data` is answered before the `dry_run` branch, so a preview with
+    // it reports the store as kept — which is what `complete()` needs to read
+    // the run as a success rather than a partial removal — and still touches
+    // nothing.
+    let temp = TempDir::new().unwrap();
+    let data = temp.path().join("data");
+    std::fs::create_dir_all(&data).unwrap();
+    std::fs::write(data.join("leteo.db"), b"store").unwrap();
+
+    let mut options = probe_in(temp.path());
+    options.dry_run = true;
+    options.keep_data = true;
+    let removed = uninstall_everything_for(&options, &data, fake_exe(temp.path()));
+
+    assert!(data.join("leteo.db").exists(), "a preview touches nothing");
+    assert!(
+        removed.data_kept,
+        "and still says the store was asked for and kept: {removed:?}"
+    );
+    assert!(removed.complete(), "{removed:?}");
+    assert!(
+        removed
+            .remaining
+            .iter()
+            .any(|line| line.contains("--keep-data")),
+        "and it says why: {:?}",
+        removed.remaining
+    );
+}
+
+#[test]
+fn the_other_store_name_and_its_sidecars_go_too() {
+    // `store.db` is the name the store carried before `leteo.db`, and the
+    // sidecars are named from whichever store they belong to. All of these are
+    // Leteo's own; a bare `leteo.db` prefix used to be what took the rest.
+    let temp = TempDir::new().unwrap();
+    let data = temp.path().join("data");
+    std::fs::create_dir_all(&data).unwrap();
+    let names = [
+        "leteo.db",
+        "leteo.db-wal",
+        "leteo.db-shm",
+        "leteo.db-journal",
+        "store.db",
+        "store.db-wal",
+        "store.db-shm",
+        "store.db-journal",
+    ];
+    for name in names {
+        std::fs::write(data.join(name), b"old").unwrap();
+    }
+
+    let removed = uninstall_everything_for(&probe_in(temp.path()), &data, fake_exe(temp.path()));
+
+    for name in names {
+        assert!(
+            !data.join(name).exists(),
+            "{name} is the store's own name or a sidecar of it, and it goes"
+        );
+    }
+    assert!(removed.data_dir_removed, "{removed:?}");
+    assert!(removed.data_removed);
+}
+
 /// One model file with its real content, hard-linked from the checkout where
 /// the filesystem allows and copied where it does not. Deleting the link leaves
 /// the checkout's file alone. The hash check means a stand-in cannot be junk.

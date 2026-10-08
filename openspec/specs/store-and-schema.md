@@ -437,7 +437,7 @@ there from any provenance, and how it says when something has gone wrong.
     the same migration is the same copy and stands, because overwriting it would
     be no fresher; copies older than `BACKUPS_KEPT` (3), read by the schema each
     names, are pruned. `uninstall` does not remove these copies — see
-    [`cli.md`](cli.md) §16.
+    [`cli.md`](cli.md) §18.
 
 ## Invariants
 
