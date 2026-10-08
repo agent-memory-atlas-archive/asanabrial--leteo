@@ -68,7 +68,7 @@ beside them and to no other.
 |---|---|
 | Engram version | 3.1.0 |
 | Leteo version | 0.3.0 |
-| Leteo commit | `76e220132a3f05a86059575633b365710909fcf7` |
+| Leteo commit | `e0084279b77946eaf88fb0008c55d738aae0aac8` |
 | harness | `tools/engram-bench`, run by `compare.py` at this commit |
 | search limit | 20 |
 | corpus | 91 memories (alpha-api 47, beta-web 44) |
@@ -91,14 +91,14 @@ beside them and to no other.
 
 | engine | warm search median | p90 | mean reply bytes | mean results | zero-result queries | 20-result replies | mean bytes at 20 |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| engram | 8.5 ms | 9.6 ms | 532 | 0.7 | 20 | 0 | 0 |
-| leteo | 0.4 ms | 1.9 ms | 1212 | 2.4 | 1 | 0 | 0 |
+| engram | 17.1 ms | 32.0 ms | 532 | 0.7 | 20 | 0 | 0 |
+| leteo | 0.3 ms | 1.4 ms | 1212 | 2.4 | 1 | 0 | 0 |
 
 ### Questions the corpus cannot answer
 
 | engine | answered | with no caveat | no-answer precision | mean reply bytes |
 |---|---:|---:|---:|---:|
-| engram | 0 of 16 | 0 | 1.00 | 0 |
+| engram | 0 of 16 | 0 | 1.00 | — |
 | leteo | 5 of 16 | 0 | 1.00 | 2550 |
 
 ### Engram with its opt-in `match_mode: "any"`
