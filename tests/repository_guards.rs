@@ -503,8 +503,8 @@ fn joined_without_the_backslash(segment: &str) -> bool {
 /// resume at the left margin, which is where every deliberate multi-line
 /// literal in this tree puts them.
 fn broken_by_the_line_it_was_written_on(before: &str, after: &str) -> bool {
-    // Not a semicolon: that is how a SQL statement ends, and the two-statement
-    // rebuild in `engram.rs` is laid out on purpose.
+    // Not a semicolon: that is how a SQL statement ends, and a multi-statement
+    // SQL literal is laid out on purpose.
     // Trailing spaces and all: a line that ends "…przez " is as much mid-sentence
     // as one that ends "…przez", and reading the last character without
     // trimming let exactly that mutation through.

@@ -47,7 +47,8 @@ pub fn adoption_note(found: &engram::Installation, held: i64) -> String {
     format!(
         "Engram is installed at {}, holding {} memories.\n\
          Leteo already holds {held}, so adopting is not offered below: it \
-         replaces the Leteo database rather than merging into it.\n\
+         refuses a store that already holds memories rather than merging into \
+         it.\n\
          Run `leteo import --from-engram --dry-run` to see what it would take \
          over.",
         found.database.display(),

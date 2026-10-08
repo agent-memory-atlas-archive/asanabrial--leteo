@@ -785,7 +785,7 @@ fn cli_adopts_an_engram_installation_and_then_refuses_to_do_it_twice() {
     );
     assert_eq!(found.as_array().expect("search results").len(), 1);
 
-    // Adopting again would replace real memories, so it is refused.
+    // Adopting again is refused, and the refusal names what it found.
     let refusal = leteo(&database)
         .arg("import")
         .arg("--from-engram")
@@ -795,7 +795,7 @@ fn cli_adopts_an_engram_installation_and_then_refuses_to_do_it_twice() {
         .failure();
     let stderr = String::from_utf8_lossy(&refusal.get_output().stderr).to_string();
     assert!(
-        stderr.contains("already holds 2 observations"),
+        stderr.contains("already holds") && stderr.contains("2 observations"),
         "the refusal should name what it found: {stderr}"
     );
 

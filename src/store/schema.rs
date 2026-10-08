@@ -953,7 +953,7 @@ fn rebuild_full_text(connection: &Connection) -> Result<(), rusqlite::Error> {
 /// them here and skipping what is absent means one function serves both that
 /// moment and a repair on a fully migrated store, rather than two lists that
 /// can disagree about what an index is.
-pub(super) fn rebuild_present_indexes(connection: &Connection) -> Result<(), rusqlite::Error> {
+pub(crate) fn rebuild_present_indexes(connection: &Connection) -> Result<(), rusqlite::Error> {
     if table_exists(connection, "observation_stems")? {
         restem_observations(connection)?;
     }
@@ -1035,7 +1035,7 @@ pub(super) const FULL_TEXT_INDEXES: &[&str] = &[
 /// that create them — the baseline for the stemmed and prompt indexes, migration
 /// 8 for the unstemmed one and migration 21 for the Snowball one — and this is
 /// only the roll call.
-pub(super) const FULL_TEXT_TRIGGERS: &[&str] = &[
+pub(crate) const FULL_TEXT_TRIGGERS: &[&str] = &[
     "obs_fts_insert",
     "obs_fts_delete",
     "obs_fts_update",
@@ -1080,7 +1080,7 @@ const FULL_TEXT_TRIGGER_SOURCES: &[&str] = &[
 /// `CREATE TRIGGER name … END;` — the terminator is a line of its own in both
 /// files, and every body inside them is a single `INSERT` per line, so a `END;`
 /// at the start of a line ends the trigger and nothing else.
-pub(super) fn full_text_trigger_sql(name: &str) -> Option<&'static str> {
+pub(crate) fn full_text_trigger_sql(name: &str) -> Option<&'static str> {
     let opening = format!("CREATE TRIGGER {name} ");
     FULL_TEXT_TRIGGER_SOURCES.iter().find_map(|source| {
         let start = source.find(&opening)?;

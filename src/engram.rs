@@ -147,6 +147,13 @@ pub fn inspect(database: &Path) -> Result<Installation> {
 /// write-ahead log and reads through one consistent point. A plain file copy
 /// would miss whatever a running Engram had not yet checkpointed, which for
 /// someone migrating mid-session is exactly their most recent memories.
+///
+/// The copy runs in one `BEGIN IMMEDIATE` on the target, so it either lands
+/// whole or not at all — which is also what makes a second run possible. The
+/// earlier shape committed each statement on its own and deleted the target
+/// first: a failure half way left a store nothing could retry, and a target
+/// whose `observations` happened to be empty was thrown away with the prompts
+/// and sessions it did hold.
 pub fn adopt(source: &Path, target: &Path, dry_run: bool) -> Result<Adoption> {
     let found = inspect(source)?;
     if found.is_empty() {
@@ -156,42 +163,14 @@ pub fn adopt(source: &Path, target: &Path, dry_run: bool) -> Result<Adoption> {
         );
     }
 
-    // Refusing beats merging: there is no safe way to fold two histories
-    // together, and silently replacing memories would be unforgivable.
-    //
-    // Three answers, not two. "I could not read it" is not "it is empty", and
-    // treating it as one deleted the file a few lines below — a database
-    // locked by a running Leteo, or truncated by a write that did not finish,
-    // counted as nothing and was replaced while the command reported success.
-    // A file nobody can read is the case where keeping it matters most,
-    // because it is the one somebody may still recover from.
-    if target.is_file() {
-        let existing = Connection::open_with_flags(target, OpenFlags::SQLITE_OPEN_READ_ONLY)
-            .ok()
-            .and_then(|connection| {
-                connection
-                    .query_row("SELECT COUNT(*) FROM observations", [], |row| {
-                        row.get::<_, i64>(0)
-                    })
-                    .ok()
-            });
-        match existing {
-            Some(0) => {}
-            Some(existing) => bail!(
-                "{} already holds {existing} observations; move it aside first, \
-                 because adopting would replace them",
-                target.display()
-            ),
-            None => bail!(
-                "{} exists but cannot be read as a Leteo database — it may be \
-                 open in another process, or damaged. Adopting would delete it. \
-                 Move it aside first, or point --database somewhere else.",
-                target.display()
-            ),
-        }
-    }
-
     if dry_run {
+        // Nothing is opened, so nothing is created, and the target is read
+        // through a read-only connection: a dry run pointed at a store by
+        // mistake cannot disturb it.
+        if target.is_file() {
+            let occupied = occupied_tables_read_only(target)?;
+            refuse_if_occupied(target, &occupied)?;
+        }
         return Ok(Adoption {
             source: source.to_path_buf(),
             target: target.to_path_buf(),
@@ -205,11 +184,13 @@ pub fn adopt(source: &Path, target: &Path, dry_run: bool) -> Result<Adoption> {
     if let Some(parent) = target.parent() {
         std::fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
     }
-    // Start from nothing, sidecars included: a stale write-ahead log would be
-    // read as belonging to the new file.
-    for suffix in ["", "-wal", "-shm"] {
-        let _ = std::fs::remove_file(PathBuf::from(format!("{}{suffix}", target.display())));
-    }
+
+    // Opening the target is what builds Leteo's schema at its current version
+    // for a file that does not exist yet. Nothing is deleted — not the file,
+    // not a stale sidecar — because whatever is here is opened as it is and the
+    // emptiness check inside the transaction is what decides whether it may be
+    // written.
+    let mut store = open_target(target)?;
 
     let snapshot = PathBuf::from(format!("{}.adopting", target.display()));
     let _ = std::fs::remove_file(&snapshot);
@@ -220,26 +201,9 @@ pub fn adopt(source: &Path, target: &Path, dry_run: bool) -> Result<Adoption> {
             .execute("VACUUM INTO ?1", [snapshot.to_string_lossy().as_ref()])
             .with_context(|| format!("snapshot {}", source.display()))?;
     }
-    let translated = translate(&snapshot, target);
+    let translated = translate(&mut store, &snapshot, target);
     let _ = std::fs::remove_file(&snapshot);
-    let dropped = translated?;
-
-    let adopted = read_counts(target)?;
-    if adopted.observations != found.observations
-        || adopted.sessions != found.sessions
-        || adopted.prompts != found.prompts
-        || adopted.relations != found.relations
-    {
-        bail!(
-            "the adoption does not match the source: found {:?}, adopted {adopted:?}",
-            Counts {
-                sessions: found.sessions,
-                observations: found.observations,
-                prompts: found.prompts,
-                relations: found.relations,
-            }
-        );
-    }
+    let (dropped, adopted) = translated?;
 
     Ok(Adoption {
         source: source.to_path_buf(),
@@ -251,26 +215,150 @@ pub fn adopt(source: &Path, target: &Path, dry_run: bool) -> Result<Adoption> {
     })
 }
 
-/// Copies a snapshot's rows into a freshly migrated Leteo database, and reports
-/// what it had no place for.
-fn translate(snapshot: &Path, target: &Path) -> Result<Vec<Dropped>> {
-    // Opening the store builds Leteo's schema at its current version.
-    let store = crate::store::Store::open(crate::store::StoreConfig::new(target.to_path_buf()))
-        .with_context(|| format!("prepare {}", target.display()))?;
-    let connection = store.connection();
-    connection
+/// Opens the target as a Leteo store, or says why it cannot be one.
+///
+/// "I could not read it" is not "it is empty". The old guard treated a target
+/// it could not read — a database locked by a running Leteo, or truncated by a
+/// write that did not finish — as one holding nothing and deleted it while the
+/// command reported success. A file nobody can read is the case where keeping
+/// it matters most, because it is the one somebody may still recover from.
+fn open_target(target: &Path) -> Result<crate::store::Store> {
+    match crate::store::Store::open(crate::store::StoreConfig::new(target.to_path_buf())) {
+        Ok(store) => Ok(store),
+        Err(error) if target.is_file() => bail!(
+            "{} exists but cannot be read as a Leteo database — it may be open in \
+             another process, or damaged. Move it aside first, or point \
+             --database somewhere else. ({error})",
+            target.display()
+        ),
+        Err(error) => Err(error.into()),
+    }
+}
+
+/// Names every mapped Leteo table that already holds rows, with how many.
+///
+/// Derived from [`TABLE_MAP`] rather than written out again, so a table added
+/// there is guarded here too. `sync_state` is skipped: the baseline seeds it
+/// with one row for the cloud target in every store, including one just
+/// created, so it cannot tell a used store from an empty one. The content
+/// tables can, and they are what a merge would fold two histories into.
+fn occupied_tables(connection: &Connection) -> Result<Vec<(String, i64)>> {
+    // In `TABLE_MAP` order — dependency order, so sessions are named before the
+    // prompts and memories filed under them — with the duplicates a shared
+    // Leteo name would produce removed.
+    let mut tables: Vec<&str> = Vec::new();
+    for (_, ours) in TABLE_MAP {
+        if !tables.contains(ours) {
+            tables.push(ours);
+        }
+    }
+    let mut occupied = Vec::new();
+    for table in tables {
+        if table == "sync_state" || !table_exists(connection, table)? {
+            continue;
+        }
+        let count: i64 =
+            connection.query_row(&format!("SELECT COUNT(*) FROM main.{table}"), [], |row| {
+                row.get(0)
+            })?;
+        if count > 0 {
+            occupied.push((table.to_owned(), count));
+        }
+    }
+    Ok(occupied)
+}
+
+fn occupied_tables_read_only(target: &Path) -> Result<Vec<(String, i64)>> {
+    let connection = Connection::open_with_flags(target, OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .with_context(|| format!("open {}", target.display()))?;
+    occupied_tables(&connection).with_context(|| format!("read {}", target.display()))
+}
+
+/// Refuses a target that already holds memories, naming what is there.
+///
+/// Merging into a non-empty store is out of scope, and refusing beats a
+/// silent replacement: there is no safe way to fold two histories together.
+fn refuse_if_occupied(target: &Path, occupied: &[(String, i64)]) -> Result<()> {
+    if occupied.is_empty() {
+        return Ok(());
+    }
+    let held = occupied
+        .iter()
+        .map(|(table, count)| format!("{count} {table}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    bail!(
+        "{} already holds {held}; move it aside first, because adopting into a \
+         store that already holds memories is refused rather than merged",
+        target.display()
+    )
+}
+
+fn table_exists(connection: &Connection, name: &str) -> Result<bool> {
+    Ok(connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
+        [name],
+        |row| row.get(0),
+    )?)
+}
+
+/// Copies a snapshot's rows into the target in one transaction, and reports
+/// what it had no place for and what landed.
+///
+/// Everything between `BEGIN IMMEDIATE` and `COMMIT` is one result: either the
+/// whole adoption lands or none of it does. The transaction is why a target
+/// left half filled no longer exists, and therefore why a second run is
+/// possible at all.
+fn translate(
+    store: &mut crate::store::Store,
+    snapshot: &Path,
+    target: &Path,
+) -> Result<(Vec<Dropped>, Counts)> {
+    // `ATTACH` cannot run inside a transaction, so it comes first — and before
+    // the write lock, so the lock is held for the copy rather than the attach.
+    store
+        .connection()
         .execute(
             "ATTACH DATABASE ?1 AS engram",
             [snapshot.to_string_lossy().as_ref()],
         )
         .context("attach the Engram snapshot")?;
 
+    let tx = store.write_transaction()?;
+
+    // Under the write lock, so a second process cannot slip rows in between
+    // this question and the copy that answers it.
+    let occupied = occupied_tables(&tx)?;
+    refuse_if_occupied(target, &occupied)?;
+
+    // The indexes are built once at the end rather than row by row, which is
+    // what a copy of any size spends its time on: every insert otherwise fires
+    // three triggers, each tokenising a title and a body through `porter
+    // unicode61`. The JSON import measures the same trade at nine times for
+    // 4,013 memories — 13.3 seconds against 0.6 to write the rows and 0.9 to
+    // rebuild — and an adoption carries the same rows through the same
+    // triggers.
+    //
+    // SQLite does fire `AFTER INSERT` row triggers for `INSERT ... SELECT`, so
+    // the copy would be indexed as it went without this. An earlier comment
+    // here claimed they never fire for adopted rows and justified a hand-built
+    // rebuild with it; both are gone. Dropping the triggers is what the rebuild
+    // below pays for.
+    let dropped_triggers: Vec<&str> = crate::store::schema::FULL_TEXT_TRIGGERS
+        .iter()
+        .copied()
+        .filter(|name| {
+            tx.execute_batch(&format!("DROP TRIGGER IF EXISTS {name};"))
+                .is_ok()
+        })
+        .collect();
+
     let mut carried_a_project = Vec::new();
     for (theirs, ours) in TABLE_MAP {
         // Only the columns both sides have. Engram's own schema changed across
         // its releases, so a fixed list would fail against whichever version
         // someone happens to be leaving.
-        let Some(columns) = shared_columns(connection, theirs, ours)? else {
+        let Some(columns) = shared_columns(&tx, theirs, ours)? else {
             continue;
         };
         if columns.is_empty() {
@@ -288,29 +376,128 @@ fn translate(snapshot: &Path, target: &Path) -> Result<Vec<Dropped>> {
         // is read only where it exists — older Engram schemas predate it, and
         // the column is named here rather than interpolated from the file.
         let quarantined =
-            *theirs == "sync_mutations" && has_column(connection, "engram", theirs, "disposition")?;
+            *theirs == "sync_mutations" && has_column(&tx, "engram", theirs, "disposition")?;
         let filter = if quarantined {
             " WHERE disposition IS NULL OR disposition NOT IN ('quarantined', 'superseded')"
         } else {
             ""
         };
-        connection
-            .execute_batch(&format!(
-                "INSERT OR IGNORE INTO main.{ours} ({names}) SELECT {names} FROM engram.{theirs}{filter};"
-            ))
-            .map_err(|error| anyhow::anyhow!("copy {theirs} into {ours}: {error}"))?;
+        tx.execute_batch(&format!(
+            "INSERT OR IGNORE INTO main.{ours} ({names}) SELECT {names} FROM engram.{theirs}{filter};"
+        ))
+        .map_err(|error| anyhow::anyhow!("copy {theirs} into {ours}: {error}"))?;
     }
-    let dropped = dropped_tables(connection)?;
-    normalize_projects(connection, &carried_a_project)?;
+    let dropped = dropped_tables(&tx)?;
+    normalize_projects(&tx, &carried_a_project)?;
+    normalize_observations(&tx)?;
 
-    // The triggers only fire on writes made through them, so the index has to
-    // be built from what has just landed.
-    connection.execute_batch(
-        "INSERT INTO observations_fts(observations_fts) VALUES('rebuild');
-         INSERT INTO prompts_fts(prompts_fts) VALUES('rebuild');",
-    )?;
-    connection.execute_batch("DETACH DATABASE engram")?;
-    Ok(dropped)
+    // Against the snapshot, not the live source: the snapshot is the bytes that
+    // were copied, and the live file may have moved on since. A row an `INSERT
+    // OR IGNORE` skipped — a duplicate the target's unique index refuses — is a
+    // mismatch, and a mismatch aborts the whole adoption rather than committing
+    // a store that is missing memories and looks complete.
+    let expected = engram_counts(&tx)?;
+    let adopted = leteo_counts(&tx)?;
+    if adopted != expected {
+        bail!("the adoption does not match the source: found {expected:?}, adopted {adopted:?}");
+    }
+
+    // In this order and not the other: the rebuild begins by writing the stems
+    // of every memory that has none, and with the triggers already restored each
+    // of those writes would also be indexed one row at a time, which is the cost
+    // dropping them was for. What must not happen is committing without both.
+    crate::store::schema::rebuild_present_indexes(&tx)?;
+    for name in dropped_triggers {
+        if let Some(sql) = crate::store::schema::full_text_trigger_sql(name) {
+            tx.execute_batch(sql)?;
+        }
+    }
+
+    tx.commit()?;
+    store.connection().execute_batch("DETACH DATABASE engram")?;
+    Ok((dropped, adopted))
+}
+
+/// Folds the observations an adoption carried onto the rules every other door
+/// applies.
+///
+/// Adoption copies columns verbatim from a program Leteo does not control, so
+/// the type is whatever Engram stored — `bug`, `manual`, `learning` — and a
+/// search narrowed by `bugfix` or `discovery` never returns it. `doctor`'s
+/// `observation_type_searchable` is what the omission looked like from outside:
+/// a healthy-looking store holding memories no filtered search can reach. The
+/// project fold above is the same act for a different column.
+///
+/// The two derived values are recomputed here for the same reason, because the
+/// copy carries Engram's: `review_after`, a function of the type and the day
+/// the memory was written, and `normalized_hash`, taken of the body as the
+/// store holds it, which is what dedupe compares.
+fn normalize_observations(connection: &Connection) -> Result<()> {
+    let rows: Vec<(i64, String, String, Option<String>)> = {
+        let mut statement =
+            connection.prepare("SELECT id, type, content, created_at FROM main.observations")?;
+        let rows = statement.query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, Option<String>>(3)?,
+            ))
+        })?;
+        rows.collect::<Result<Vec<_>, _>>()?
+    };
+    for (id, kind, content, created_at) in rows {
+        let kind = crate::memory::normalize::kind(&kind);
+        let hash = crate::memory::normalize::normalized_hash(&content);
+        let from = created_at
+            .as_deref()
+            .and_then(crate::timestamp::parse)
+            .unwrap_or_else(|| chrono::Utc::now().naive_utc());
+        let review = crate::memory::rules::review_after(&kind, from).map(crate::timestamp::format);
+        connection.execute(
+            "UPDATE main.observations
+                SET type = ?1, normalized_hash = ?2, review_after = ?3
+              WHERE id = ?4",
+            rusqlite::params![kind, hash, review, id],
+        )?;
+    }
+    Ok(())
+}
+
+/// The four entities counted in the attached Engram snapshot, under Engram's
+/// names — `user_prompts`, not `prompts`.
+///
+/// A table missing from whichever Engram version this is counts as zero, the
+/// same way `inspect` reads it, because the copy skips it for the same reason.
+fn engram_counts(connection: &Connection) -> Result<Counts> {
+    let count = |table: &str| -> i64 {
+        connection
+            .query_row(&format!("SELECT COUNT(*) FROM engram.{table}"), [], |row| {
+                row.get(0)
+            })
+            .unwrap_or(0)
+    };
+    Ok(Counts {
+        sessions: count("sessions"),
+        observations: count("observations"),
+        prompts: count(ENGRAM_PROMPTS),
+        relations: count("memory_relations"),
+    })
+}
+
+/// The same four, counted from the rows that just landed in the target.
+fn leteo_counts(connection: &Connection) -> Result<Counts> {
+    let count = |table: &str| -> Result<i64, rusqlite::Error> {
+        connection.query_row(&format!("SELECT COUNT(*) FROM main.{table}"), [], |row| {
+            row.get(0)
+        })
+    };
+    Ok(Counts {
+        sessions: count("sessions")?,
+        observations: count("observations")?,
+        prompts: count("prompts")?,
+        relations: count("memory_relations")?,
+    })
 }
 
 /// Every source table or column the translation carried nothing for.
@@ -478,6 +665,7 @@ fn shared_columns(
 /// The table names here are Leteo's, where [`inspect`] uses Engram's. Most of
 /// them coincide, and `prompts` is the one that does not — which is the whole
 /// reason the counting mechanics are shared but the names are not.
+#[cfg(test)]
 fn read_counts(database: &Path) -> Result<Counts> {
     let count = open_counter(database)?;
     Ok(Counts {
@@ -889,9 +1077,11 @@ mod tests {
 
     #[test]
     fn adopted_memories_are_searchable() {
-        // Translation writes rows straight into the tables, so the full-text
-        // triggers never fire for them; without a rebuild every inherited
-        // memory would be invisible.
+        // The copy runs with the full-text triggers dropped, so a rebuild is
+        // what puts these rows into the indexes. The triggers do fire for
+        // `INSERT ... SELECT` — an earlier comment here claimed otherwise — so
+        // this test is also what holds the rebuild in place: without it, every
+        // inherited memory would be invisible.
         let temp = tempfile::tempdir().unwrap();
         let source = temp.path().join("engram.db");
         let target = temp.path().join("leteo.db");
@@ -925,16 +1115,38 @@ mod tests {
         let source = temp.path().join("engram.db");
         let target = temp.path().join("leteo.db");
         engram_database(&source, 2);
-        // The target already holds someone's memories.
-        engram_database(&target, 7);
+        // The target is a real Leteo store that already holds someone's
+        // memories. The old fixture here built an Engram-shaped file at the
+        // target path, which is no longer a store adoption can open.
+        {
+            let mut store =
+                crate::store::Store::open(crate::store::StoreConfig::new(target.clone())).unwrap();
+            store.create_session("s1", "proj", "C:/repo").unwrap();
+            for index in 0..3 {
+                store
+                    .add_observation(crate::AddObservation {
+                        session_id: "s1".to_owned(),
+                        kind: "discovery".to_owned(),
+                        title: format!("memory {index}"),
+                        content: "body".to_owned(),
+                        tool_name: None,
+                        project: Some("proj".to_owned()),
+                        scope: "project".to_owned(),
+                        topic_key: None,
+                        prompt_sync_id: None,
+                    })
+                    .unwrap();
+            }
+        }
 
         let error = adopt(&source, &target, false).unwrap_err().to_string();
         assert!(
-            error.contains("already holds 7 observations"),
+            error.contains("already holds") && error.contains("3 observations"),
             "the refusal should say what it found: {error}"
         );
         // Nothing was touched.
-        assert_eq!(inspect(&target).unwrap().observations, 7);
+        let store = crate::store::Store::open(crate::store::StoreConfig::new(target)).unwrap();
+        assert_eq!(store.stats().unwrap().total_observations, 3);
     }
 
     #[test]
@@ -1123,5 +1335,203 @@ mod tests {
             )
             .unwrap();
         assert!(still_theirs, "refusing must not have rewritten their file");
+    }
+
+    /// A failed adoption leaves the target exactly as it was, and runs again.
+    ///
+    /// The copy used to be one commit per statement, so a failure after the
+    /// observations landed left them in a store the next run then refused as
+    /// non-empty: a migration from Engram could strand a user half way with no
+    /// way forward but deleting files by hand. The failure here is one the copy
+    /// cannot survive — a `sync_mutations` row whose `target_key` has no
+    /// `sync_state` parent, which the foreign key refuses — and it arrives
+    /// after the observations, which is the point.
+    #[test]
+    fn a_failed_adoption_leaves_the_target_as_it_was_and_can_be_retried() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("engram.db");
+        let target = temp.path().join("leteo.db");
+        engram_database_for(&source, 3, "proj");
+        {
+            let connection = Connection::open(&source).unwrap();
+            connection
+                .execute_batch(
+                    "CREATE TABLE sync_state (
+                         target_key TEXT PRIMARY KEY,
+                         lifecycle TEXT NOT NULL DEFAULT 'idle',
+                         updated_at TEXT NOT NULL DEFAULT (datetime('now')));
+                     CREATE TABLE sync_mutations (
+                         seq INTEGER PRIMARY KEY AUTOINCREMENT,
+                         target_key TEXT NOT NULL,
+                         entity TEXT NOT NULL,
+                         entity_key TEXT NOT NULL,
+                         op TEXT NOT NULL,
+                         payload TEXT NOT NULL,
+                         project TEXT NOT NULL DEFAULT '',
+                         occurred_at TEXT NOT NULL DEFAULT (datetime('now')));
+                     INSERT INTO sync_mutations (target_key, entity, entity_key, op, payload, project)
+                         VALUES ('ghost', 'observation', 'obs-1', 'upsert', '{}', 'proj');",
+                )
+                .unwrap();
+        }
+
+        let refused = adopt(&source, &target, false).unwrap_err().to_string();
+        assert!(
+            refused.contains("copy sync_mutations"),
+            "the failure has to name what could not be carried: {refused}"
+        );
+        assert_eq!(
+            read_counts(&target).unwrap().observations,
+            0,
+            "the observations the copy had already written have to be rolled back"
+        );
+
+        // Fixing the source is all that stands between here and a rerun.
+        Connection::open(&source)
+            .unwrap()
+            .execute("INSERT INTO sync_state (target_key) VALUES ('ghost')", [])
+            .unwrap();
+        let adoption = adopt(&source, &target, false).unwrap();
+        assert_eq!(adoption.adopted.unwrap().observations, 3);
+    }
+
+    /// A target holding prompts is refused, not thrown away.
+    ///
+    /// The old guard asked only whether `observations` was empty, then deleted
+    /// the file with its WAL and SHM. A store whose memories had all been
+    /// deleted, or one that only ever held prompts, looked empty and was
+    /// destroyed.
+    #[test]
+    fn a_target_holding_prompts_is_never_deleted() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("engram.db");
+        let target = temp.path().join("leteo.db");
+        engram_database(&source, 2);
+
+        let prompt_count = {
+            let mut store =
+                crate::store::Store::open(crate::store::StoreConfig::new(target.clone())).unwrap();
+            store.create_session("s1", "proj", "C:/repo").unwrap();
+            store
+                .add_prompt(crate::AddPrompt {
+                    session_id: "s1".to_owned(),
+                    content: "una pregunta".to_owned(),
+                    project: Some("proj".to_owned()),
+                })
+                .unwrap();
+            store
+                .connection()
+                .query_row("SELECT COUNT(*) FROM prompts", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .unwrap()
+        };
+
+        let error = adopt(&source, &target, false).unwrap_err().to_string();
+        assert!(
+            error.contains("already holds") && error.contains("prompts"),
+            "the refusal has to say what it found: {error}"
+        );
+
+        let after: i64 = Connection::open(&target)
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM prompts", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(after, prompt_count, "the prompts must still be there");
+    }
+
+    /// Adopted types fold the way every other door folds them, and the clock a
+    /// type implies is taken from the day the memory was written.
+    #[test]
+    fn adopted_types_fold_like_every_other_door() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("engram.db");
+        let target = temp.path().join("leteo.db");
+        engram_database_for(&source, 0, "proj");
+        Connection::open(&source)
+            .unwrap()
+            .execute_batch(
+                "DELETE FROM observations;
+                 INSERT INTO observations (sync_id, session_id, type, title, content, project, created_at)
+                     VALUES ('obs-bug', 's1', 'bug', 'A bug', 'body', 'proj', '2026-01-01 00:00:00'),
+                            ('obs-manual', 's1', 'manual', 'A manual', 'body', 'proj', '2026-01-01 00:00:00'),
+                            ('obs-decision', 's1', 'decision', 'A decision', 'body', 'proj', '2026-01-01 00:00:00');",
+            )
+            .unwrap();
+
+        adopt(&source, &target, false).unwrap();
+
+        let connection = Connection::open(&target).unwrap();
+        let kind = |sync_id: &str| -> String {
+            connection
+                .query_row(
+                    "SELECT type FROM observations WHERE sync_id = ?1",
+                    [sync_id],
+                    |row| row.get(0),
+                )
+                .unwrap()
+        };
+        let review = |sync_id: &str| -> Option<String> {
+            connection
+                .query_row(
+                    "SELECT review_after FROM observations WHERE sync_id = ?1",
+                    [sync_id],
+                    |row| row.get(0),
+                )
+                .unwrap()
+        };
+        assert_eq!(kind("obs-bug"), "bugfix");
+        assert_eq!(kind("obs-manual"), "discovery");
+        assert_eq!(review("obs-bug"), None, "a bug does not go stale");
+        assert_eq!(review("obs-manual"), None, "neither does a discovery");
+
+        // The one kind with a window is dated from when it was written, not
+        // from when the store heard about it.
+        let from = crate::timestamp::parse("2026-01-01 00:00:00").unwrap();
+        let expected =
+            crate::memory::rules::review_after("decision", from).map(crate::timestamp::format);
+        assert!(expected.is_some(), "a decision has a window");
+        assert_eq!(review("obs-decision"), expected);
+    }
+
+    /// A copy that loses a row to the target's own constraints is not committed.
+    ///
+    /// `INSERT OR IGNORE` skips a duplicate silently, which is what makes a
+    /// repeat idempotent — and the reason the count has to be checked. Here two
+    /// source relations share a `sync_id`, which the target's unique index
+    /// refuses; the mismatch aborts the adoption and the observations go with
+    /// it.
+    #[test]
+    fn a_mismatch_rolls_back() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("engram.db");
+        let target = temp.path().join("leteo.db");
+        engram_database(&source, 3);
+        Connection::open(&source)
+            .unwrap()
+            .execute_batch(
+                "ALTER TABLE memory_relations RENAME TO memory_relations_old;
+                 CREATE TABLE memory_relations (
+                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                     sync_id TEXT,
+                     source_id TEXT,
+                     target_id TEXT,
+                     relation TEXT NOT NULL,
+                     judgment_status TEXT NOT NULL,
+                     created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                     updated_at TEXT NOT NULL DEFAULT (datetime('now')));
+                 INSERT INTO memory_relations (sync_id, source_id, target_id, relation, judgment_status)
+                     VALUES ('rel-1', 'obs-1', 'obs-2', 'related', 'judged'),
+                            ('rel-1', 'obs-1', 'obs-3', 'related', 'judged');
+                 DROP TABLE memory_relations_old;",
+            )
+            .unwrap();
+
+        let error = adopt(&source, &target, false).unwrap_err().to_string();
+        assert!(
+            error.contains("does not match the source"),
+            "the mismatch has to be named: {error}"
+        );
+        assert_eq!(read_counts(&target).unwrap().observations, 0);
     }
 }

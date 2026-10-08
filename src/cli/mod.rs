@@ -703,6 +703,7 @@ pub async fn run(cli: Cli) -> Result<()> {
                 .then(|| store.rebuild_full_text_indexes())
                 .transpose()?;
             let rehashed = repair.then(|| store.recompute_stale_hashes()).transpose()?;
+            let folded = repair.then(|| store.fold_observation_types()).transpose()?;
             let (report, stats) = store.doctor_scoped(check.as_deref(), project.as_deref())?;
             // The report stays at the top level so existing readers keep
             // working; the scoping fields are additions beside it.
@@ -719,6 +720,9 @@ pub async fn run(cli: Cli) -> Result<()> {
                 }
                 if let Some(rehashed) = rehashed {
                     object.insert("rehashed".to_owned(), serde_json::to_value(rehashed)?);
+                }
+                if let Some(folded) = folded {
+                    object.insert("folded_types".to_owned(), serde_json::to_value(folded)?);
                 }
                 if let Some(check) = check {
                     object.insert("check".to_owned(), serde_json::Value::String(check));

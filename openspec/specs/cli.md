@@ -27,9 +27,11 @@ duties about what an answer explains.
    are looking, and `--all-projects` has already looked everywhere.
 
 4. **`leteo doctor` reports; `leteo doctor --repair` fixes.** The repair restores
-   missing full-text triggers, rebuilds the indexes, and recomputes stale hashes,
-   reporting `restored_triggers`, `rebuilt`, and `rehashed` beside the ordinary
-   report. `--project <name>` adds that project's statistics.
+   missing full-text triggers, rebuilds the indexes, recomputes stale hashes,
+   and folds the memory types an older adoption copied verbatim through
+   `normalize::kind`, reporting `restored_triggers`, `rebuilt`, `rehashed`, and
+   `folded_types` beside the ordinary report. `--project <name>` adds that
+   project's statistics.
 
    `--check <code>` selects which verdict comes back and what `healthy` is
    computed from — every check still runs. That is deliberate rather than
@@ -169,8 +171,13 @@ duties about what an answer explains.
    no column in this model and are not carried; an unknown version is still
    refused by name rather than half-read.
 
-7. **`leteo import --from-engram` adopts an Engram database in place.** It runs
-   before anything opens the target, because it replaces the file.
+7. **`leteo import --from-engram` adopts an Engram database in one
+   transaction, and never deletes what is there.** The source is snapshotted
+   and the copy runs under a single `BEGIN IMMEDIATE` on the target, so a
+   failure leaves the target exactly as it was and the command is run again.
+   A target that already holds memories in any mapped table — sessions, prompts
+   or observations, not only observations — is refused, naming what it holds;
+   it used to be deleted whenever its `observations` happened to be empty.
 
 8. **`leteo` with no arguments and a terminal on both ends opens the TUI.**
    Reading keys needs a real stdin, so an interactive flow is offered only when

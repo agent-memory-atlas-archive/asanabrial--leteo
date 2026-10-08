@@ -1401,3 +1401,105 @@ fn the_bounded_project_list_keeps_the_stats_order_and_counts_the_rest() {
     assert_eq!(all.len(), 3, "a ceiling above the count cuts nothing");
     assert_eq!(none, 0, "and reports nothing cut");
 }
+
+/// An imported export's types fold the way every other door folds them.
+///
+/// `manual` is `mem_save`'s default type, and an export written by a build
+/// that stored it verbatim restores it verbatim — so the memory is filed under
+/// a word no filtered search asks for and `doctor` reports the store unhealthy
+/// for it. Reading the format back has to apply the rules writing it applies,
+/// which is `normalize::kind` and nothing else.
+#[test]
+fn json_import_folds_types() {
+    let (_temp, mut store) = store();
+    let engram_export = r#"{
+      "version": "0.1.0",
+      "exported_at": "2026-07-28 17:00:39",
+      "sessions": [
+        {"id": "s1", "project": "interop", "directory": "C:/repo", "started_at": "2026-07-28 17:00:39"}
+      ],
+      "observations": [
+        {"id": 1, "sync_id": "obs-bug", "session_id": "s1", "type": "bug",
+         "title": "An unnormalised bug", "content": "body", "project": "interop",
+         "scope": "project", "revision_count": 1, "duplicate_count": 1,
+         "created_at": "2026-07-28 17:00:39", "updated_at": "2026-07-28 17:00:39"},
+        {"id": 2, "sync_id": "obs-manual", "session_id": "s1", "type": "manual",
+         "title": "An unnormalised manual", "content": "body", "project": "interop",
+         "scope": "project", "revision_count": 1, "duplicate_count": 1,
+         "created_at": "2026-07-28 17:00:40", "updated_at": "2026-07-28 17:00:40"}
+      ],
+      "prompts": null
+    }"#;
+
+    store.import_json(engram_export).unwrap();
+
+    let kinds: Vec<(String, String)> = store
+        .connection()
+        .prepare("SELECT sync_id, type FROM observations ORDER BY sync_id")
+        .unwrap()
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(
+        kinds,
+        vec![
+            ("obs-bug".to_owned(), "bugfix".to_owned()),
+            ("obs-manual".to_owned(), "discovery".to_owned())
+        ]
+    );
+}
+
+/// `doctor --repair` folds the types an older adoption copied verbatim.
+///
+/// The fold is the same `normalize::kind` the save door uses, so the repair and
+/// the door agree; a type outside the vocabulary is left as the word somebody
+/// meant, which is what the door does too. No migration: a released one is
+/// never edited, and a new one would run once and leave every store opened
+/// before it unrepaired.
+#[test]
+fn a_repair_folds_the_types_the_save_door_folds_and_leaves_the_rest() {
+    let (_temp, mut store) = store();
+    store.create_session("s1", "leteo", "C:/repo").unwrap();
+    for title in ["A bug", "A manual", "An implementation"] {
+        store
+            .add_observation(observation("s1", title, "body"))
+            .unwrap();
+    }
+    store
+        .connection()
+        .execute_batch(
+            "UPDATE observations SET type = 'bug' WHERE title = 'A bug';
+             UPDATE observations SET type = 'manual' WHERE title = 'A manual';
+             -- Mixed case is the case the synonym rule must not swallow: it is
+             -- not a synonym, and `kind` lowercases it without folding it, so a
+             -- repair that wrote every change would rename a word somebody
+             -- meant. Left exactly as it was.
+             UPDATE observations SET type = 'Implementation' WHERE title = 'An implementation';",
+        )
+        .unwrap();
+
+    assert_eq!(store.fold_observation_types().unwrap(), 2);
+    let kinds: Vec<String> = store
+        .connection()
+        .prepare("SELECT type FROM observations ORDER BY title")
+        .unwrap()
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(
+        kinds,
+        vec![
+            "bugfix".to_owned(),
+            "discovery".to_owned(),
+            "Implementation".to_owned()
+        ],
+        "the synonyms move and a word Leteo does not know stays"
+    );
+    assert_eq!(
+        store.fold_observation_types().unwrap(),
+        0,
+        "a second repair is a no-op"
+    );
+}

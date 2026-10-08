@@ -712,7 +712,7 @@ impl Store {
     /// lifecycle hooks, the CLI and the background autosync thread all open the
     /// same file. Taking the lock at `BEGIN` is what makes the timeout mean
     /// what it says.
-    fn write_transaction(&mut self) -> Result<Transaction<'_>, StoreError> {
+    pub(crate) fn write_transaction(&mut self) -> Result<Transaction<'_>, StoreError> {
         Ok(self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?)
@@ -1047,7 +1047,7 @@ fn collect_sessions_tx(tx: &Transaction<'_>, project: &str) -> Result<Vec<String
 /// those are journalled regardless: dropping a mutation because its project
 /// could not be worked out would lose data, while keeping it costs a row.
 mod rows;
-mod schema;
+pub(crate) mod schema;
 mod wire;
 
 use rows::*;
