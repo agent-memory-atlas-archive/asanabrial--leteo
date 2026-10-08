@@ -1464,30 +1464,44 @@ fn strip_list_marker(line: &str) -> Option<&str> {
 ///
 /// Read from git, because "a commit" is the unit the rule names and a working
 /// tree cannot show one. The base is the branch the change targets when CI names
-/// it, and `origin/main` otherwise; when none resolves — a shallow clone, a
-/// checkout with no remote — the guard says so and passes rather than failing a
-/// build for the wrong reason. `ci.yml`'s `unit-tests` checkout fetches the full
-/// history so the base is there.
+/// it, and `origin/main` otherwise. A base that will not resolve, a `git`
+/// invocation that does not answer, and a `git show` that fails are each a
+/// failure here rather than a pass: reading an unanswerable range as clean is
+/// how the commit this guard exists to catch slips through, and the earlier
+/// version of this did exactly that by defaulting a failed `git show` to an
+/// empty file list. The corpus path is asserted to exist for the same reason —
+/// a rename would otherwise leave the guard watching a path nothing writes.
 #[test]
 fn a_commit_does_not_change_the_comparison_corpus_with_the_search_it_scores() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let corpus = "tools/engram-bench/comparison_corpus.py";
-    let Some(base) = comparison_base(root) else {
-        eprintln!("comparison-corpus guard: no base commit to diff against; nothing to check");
-        return;
-    };
+    assert!(
+        root.join(corpus).exists(),
+        "the comparison-corpus guard names `{corpus}`, which is not here; if the \
+         corpus moved, update the path in this guard so it still watches it"
+    );
+
+    let base = comparison_base(root).unwrap_or_else(|| {
+        panic!(
+            "comparison-corpus guard: no base commit resolved to diff against. \
+             Run the tests from a checkout with `origin/main` — ci.yml fetches \
+             full history for this — or fix the repository this checkout names"
+        )
+    });
     let range = format!("{base}..HEAD");
-    let Some(log) = git(root, &["rev-list", &range]) else {
-        eprintln!(
-            "comparison-corpus guard: `git rev-list {range}` did not answer; nothing to check"
-        );
-        return;
-    };
+    let log = git(root, &["rev-list", &range]).unwrap_or_else(|| {
+        panic!("comparison-corpus guard: `git rev-list {range}` did not answer")
+    });
 
     let mut offenders = Vec::new();
     for commit in log.split_whitespace() {
         let files =
-            git(root, &["show", "--pretty=format:", "--name-only", commit]).unwrap_or_default();
+            git(root, &["show", "--pretty=format:", "--name-only", commit]).unwrap_or_else(|| {
+                panic!(
+                    "comparison-corpus guard: `git show {commit}` did not answer, so \
+                     whether this commit touched the corpus is unknown, not clean"
+                )
+            });
         let mut touches_corpus = false;
         let mut touches_search = false;
         for file in files.lines().map(str::trim).filter(|file| !file.is_empty()) {
@@ -1513,8 +1527,9 @@ fn a_commit_does_not_change_the_comparison_corpus_with_the_search_it_scores() {
 ///
 /// CI names the pull request's target branch in `GITHUB_BASE_REF`; a push or a
 /// dispatch does not, and `origin/main` is the base that workflow merges into.
-/// The last resort is the parent of `HEAD`, which is what a repository with no
-/// remote can still answer.
+/// There is deliberately no `HEAD^` fallback: it would answer for a repository
+/// with no remote by checking only the single last commit, silently narrowing
+/// the range instead of saying the base could not be read.
 fn comparison_base(root: &Path) -> Option<String> {
     let mut candidates = Vec::new();
     if let Ok(base) = std::env::var("GITHUB_BASE_REF")
@@ -1522,11 +1537,7 @@ fn comparison_base(root: &Path) -> Option<String> {
     {
         candidates.push(format!("origin/{}", base.trim()));
     }
-    candidates.extend([
-        "origin/main".to_owned(),
-        "main".to_owned(),
-        "HEAD^".to_owned(),
-    ]);
+    candidates.extend(["origin/main".to_owned(), "main".to_owned()]);
     for candidate in candidates {
         if let Some(base) = git(root, &["merge-base", &candidate, "HEAD"]) {
             let base = base.trim();
