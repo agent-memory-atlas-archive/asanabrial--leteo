@@ -124,8 +124,8 @@ fn no_test_opens_the_real_store() {
         if shown.ends_with("repository_guards.rs") {
             continue;
         }
-        let is_test_file =
-            shown.contains("/tests/") || path.file_name().is_some_and(|name| name == "tests.rs");
+        let is_test_file = under_a_tests_directory(&path, root)
+            || path.file_name().is_some_and(|name| name == "tests.rs");
         if !is_test_file && !text.contains("#[cfg(test)]") {
             continue;
         }
@@ -186,6 +186,57 @@ fn no_test_opens_the_real_store() {
     );
 }
 
+/// Whether a path `source_under` returned sits inside a `tests` directory of
+/// the tree it was walked from.
+///
+/// `source_under` hands back absolute paths, so classifying one by a substring
+/// of the joined path asks the wrong question: a checkout whose *directory
+/// name* carries the letters — a git worktree named for a branch like
+/// `issue-226-tests-...` — puts `tests` in every path under it, and a filter
+/// meant to drop `src/store/tests/` then drops everything. The comparison is
+/// therefore over whole components of the path **relative to the root it was
+/// walked from**, which is what the filters mean by "the tests beside it" and
+/// cannot be re-triggered by an ancestor directory named `tests`.
+///
+/// A path that is not under `root` at all is compared whole: synthetic paths in
+/// tests are not, and the real callers always build theirs from the same
+/// `CARGO_MANIFEST_DIR` the root comes from.
+fn under_a_tests_directory(path: &Path, root: &Path) -> bool {
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .components()
+        .any(|component| component.as_os_str() == "tests")
+}
+
+#[test]
+fn a_tests_directory_is_a_path_component_not_a_substring() {
+    // A checkout whose ancestor name contains `tests` puts the letters in
+    // every path, and none of them is in a `tests` directory.
+    let checkout =
+        Path::new("/home/dev/worktree/leteo/issue-226-tests-are-a-path-segment~opencode-1");
+    assert!(
+        !under_a_tests_directory(&checkout.join("src/store/diagnostics.rs"), checkout),
+        "a directory named for the branch must not classify its own sources as tests"
+    );
+    // The real `src/store/tests/`, excluded by the component.
+    assert!(
+        under_a_tests_directory(&checkout.join("src/store/tests/schema.rs"), checkout),
+        "a file actually under a tests directory must still be excluded"
+    );
+    // A file beside the tests whose *name* merely contains the word is not in
+    // the tests directory.
+    assert!(
+        !under_a_tests_directory(&checkout.join("src/store/tests_helpers.rs"), checkout),
+        "only a whole `tests` component classifies; a name that contains it does not"
+    );
+    // An ordinary checkout.
+    let ordinary = Path::new("/home/dev/leteo");
+    assert!(!under_a_tests_directory(
+        &ordinary.join("src/store/diagnostics.rs"),
+        ordinary
+    ));
+}
+
 /// Every column is written by something, or is named in `WRITTEN_BY_NOTHING`.
 ///
 /// Found by counting non-null values on a real store and then looking for a
@@ -224,7 +275,8 @@ fn every_column_has_a_writer_or_is_named_as_having_none() {
             // Not the schema's own column lists, which name every column by
             // definition, and not the tests beside it, which assert the schema
             // is the shape the schema says it is.
-            !path.ends_with("schema.rs") && !path.contains("tests")
+            !path.ends_with("schema.rs")
+                && !under_a_tests_directory(Path::new(path), Path::new(env!("CARGO_MANIFEST_DIR")))
         })
         .map(|(_, text)| text.as_str())
         .collect::<Vec<_>>()
