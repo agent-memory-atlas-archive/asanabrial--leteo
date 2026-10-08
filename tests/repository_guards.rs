@@ -1463,8 +1463,9 @@ fn strip_list_marker(line: &str) -> Option<&str> {
 /// tuning set, and nothing else in the repository would say so.
 ///
 /// Read from git, because "a commit" is the unit the rule names and a working
-/// tree cannot show one. The base is the branch the change targets when CI names
-/// it, and `origin/main` otherwise. A base that will not resolve, a `git`
+/// tree cannot show one. The base is the push's own `before` when CI names one,
+/// the branch the change targets when CI names that, and `origin/main`
+/// otherwise. A base that will not resolve, a `git`
 /// invocation that does not answer, and a `git show` that fails are each a
 /// failure here rather than a pass: reading an unanswerable range as clean is
 /// how the commit this guard exists to catch slips through, and the earlier
@@ -1532,6 +1533,16 @@ fn a_commit_does_not_change_the_comparison_corpus_with_the_search_it_scores() {
 /// the range instead of saying the base could not be read.
 fn comparison_base(root: &Path) -> Option<String> {
     let mut candidates = Vec::new();
+    // A push to the base branch is the one case `origin/main` cannot answer:
+    // it is HEAD itself, so the merge-base is HEAD and the range is empty. The
+    // push event's own `before` is the commit that was the tip, which is the
+    // base that range needs; every other event leaves it empty or all-zeroes.
+    if let Ok(before) = std::env::var("GITHUB_EVENT_BEFORE") {
+        let before = before.trim();
+        if !before.is_empty() && before.bytes().any(|byte| byte != b'0') {
+            candidates.push(before.to_owned());
+        }
+    }
     if let Ok(base) = std::env::var("GITHUB_BASE_REF")
         && !base.trim().is_empty()
     {

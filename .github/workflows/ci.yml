@@ -242,6 +242,12 @@ jobs:
       # can resolve a newer dependency set than the one that ships, and "it
       # passed CI" stops meaning what it appears to mean.
       - run: cargo test --locked
+        env:
+          # On a push to `main`, `origin/main` is HEAD, so the merge-base is HEAD
+          # and the comparison-corpus guard would examine no commits. The push
+          # event's own `before` is the commit that was the tip; every other event
+          # leaves it empty and the guard falls back to `origin/main`.
+          GITHUB_EVENT_BEFORE: ${{ github.event.before }}
 
   # Not on the matrix above, and not a trade-off that was weighed: this job
   # needs the `services:` block below, and GitHub runs service containers on
