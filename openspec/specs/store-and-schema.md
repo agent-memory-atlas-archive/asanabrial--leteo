@@ -275,21 +275,55 @@ there from any provenance, and how it says when something has gone wrong.
 14. **Adoption carries what it can and names what it cannot.** `leteo import
     --from-engram` reads an Engram database and writes a Leteo one; the
     translation between the two vocabularies is `src/engram.rs` and nowhere
-    else. A mapped table is copied with the columns both schemas share, in
-    dependency order — `sync_state` before `sync_mutations`, whose `target_key`
-    is a foreign key into it, and `INSERT OR IGNORE` ignores a duplicate but not
-    a missing parent. Engram rows it keeps out of transport stay out here too: a
+    else. It is one transaction on the target: the source is snapshotted with
+    `VACUUM INTO` — the WAL folded in, read through one consistent point — the
+    snapshot is attached, and everything from the emptiness check to the
+    full-text rebuild runs inside one `BEGIN IMMEDIATE` and commits together. A
+    failure after the observations have landed leaves the target exactly as it
+    was, so the command is simply run again; the earlier shape committed each
+    statement on its own and could strand a migration half way with no way
+    forward. The count of what landed is checked against the *snapshot* inside
+    the transaction, before the commit, so a row `INSERT OR IGNORE` skipped — a
+    duplicate the target's unique index refuses — aborts the whole adoption
+    rather than committing a store that is missing memories and looks complete.
+
+    A target holding rows in any mapped table is refused, naming what it holds,
+    rather than deleted. The old guard asked only whether `observations` was
+    empty and then removed the file with its WAL and SHM, so a store whose
+    memories had all been deleted, or one that only held prompts or sessions,
+    looked empty and was destroyed. `sync_state` is excluded from the check
+    because the baseline seeds it in every store, including one just created;
+    the content tables are what carry a history. Merging into a non-empty store
+    is out of scope.
+
+    A mapped table is copied with the columns both schemas share, in dependency
+    order — `sync_state` before `sync_mutations`, whose `target_key` is a
+    foreign key into it, and `INSERT OR IGNORE` ignores a duplicate but not a
+    missing parent. Engram rows it keeps out of transport stay out here too: a
     `sync_mutations` row whose `disposition` is `quarantined` or `superseded` is
     not copied, because Leteo's transport is every row with a null `acked_at`,
     and copying one would offer a peer again what Engram had held back. That
     column is read only where the source schema has it, since older Engram
     databases predate it. Project names are folded to the spelling
     `normalize::project` produces, with `UPDATE OR REPLACE` so two spellings
-    that collide on a unique project column leave one row rather than two. And
-    every source table Leteo has no counterpart for, and every source column it
-    does not read, is named in the adoption's `dropped` list rather than skipped
-    in silence, because a tombstone dropped here is a memory a peer can
-    resurrect.
+    that collide on a unique project column leave one row rather than two, and
+    the type of every copied memory is folded through `normalize::kind` so a
+    search narrowed by `bugfix` or `discovery` can return it. The two values
+    derived from a row are recomputed rather than carried: `review_after`, a
+    function of the type and the day the memory was written, and
+    `normalized_hash`, taken of the body as the store holds it. A store adopted
+    before the type fold existed is recovered by `doctor --repair`
+    ([`cli.md`](cli.md) §4), not by a migration. And every source table Leteo
+    has no counterpart for, and every source column it does not read, is named
+    in the adoption's `dropped` list rather than skipped in silence, because a
+    tombstone dropped here is a memory a peer can resurrect.
+
+    The full-text triggers are dropped for the copy and restored with a rebuild
+    before the commit: every insert otherwise fires three triggers that
+    tokenise a title and a body through `porter unicode61`. The triggers do fire
+    for `INSERT ... SELECT`, which is what an earlier comment here denied; the
+    rebuild is what pays for having dropped them, in the same order the JSON
+    import uses.
 
     What is reported and not carried today: Engram's hard-delete tombstone
     tables — `sync_delete_tombstones` and the remote-floor table it keeps

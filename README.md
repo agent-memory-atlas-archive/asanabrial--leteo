@@ -558,6 +558,12 @@ It defaults to `~/.engram/engram.db`; pass `--source` for another path. The copy
 folds in the write-ahead log, so a running Engram's most recent memories come
 across and its own file is never written to.
 
+The second command writes into the target in one transaction. A store that
+already holds memories — sessions, prompts or observations — is refused rather
+than replaced, and the refusal names what is there; nothing is ever deleted. If
+the copy fails half way, the target is left exactly as it was, and running the
+command again is all that is needed to retry it.
+
 ## Build
 
 Leteo requires Rust 1.97 or newer.

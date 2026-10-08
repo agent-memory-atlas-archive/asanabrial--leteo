@@ -105,6 +105,13 @@ impl Store {
             let topic_key = normalize::topic_key(observation.topic_key.as_deref());
             let created_at = nonempty_or_now(&observation.created_at);
             let updated_at = nonempty_or_now(&observation.updated_at);
+            // The type is folded the same way the local and replicated doors
+            // fold it. An export written by a build that stored the caller's
+            // word verbatim — `manual`, `bug` — restores a memory filed where
+            // no filtered search asks for it, which `doctor` then reports as an
+            // unhealthy store. Reading the format back has to apply the rules
+            // writing it applies.
+            let kind = normalize::kind(&observation.kind);
             result.observations_imported += tx.execute(
                 "INSERT INTO observations
                  (sync_id, session_id, type, title, content, tool_name, project, scope, topic_key,
@@ -116,7 +123,7 @@ impl Store {
                 params![
                     sync_id,
                     observation.session_id,
-                    observation.kind,
+                    kind,
                     title,
                     content,
                     observation.tool_name,
@@ -906,6 +913,49 @@ impl Store {
         }
         tx.commit()?;
         Ok(stale.len() as i64)
+    }
+
+    /// Folds the types an adoption copied before it folded them.
+    ///
+    /// A store adopted by an earlier build holds Engram's words — `bug`,
+    /// `manual`, `learning` — and `doctor` reports it unhealthy for exactly
+    /// that: a filtered search can never return those memories. New adoptions
+    /// fold as they copy; this recovers the ones already in.
+    ///
+    /// Only the synonyms [`normalize::kind`] maps onto a documented kind are
+    /// written, so a type outside the vocabulary — `implementation`, `feature`
+    /// — is left as the word somebody meant, which is what the save door does.
+    /// No migration: a released one is never edited, and a new one would run
+    /// once and leave every store opened before it to another path.
+    pub fn fold_observation_types(&mut self) -> Result<i64, StoreError> {
+        let kinds: Vec<String> = {
+            let mut statement = self
+                .connection
+                .prepare("SELECT DISTINCT type FROM observations")?;
+            let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+        let changes: Vec<(String, String)> = kinds
+            .into_iter()
+            .filter_map(|kind| {
+                let folded = normalize::kind(&kind);
+                (folded != kind && crate::memory::rules::KINDS.contains(&folded.as_str()))
+                    .then_some((kind, folded))
+            })
+            .collect();
+        if changes.is_empty() {
+            return Ok(0);
+        }
+        let tx = self.write_transaction()?;
+        let mut moved = 0_i64;
+        for (from, to) in &changes {
+            moved += tx.execute(
+                "UPDATE observations SET type = ?1 WHERE type = ?2",
+                params![to, from],
+            )? as i64;
+        }
+        tx.commit()?;
+        Ok(moved)
     }
 
     /// Puts back any full-text trigger this database has lost.

@@ -288,7 +288,7 @@ fn a_store_that_is_not_empty_still_hears_about_engram() {
     assert!(note.contains("3223 memories"), "{note}");
     assert!(note.contains("Leteo already holds 3100"), "{note}");
     assert!(
-        note.contains("replaces the Leteo database"),
+        note.contains("refuses a store that already holds memories"),
         "the reason it is not offered has to be in the note: {note}"
     );
     assert!(
