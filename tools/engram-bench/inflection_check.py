@@ -6,6 +6,11 @@ typo stage could answer the query and the set would not be measuring the
 stemmer. Reads `typo_budget`'s rule from `src/store/search.rs` rather than
 restating it, so the two cannot drift.
 
+A language with no arm in `stemming::algorithm` has no stemmer to fold its set,
+so only the distances are checked: the set is held for the day an arm exists,
+and the typo stage is what it must still be unable to answer. `ALGORITHM` names
+the stemmer only for the languages that ship one.
+
 Needs the `snowballstemmer` package, only to say which words a stemmer would
 fold together; the measurement itself never uses it.
 """
@@ -49,11 +54,12 @@ def check(code, spec, stemmer):
     problems = []
     texts = {key: f"{title} {content}" for key, (title, content) in spec["memories"].items()}
     vocabulary = {fold(w) for text in texts.values() for w in words(text)}
-    stems = {key: {stemmer.stemWord(w.lower()) for w in words(text)} for key, text in texts.items()}
+    stems = ({key: {stemmer.stemWord(w.lower()) for w in words(text)} for key, text in texts.items()}
+             if stemmer is not None else None)
     for query, target in spec["queries"]:
         changed = 0
         for word in words(query):
-            if stemmer.stemWord(word.lower()) not in stems[target]:
+            if stems is not None and stemmer.stemWord(word.lower()) not in stems[target]:
                 problems.append(f"{code} {query!r}: {word!r} has no stem in {target}")
             if fold(word) in vocabulary:
                 continue
@@ -70,7 +76,8 @@ def main():
     import snowballstemmer
     problems = []
     for code, spec in SETS.items():
-        problems += check(code, spec, snowballstemmer.stemmer(ALGORITHM[code]))
+        name = ALGORITHM.get(code)
+        problems += check(code, spec, snowballstemmer.stemmer(name) if name else None)
     for line in problems:
         print(line)
     print(f"{len(problems)} problem(s)")
