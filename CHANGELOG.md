@@ -22,6 +22,13 @@ All notable changes to Leteo are documented in this file.
 
 ### Fixed
 
+- **`uninstall` stops deleting copies people made.** It matched the data
+  directory by a bare `leteo.db` prefix, which is every hand-made
+  `leteo.db.bak-before-migrate` and every `pre-schema` copy a migration left —
+  the one file the upgrade notes asked for, deleted by the command that deletes
+  the store. The store and its sidecars are now named exactly, and
+  `uninstall --yes --keep-data` leaves the data directory itself. (#199)
+
 - **A `nearest` answer no longer comes back as a page of unrelated memories.**
   The semantic stage merged its whole list beside a lexical answer that had
   reached `nearest` through one shared word, so a question the store could not

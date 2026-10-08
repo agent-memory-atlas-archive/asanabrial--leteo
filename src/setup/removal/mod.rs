@@ -20,6 +20,10 @@ pub struct Removal {
     pub data_dir: PathBuf,
     pub data_dir_removed: bool,
     pub data_removed: bool,
+    /// The data directory was asked for and kept. Reported rather than folded
+    /// into `data_removed`, because a kept store is the opposite of a partial
+    /// removal: nothing was left half-done, somebody chose to keep it.
+    pub data_kept: bool,
     pub memories: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub binary: Option<PathBuf>,
@@ -44,7 +48,7 @@ pub const UNINSTALL_STARTED: &str = "leteo uninstall: started";
 impl Removal {
     pub fn complete(&self) -> bool {
         self.agents.iter().all(|agent| agent.error.is_none())
-            && (self.data_removed || self.dry_run)
+            && (self.data_removed || self.data_kept || self.dry_run)
             && (self.model_removed || self.dry_run)
     }
 }
@@ -68,6 +72,7 @@ fn uninstall_everything_for(
         data_dir: data_dir.to_path_buf(),
         data_dir_removed: false,
         data_removed: false,
+        data_kept: false,
         memories,
         binary: exe,
         binary_removed: false,
@@ -103,7 +108,18 @@ fn uninstall_everything_for(
     // and would otherwise keep the directory as something foreign.
     remove_model(&mut removed, data_dir);
 
-    if !options.dry_run && data_dir.exists() {
+    if options.keep_data {
+        // Somebody asked to keep the memories. Said rather than silent: the
+        // report is what tells the caller the store is still there, and it is
+        // what keeps `complete()` from reading a kept store as a failed
+        // removal. A store is the one thing here that cannot be fetched again.
+        removed.data_kept = true;
+        removed.remaining.push(format!(
+            "{} was kept: --keep-data was given, so the store, its settings and \
+             any migration copy beside them are still there",
+            data_dir.display()
+        ));
+    } else if !options.dry_run && data_dir.exists() {
         remove_data_directory(&mut removed, data_dir);
     }
 
@@ -119,10 +135,25 @@ fn uninstall_everything_for(
 /// is exactly how other tools have taken people's own files with them on the way
 /// out. Nothing here removes a thing it did not put there.
 ///
-/// The suffixes cover SQLite's sidecars and the copies a migration leaves
-/// behind; the prefixes cover the dated backups.
-const DATA_DIR_FILES: &[&str] = &["leteo.db", "settings.json", "cloud.json", "store.db"];
-const DATA_DIR_PREFIXES: &[&str] = &["leteo.db", "store.db", "backup-"];
+/// The store and its SQLite sidecars are named *exactly*, and they used not to
+/// be: a bare `leteo.db` prefix took anything that started with it, which is
+/// every hand-made `leteo.db.bak-before-migrate` — the very name the release
+/// notes asked a person to use. A migration's `leteo.db.pre-schema-N` copy is
+/// left as well, for the same reason: it is the only way back from a one-way
+/// migration, which is the whole point of taking it.
+const DATA_DIR_FILES: &[&str] = &[
+    "leteo.db",
+    "leteo.db-wal",
+    "leteo.db-shm",
+    "leteo.db-journal",
+    "settings.json",
+    "cloud.json",
+    "store.db",
+    "store.db-wal",
+    "store.db-shm",
+    "store.db-journal",
+];
+const DATA_DIR_PREFIXES: &[&str] = &["backup-"];
 const DATA_DIR_SUBDIRECTORIES: &[&str] = &["hooks"];
 
 fn remove_data_directory(removed: &mut Removal, data_dir: &Path) {

@@ -47,6 +47,7 @@ fn the_uninstallers_recognise_a_line_of_the_report_the_binary_prints() {
         data_dir: std::path::PathBuf::new(),
         data_dir_removed: false,
         data_removed: false,
+        data_kept: false,
         memories: None,
         binary: None,
         binary_removed: false,

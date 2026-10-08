@@ -287,11 +287,23 @@ enabling the plugin is what enables the plugin's hooks.
 ```powershell
 leteo uninstall
 leteo uninstall --yes
+leteo uninstall --yes --keep-data
 ```
 
 The first reports what would go and changes nothing. The second carries it out:
 Leteo leaves every agent it configured, and then the machine, search model included. On Windows it also
 registers itself in Installed apps, so it can be removed from there instead.
+
+`--keep-data` is for the one thing that cannot be fetched again. With it, the
+data directory is left where it is — the store, `settings.json`, and any
+migration copy beside them — and only the agents and the binary go. Without it,
+the store and its `-wal`/`-shm` files are removed.
+
+Neither form removes a file Leteo did not create. A copy you made by hand — the
+`leteo.db.bak-before-migrate` the upgrade notes used to ask for — is yours and
+stays, whatever it is named, and so does a `leteo.db.pre-schema-N` copy a
+migration left. `leteo uninstall` with no `--yes` lists exactly what would go
+and what would stay before anything is touched.
 
 To leave one agent and stay in the rest:
 

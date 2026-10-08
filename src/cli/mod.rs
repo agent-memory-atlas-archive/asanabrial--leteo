@@ -208,7 +208,7 @@ pub async fn run(cli: Cli) -> Result<()> {
             };
             return print_json(&installed);
         }
-        Command::Uninstall { yes } => {
+        Command::Uninstall { yes, keep_data } => {
             // Without `--yes` this is a dry run rather than a prompt. The
             // callers that matter — `uninstall.ps1`, `uninstall.sh`, and
             // Windows running the `UninstallString` from Settings — may have no
@@ -216,6 +216,7 @@ pub async fn run(cli: Cli) -> Result<()> {
             // question. Those ask first, in a place a person is looking.
             let options = crate::setup::SetupOptions {
                 dry_run: !*yes,
+                keep_data: *keep_data,
                 ..crate::setup::SetupOptions::default()
             };
             let data_dir = data_directory(&cli)?;

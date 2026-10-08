@@ -155,6 +155,11 @@ pub fn supported_agents() -> &'static [AgentAdapter] {
 #[derive(Debug, Clone, Default)]
 pub struct SetupOptions {
     pub dry_run: bool,
+    /// `uninstall --keep-data`: leave the store, its settings and any migration
+    /// copy where they are. Named here beside `dry_run` because both are answers
+    /// to "how much should this run touch", and the removal reads the two
+    /// together.
+    pub keep_data: bool,
     pub install_instructions: bool,
     pub install_hooks: bool,
     pub tools: Option<String>,

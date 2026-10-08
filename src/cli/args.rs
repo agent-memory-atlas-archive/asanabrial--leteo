@@ -275,6 +275,12 @@ pub enum Command {
         /// where no console is attached is a hang rather than a safeguard.
         #[arg(long)]
         yes: bool,
+        /// Keep the store. Memories are the one thing Leteo cannot fetch again,
+        /// and a `uninstall --yes` that takes them is not undoable; this leaves
+        /// the data directory — the store, its settings and any `pre-schema`
+        /// migration copy — where it is.
+        #[arg(long)]
+        keep_data: bool,
     },
     Cloud {
         #[command(subcommand)]
