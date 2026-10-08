@@ -18,7 +18,7 @@ def engine_cmd(engine, project, home=None):
     os.makedirs(cwd, exist_ok=True)
     if engine == "engram":
         home = os.path.join(BENCH, "ehome")
-        return [ENGRAM, "mcp"], cwd, dict(os.environ, HOME=home, ENGRAM_DATA_DIR=os.path.join(home, "data"))
+        return [ENGRAM, "mcp"], cwd, dict(os.environ, HOME=home, ENGRAM_DATA_DIR=os.path.join(home, "data"), ENGRAM_NO_UPDATE_CHECK="1")
     home = home or os.path.join(BENCH, "lhome")
     os.makedirs(home, exist_ok=True)
     env = dict(os.environ, HOME=home, LETEO_DATA_DIR=home)

@@ -5,6 +5,7 @@ bindir = os.path.join(BENCH, "bin"); os.makedirs(bindir, exist_ok=True)
 if not os.path.exists(os.path.join(bindir, "engram")): os.symlink(ENGRAM, os.path.join(bindir, "engram"))
 EHOME, LHOME = os.path.join(BENCH, "ehome"), os.path.join(BENCH, "lhome")
 eenv = dict(os.environ, HOME=EHOME, ENGRAM_DATA_DIR=os.path.join(EHOME, "data"), ENGRAM_PORT=PORT,
+            ENGRAM_NO_UPDATE_CHECK="1",
             PATH=bindir + ":" + os.environ["PATH"])
 lenv = dict(os.environ, HOME=LHOME, LETEO_DATA_DIR=LHOME, LETEO_DATABASE=os.path.join(LHOME, "leteo.db"))
 cwd = os.path.join(BENCH, "work", "alpha-api")
