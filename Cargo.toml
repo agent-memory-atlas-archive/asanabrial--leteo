@@ -133,6 +133,11 @@ serde = { version = "1.0.228", features = ["derive"] }
 # touched.
 serde_json = { version = "1.0.149", features = ["preserve_order"] }
 sha2 = "0.11.0"
+# Catalan, Basque and Polish, which `rust-stemmers` 1.2.0 does not carry. It is
+# not a replacement for that crate: the two disagree on words the existing eight
+# languages already index, and the benchmark's floors are held to the stems
+# `rust-stemmers` produces. See `stemming::algorithm`.
+snowball_stemmers_rs = "1.0.1"
 sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "tls-rustls-ring", "postgres", "json", "chrono", "uuid"] }
 subtle = "2.6.1"
 thiserror = "2.0.17"

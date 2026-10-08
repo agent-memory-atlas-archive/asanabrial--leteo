@@ -595,23 +595,23 @@ before any of it.
     would change what they were measured to do.
 
     **Which languages have a stemmer, and which do not.** `stemming::algorithm`
-    is the one table. It carries Spanish, Portuguese, French, German, Italian,
-    Romanian, Dutch and Swedish, which are the Snowball algorithms `rust-stemmers`
-    1.2.0 ships for languages the setting offers; English is `porter`'s.
-    Four languages the setting offers have none, for two different reasons:
+    is the one table. It carries eleven of the thirteen languages the setting
+    offers, from two Snowball sources: Spanish, Portuguese, French, German,
+    Italian, Romanian, Dutch and Swedish come from `rust-stemmers` 1.2.0, and
+    Catalan, Basque and Polish come from `snowball_stemmers_rs`, because
+    `rust-stemmers` 1.2.0, last released in 2019, does not carry them. The two
+    sources are not interchangeable: `snowball_stemmers_rs` also carries the
+    other eight, but it disagrees with `rust-stemmers` on words they already
+    index — Dutch alone differs on 102,728 words of this repository's own
+    vocabulary — so the eight keep the source their floors were measured
+    against. English is `porter`'s, and one language the setting offers has no
+    arm at all:
 
-    - **Catalan, Basque and Polish have official Snowball algorithms**
-      (snowballstem.org lists each, with its `.sbl` source, in the Snowball
-      repository), and `rust-stemmers` 1.2.0, last released in 2019, does not
-      carry them. Adding them takes code generated from those sources with
-      Snowball's own compiler and vendored with its licence, or a crate that
-      has them, plus a set in `tools/engram-bench/inflection_sets.py` and a floor
-      for it.
-    - **Galician has no Snowball algorithm at all.** Nothing to vendor; it
-      needs a stemmer from somewhere else, or stays on `porter`.
+    - **Galician has no Snowball algorithm at all.** Nothing to add; it needs a
+      stemmer from somewhere else, or stays on `porter`.
 
-    A row in any of the four records its language and gets `porter` alone, and
-    the rows recorded under a language are re-stemmed by the repair
+    A row in a language with no arm here records its language and gets `porter`
+    alone, and the rows recorded under a language are re-stemmed by the repair
     (`doctor --repair`) the day an arm for it exists, because the repair writes
     the stems of any row whose stems differ from what its recorded language
     makes of its text.

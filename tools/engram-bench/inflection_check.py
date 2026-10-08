@@ -15,7 +15,8 @@ from inflection_sets import SETS
 
 SEARCH_RS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "src", "store", "search.rs")
 ALGORITHM = {"es": "spanish", "pt": "portuguese", "fr": "french", "de": "german",
-             "it": "italian", "ro": "romanian", "nl": "dutch", "sv": "swedish"}
+             "it": "italian", "ro": "romanian", "nl": "dutch", "sv": "swedish",
+             "ca": "catalan", "eu": "basque", "pl": "polish"}
 
 
 def budget(chars):

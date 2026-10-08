@@ -444,25 +444,17 @@ fn doctor_names_a_store_whose_stems_went_missing_and_the_repair_puts_them_back()
     assert_eq!(strict(&store, "ejecutaron"), ["El cron ejecuta"]);
 }
 
-/// The languages the setting offers that still have no second stemmer are four,
-/// and `search.md` §16 names them and what each lacks. A fifth gaining an arm, or
-/// one of the four gaining one, is a reason to edit that paragraph.
+/// The one language the setting offers that still has no second stemmer is
+/// Galician, and `search.md` §16 says why. A second gaining an arm, or Galician
+/// gaining one, is a reason to edit that paragraph.
 #[test]
-fn the_languages_without_a_stemmer_are_the_four_the_spec_names() {
+fn the_language_without_a_stemmer_is_the_one_the_spec_names() {
     let without: Vec<Interface> = Interface::ALL
         .into_iter()
         .filter(|language| *language != Interface::English)
         .filter(|language| crate::stemming::algorithm(*language).is_none())
         .collect();
-    assert_eq!(
-        without,
-        [
-            Interface::Catalan,
-            Interface::Galician,
-            Interface::Basque,
-            Interface::Polish
-        ]
-    );
+    assert_eq!(without, [Interface::Galician]);
 }
 
 fn language_of(store: &Store, title: &str) -> String {
