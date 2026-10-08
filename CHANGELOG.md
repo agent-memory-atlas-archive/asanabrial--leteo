@@ -14,6 +14,12 @@ All notable changes to Leteo are documented in this file.
   already index and the ratchet's floors are held to its stems. Each new
   language has an inflection set and a 1.000 floor (#183).
 
+- **A migration leaves a restorable copy of the store it rewrote.** Opening a
+  store stamped below the current schema now snapshots it first, to
+  `leteo.db.pre-schema-N`, with `VACUUM INTO` — one consistent file with the WAL
+  already folded in, so it is a way back from a one-way upgrade without copying
+  `-wal` and `-shm` by hand. The newest three copies are kept. (#199)
+
 ### Fixed
 
 - **A `nearest` answer no longer comes back as a page of unrelated memories.**

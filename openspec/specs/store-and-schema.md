@@ -420,6 +420,25 @@ there from any provenance, and how it says when something has gone wrong.
     can leave and which would otherwise keep the check red for good. Like the vectors, the table is derived and local: not
     replicated and not exported, and each machine stems with its own setting.
 
+18. **A migration takes a restorable copy first, and keeps the last few.** The
+    migration runs inside one `BEGIN IMMEDIATE`, which is safe against an
+    interrupted process and no help against an interrupted decision: it is
+    one-way, an older binary answers `SchemaTooNew` afterwards, and there is no
+    downgrade path. So before the transaction — outside it, because `VACUUM INTO`
+    cannot run inside one — and only when the store is stamped below
+    `SCHEMA_VERSION` and above 0, the store is snapshotted to
+    `<name>.pre-schema-<from>` beside it (`schema::BACKUP_INFIX`, the `from`
+    being the schema it was read at). A store already at this version is not
+    migrated, and a brand-new file has nothing to lose, so neither is copied.
+    `VACUUM INTO` is one consistent file with the WAL already folded in, which
+    is the copy a person used to be told to make by hand, `-wal` and `-shm`
+    included; it is restorable by opening it, and a test does exactly that and
+    reads the schema the copy still carries. A copy left by an earlier attempt at
+    the same migration is the same copy and stands, because overwriting it would
+    be no fresher; copies older than `BACKUPS_KEPT` (3), read by the schema each
+    names, are pruned. `uninstall` does not remove these copies — see
+    [`cli.md`](cli.md) §16.
+
 ## Invariants
 
 - Every full-text index has its triggers, and `FULL_TEXT_INDEXES` /
