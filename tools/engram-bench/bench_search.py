@@ -1,6 +1,6 @@
 import json, os, statistics as st
 from collections import defaultdict
-from corpus import no_answer, queries
+from comparison_corpus import no_answer, queries
 from mcpclient import MCP, BENCH
 keymap = json.load(open(os.path.join(BENCH, "keymap_engram.json")))  # Leteo adoption keeps ids (checked: same id+sync_id)
 

@@ -181,12 +181,12 @@ and *lost* on precision, 20% against 23%. That is the right instrument for this
 question and this is not it. Settling it needs questions somebody actually
 asked, which is why `mem_save` now records the prompt a memory answers.
 
-## `engram-bench` — a floor under search quality, and the same data on both engines
+## `engram-bench` — a floor under search quality, and a head-to-head on held-out data
 
-The corpus is 178 synthetic memories in two projects and 117 queries of seven
-kinds — paraphrase, short, Spanish, partial word, typo, several words, a long
-natural-language question — each with the one memory it should find. Eight of the
-Spanish questions target Spanish-written counterparts of English memories; the
+The ratchet's corpus is 178 synthetic memories in two projects and 117 queries of
+seven kinds — paraphrase, short, Spanish, partial word, typo, several words, a
+long natural-language question — each with the one memory it should find. Eight of
+the Spanish questions target Spanish-written counterparts of English memories; the
 ratchet names Spanish as the store's memory language in its settings, because a
 store that does not indexes every memory as English. Two things
 use it.
@@ -245,9 +245,11 @@ each kind came back empty for, beside its MRR: a question answered wrongly and a
 question not answered both score zero, and an agent is told different things by the
 two.
 
-The second use is the comparison with Engram, on identical data: the corpus is
-saved into a fresh Engram store through Engram's own CLI, a copy of that store
-is adopted with `leteo import --from-engram`, and both engines are asked the
+The second use is the comparison with Engram, on a **held-out** corpus:
+`tools/engram-bench/comparison_corpus.py` is a different corpus from the one the
+ratchet gates on, so the ratchet cannot tune against the corpus that measures it.
+It is saved into a fresh Engram store through Engram's own CLI, a copy of that
+store is adopted with `leteo import --from-engram`, and both engines are asked the
 same queries through their own MCP `mem_search`. Ids survive adoption, so one
 answer key serves both.
 
@@ -271,11 +273,13 @@ session-start hook is a shell script in its tree, not part of its binary.
 `bench_any.py` reruns Engram with its opt-in `match_mode: "any"`, which agents
 only get if they ask for it.
 
-Two limits to keep in view before quoting any of it. The corpus and queries are
-synthetic and were written knowing how both engines search, so paraphrases
-deliberately avoid the memories' words — exactly where Leteo's relaxed stages
-help; questions real agents asked would be the stronger test. And precision is
-barely measured: there is no set of queries that should find nothing.
+Two limits to keep in view before quoting any of it. The comparison corpus is
+held out from the ratchet, so the ratchet does not tune against it, but its
+queries are still synthetic and were written knowing how both engines search;
+questions real agents asked would be the stronger test. And precision is measured
+only on unanswerable questions: the no-answer precision counts the replies to
+questions the store cannot answer that came back empty or carried a caveat, not
+whether the results an engine returns are the right ones.
 
 ## `semantic` — where the shipped model comes from, and whether it earns its keep
 

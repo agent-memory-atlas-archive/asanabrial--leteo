@@ -13,12 +13,18 @@ if os.sep in LETEO or (os.altsep and os.altsep in LETEO):
     LETEO = os.path.abspath(LETEO)
 os.makedirs(BENCH, exist_ok=True)
 
+# The bench starts Engram dozens of times, and its startup update check is a
+# network call that changes nothing measured here. One mapping so every place
+# that builds an Engram environment turns it off the same way rather than
+# carrying its own copy of the variable name and value.
+ENGRAM_QUIET_ENV = {"ENGRAM_NO_UPDATE_CHECK": "1"}
+
 def engine_cmd(engine, project, home=None):
     cwd = os.path.join(BENCH, "work", project)
     os.makedirs(cwd, exist_ok=True)
     if engine == "engram":
         home = os.path.join(BENCH, "ehome")
-        return [ENGRAM, "mcp"], cwd, dict(os.environ, HOME=home, ENGRAM_DATA_DIR=os.path.join(home, "data"))
+        return [ENGRAM, "mcp"], cwd, dict(os.environ, HOME=home, ENGRAM_DATA_DIR=os.path.join(home, "data"), **ENGRAM_QUIET_ENV)
     home = home or os.path.join(BENCH, "lhome")
     os.makedirs(home, exist_ok=True)
     env = dict(os.environ, HOME=home, LETEO_DATA_DIR=home)

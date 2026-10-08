@@ -22,8 +22,13 @@ const KNOWN_ABSENT: &[&str] = &["npm/"];
 
 /// Literals that name a file and are not a read of it. `repository_guards.rs`
 /// spells `docker/Dockerfile` as the value a parser is expected to return for a
-/// workflow it carries inline; the image's own file is not opened.
-const NOT_READS: &[&str] = &["docker/Dockerfile"];
+/// workflow it carries inline; the image's own file is not opened. It also names
+/// `tools/engram-bench/comparison_corpus.py` as the git path it refuses a commit
+/// for touching, which it compares against `git` output rather than opening.
+const NOT_READS: &[&str] = &[
+    "docker/Dockerfile",
+    "tools/engram-bench/comparison_corpus.py",
+];
 
 fn include_patterns(manifest: &str) -> Vec<String> {
     let start = manifest

@@ -29,7 +29,6 @@ import statistics
 import subprocess
 import sys
 import tempfile
-import textwrap
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -39,7 +38,7 @@ BEGIN = "<!-- BEGIN GENERATED: compare.py -->"
 END = "<!-- END GENERATED: compare.py -->"
 
 sys.path.insert(0, str(HERE))
-from corpus import corpus, queries  # noqa: E402  (path must be set first)
+from comparison_corpus import corpus, queries  # noqa: E402  (path must be set first)
 
 PROJECTS = ("alpha-api", "beta-web")
 
@@ -155,7 +154,7 @@ def parse_any(stdout):
     for line in stdout.splitlines():
         m = re.match(r"^(\w+)\s+h@1\s+([\d.]+)\s+h@5\s+([\d.]+)\s+MRR\s+([\d.]+)$", line.strip())
         if m:
-            out[m.group(1)] = float(m.group(4))
+            out[m.group(1)] = dict(hit1=float(m.group(2)), hit5=float(m.group(3)), mrr=float(m.group(4)))
     return out
 
 
@@ -164,76 +163,90 @@ def no_answer_table(results):
 
     `with no caveat` is the number that matters: an empty reply and one that
     carries a sentence saying the match is weak both tell the agent not to rely
-    on it, and only a reply that does neither is a confident wrong answer.
+    on it, and only a reply that does neither is a confident wrong answer. The
+    no-answer precision is the share of these questions the engine handled
+    correctly, which is every reply that was empty or carried a caveat.
     """
     lines = [
-        "| engine | answered | with no caveat | mean reply bytes |",
-        "|---|---:|---:|---:|",
+        "| engine | answered | with no caveat | no-answer precision | mean reply bytes |",
+        "|---|---:|---:|---:|---:|",
     ]
     for engine in ("engram", "leteo"):
         rows = results.get("no_answer_" + engine, [])
+        # No rows at all is not a zero: the run has no measurement of this
+        # engine's no-answer behaviour, and a `0.00` there reads as a measured
+        # failure. The dash says the number was not taken.
+        if not rows:
+            lines.append(f"| {engine} | — | — | — | — |")
+            continue
         answered = [r for r in rows if r["n"]]
-        mean_bytes = statistics.mean(r["bytes"] for r in answered) if answered else 0
+        confident = sum(1 for r in answered if not r["caveat"])
+        precision = (len(rows) - confident) / len(rows)
+        bytes_cell = f"{statistics.mean(r['bytes'] for r in answered):.0f}" if answered else "—"
         lines.append(
             f"| {engine} | {len(answered)} of {len(rows)} "
-            f"| {sum(1 for r in answered if not r['caveat'])} "
-            f"| {mean_bytes:.0f} |"
+            f"| {confident} "
+            f"| {precision:.2f} "
+            f"| {bytes_cell} |"
         )
     return "\n".join(lines)
 
 
-def leads_sentence(results, any_mrr):
+def any_table(results, any_stats):
+    """Per-kind rows for Engram's opt-in `match_mode: "any"`, against Leteo.
+
+    Leteo is not rerun under the mode — it has no such switch — so its columns
+    are its defaults, which the header names.
+    """
     kinds = sorted({r["kind"] for r in results["engram"]})
-    default = [
-        (
-            kind,
-            summarise([r for r in results["engram"] if r["kind"] == kind])["mrr"],
-            summarise([r for r in results["leteo"] if r["kind"] == kind])["mrr"],
-        )
-        for kind in kinds
+    lines = [
+        "| query kind | n | Engram `any` h@1 | Engram `any` h@5 | Engram `any` MRR | Leteo h@1 | Leteo h@5 | Leteo MRR |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|",
     ]
-    e_all = summarise(results["engram"])
-    l_all = summarise(results["leteo"])
-
-    engram_wins = [f"{k} (Engram {e:.3f}, Leteo {l:.3f})" for k, e, l in default if e > l]
-    leteo_wins = [k for k, e, l in default if l > e]
-    ties = [k for k, e, l in default if e == l]
-
-    parts = []
-    if engram_wins:
-        parts.append("With each engine's own defaults, **Engram leads on " + ", ".join(engram_wins) + "**.")
-    else:
-        parts.append("With each engine's own defaults, **Engram does not lead on any query kind in this run**.")
-    if ties:
-        parts.append("The two tie on " + ", ".join(ties) + ".")
-    if leteo_wins:
-        parts.append("Leteo leads on " + ", ".join(leteo_wins) + ".")
-    parts.append(
-        f"Overall MRR is {e_all['mrr']:.3f} for Engram against {l_all['mrr']:.3f} for Leteo "
-        f"(hit@1 {e_all['hit1']:.2f} against {l_all['hit1']:.2f})."
-    )
-
-    partial = next((f"Engram {e:.3f} against Leteo {l:.3f}" for k, e, l in default if k == "partial"), None)
-    if partial:
-        parts.append(f"Partial words — the axis this comparison was built around — is {partial} in this run.")
-
-    if any_mrr:
-        any_leads = [
-            f"{k} (Engram {any_mrr[k]:.3f}, Leteo {l:.3f})"
-            for k, _, l in default
-            if k in any_mrr and any_mrr[k] > l
-        ]
-        if any_leads:
-            parts.append(
-                "With Engram's opt-in `match_mode: \"any\"` — not the default an agent gets — "
-                "Engram leads on " + ", ".join(any_leads) + "."
-            )
+    for kind in kinds + ["ALL"]:
+        e = any_stats.get(kind)
+        l = summarise([r for r in results["leteo"] if kind == "ALL" or r["kind"] == kind])
+        name = "**overall**" if kind == "ALL" else kind
+        if e is None:
+            lines.append(f"| {name} | {l['n']} | — | — | — | {l['hit1']:.2f} | {l['hit5']:.2f} | {l['mrr']:.3f} |")
         else:
-            parts.append(
-                "With Engram's opt-in `match_mode: \"any\"` — not the default an agent gets — "
-                "Engram still leads on no query kind."
+            lines.append(
+                f"| {name} | {l['n']} | {e['hit1']:.2f} | {e['hit5']:.2f} | {e['mrr']:.3f} "
+                f"| {l['hit1']:.2f} | {l['hit5']:.2f} | {l['mrr']:.3f} |"
             )
-    return " ".join(parts)
+    return "\n".join(lines)
+
+
+def leads_table(results, any_stats):
+    """Who has the higher MRR on each kind, computed from the tables above.
+
+    A tie is an exact equality rather than a closeness test. A per-kind lead of
+    one query is noise, and the page says so beside the table.
+    """
+    kinds = sorted({r["kind"] for r in results["engram"]})
+    rows = []
+    for kind in kinds + ["ALL"]:
+        e = summarise([r for r in results["engram"] if kind == "ALL" or r["kind"] == kind])["mrr"]
+        l = summarise([r for r in results["leteo"] if kind == "ALL" or r["kind"] == kind])["mrr"]
+        rows.append((kind, e, any_stats.get(kind, {}).get("mrr"), l))
+
+    def leader(engram, leteo):
+        if engram > leteo:
+            return f"Engram {engram:.3f}"
+        if leteo > engram:
+            return f"Leteo {leteo:.3f}"
+        return f"tie {engram:.3f}"
+
+    lines = [
+        "| query kind | Engram defaults | Engram `any` | Leteo | leader, defaults | leader, `any` |",
+        "|---|---:|---:|---:|---|---|",
+    ]
+    for kind, e, a, l in rows:
+        name = "**overall**" if kind == "ALL" else kind
+        a_cell = f"{a:.3f}" if a is not None else "—"
+        a_lead = leader(a, l) if a is not None else "—"
+        lines.append(f"| {name} | {e:.3f} | {a_cell} | {l:.3f} | {leader(e, l)} | {a_lead} |")
+    return "\n".join(lines)
 
 
 def run_optional(cmd, env, cwd=HERE):
@@ -292,7 +305,7 @@ def main():
             results = json.load(f)
 
         any_ok, any_out, any_reason = run_optional([sys.executable, "bench_any.py"], env)
-        any_mrr = parse_any(any_out) if any_ok else {}
+        any_stats = parse_any(any_out) if any_ok else {}
 
         cost_ok, cost_out, cost_reason = (False, "", "")
         engram_src = os.environ.get("ENGRAM_SRC")
@@ -342,36 +355,20 @@ def main():
         out.append("")
         out.append("### Questions the corpus cannot answer")
         out.append("")
-        out.append(
-            textwrap.fill(
-                "A stage with nothing to give should say so: a confident list of unrelated "
-                "memories is worse than an empty answer, because the agent believes what memory "
-                "returns. \"with no caveat\" counts the replies that come back with results and "
-                "no sentence saying the match is weak.",
-                width=88,
-            )
-        )
-        out.append("")
         out.append(no_answer_table(results))
         out.append("")
         out.append("### Engram with its opt-in `match_mode: \"any\"`")
         out.append("")
-        out.append(
-            textwrap.fill(
-                "`match_mode: any` is opt-in, so this is not the answer an agent gets by default; "
-                "it is included because it is the closest Engram comes to Leteo's relaxed stages.",
-                width=88,
-            )
-        )
-        out.append("")
-        if any_ok and any_mrr:
-            out.append("```text")
-            out.append(any_out.strip())
-            out.append("```")
+        if any_ok and any_stats:
+            out.append(any_table(results, any_stats))
         elif any_ok:
             out.append("Skipped: `bench_any.py` ran but printed no per-kind rows to parse.")
         else:
             out.append(f"Skipped: {any_reason}.")
+        out.append("")
+        out.append("### Who leads, per query kind")
+        out.append("")
+        out.append(leads_table(results, any_stats))
         out.append("")
         out.append("### Reply bytes, session-start hook latency, cold CLI search")
         out.append("")
@@ -381,10 +378,6 @@ def main():
             out.append("```")
         else:
             out.append(f"Skipped: {cost_reason}.")
-        out.append("")
-        out.append("### Where Engram leads")
-        out.append("")
-        out.append(textwrap.fill(leads_sentence(results, any_mrr), width=88))
         out.append("")
         block = "\n".join(out)
 

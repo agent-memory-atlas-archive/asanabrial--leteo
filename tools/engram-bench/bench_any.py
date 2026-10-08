@@ -1,6 +1,6 @@
 # match_mode=any is opt-in, so this is not the answer an agent gets by default.
 import json, os
-from corpus import queries
+from comparison_corpus import queries
 from mcpclient import MCP, BENCH
 keymap = json.load(open(os.path.join(BENCH, "keymap_engram.json")))
 from collections import defaultdict
