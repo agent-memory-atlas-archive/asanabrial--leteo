@@ -953,6 +953,86 @@ fn a_hook_answers_over_a_store_it_cannot_open_and_doctor_still_refuses() {
     leteo(&database).arg("doctor").assert().failure();
 }
 
+/// A capture hook spools even when the store cannot be opened.
+///
+/// The payload is read before the store is opened so this is possible: the old
+/// order returned on the open error without ever reading the event, so a
+/// `subagent-stop` whose store was busy lost the subagent's only copy. A busy
+/// open is the one failure that is not a reason to give up on the event; every
+/// other one is a store that is broken, and replaying into it would fail again.
+#[test]
+fn a_capture_hook_spools_over_a_store_it_cannot_open() {
+    let temp = tempfile::tempdir().expect("create CLI test directory");
+    let database = temp.path().join("leteo-spool.db");
+    let workspace = temp.path().join("spool-workspace");
+    std::fs::create_dir_all(&workspace).expect("create workspace");
+
+    // A writer holds the fresh database for longer than the hook may wait, so
+    // the schema pass cannot run and the open gives up busy.
+    let holder = rusqlite::Connection::open(&database).expect("hold the store");
+    holder
+        .busy_timeout(std::time::Duration::from_secs(30))
+        .expect("wait for the lock");
+    holder
+        .execute_batch("BEGIN IMMEDIATE; CREATE TABLE held (x);")
+        .expect("take the write lock");
+
+    let payload = json!({
+        "session_id": "spool-session",
+        "cwd": workspace.to_string_lossy(),
+        "project": "spool-project",
+        "last_assistant_message": "## Key Learnings:\n1. A capture that has to survive an open the hook could not do\n",
+    })
+    .to_string();
+    let hook = leteo(&database)
+        .arg("hook")
+        .arg("subagent-stop")
+        .write_stdin(payload)
+        .assert()
+        .success();
+    assert_eq!(
+        String::from_utf8_lossy(&hook.get_output().stdout).trim(),
+        "{}",
+        "a hook with nothing to add answers with nothing to add"
+    );
+
+    let spool = temp.path().join("hooks").join("spool");
+    let entries = std::fs::read_dir(&spool)
+        .expect("the spool directory was written")
+        .flatten()
+        .filter(|entry| {
+            entry
+                .path()
+                .extension()
+                .is_some_and(|suffix| suffix == "json")
+        })
+        .count();
+    assert_eq!(entries, 1, "the capture was kept beside the store");
+
+    holder.execute_batch("ROLLBACK").expect("release the lock");
+
+    // The next open replays it. `doctor --repair` is one of the three drain
+    // points, and the session the busy open never created is ensured from the
+    // entry before the replay, so the learning lands rather than being deleted
+    // as a `SessionNotFound` the retry cannot mend.
+    leteo(&database)
+        .arg("doctor")
+        .arg("--repair")
+        .assert()
+        .success();
+    let found = run_json(
+        leteo(&database)
+            .arg("search")
+            .arg("survive an open")
+            .arg("--all-projects"),
+    );
+    assert_eq!(
+        found.as_array().expect("search results").len(),
+        1,
+        "the learning is found after the lock is released: {found}"
+    );
+}
+
 /// `leteo search` says why it came back empty, where a person will see it.
 ///
 /// An empty result reads like "this was never saved" and is usually "your

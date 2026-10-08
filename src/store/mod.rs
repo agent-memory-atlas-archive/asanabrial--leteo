@@ -377,6 +377,15 @@ pub struct StoreConfig {
     /// `None` reads the memory-writing setting beside the database, which is
     /// what every caller but a test wants. See [`crate::stemming`].
     pub memory_language: Option<crate::settings::Interface>,
+    /// Whether `busy_timeout` is a deadline for the whole process rather than a
+    /// fresh wait for each statement.
+    ///
+    /// A hook sets this. Its budget is the time its agent will wait before
+    /// killing it, and an event that writes twice — a session created and then
+    /// a prompt, or one learning after another — must not spend that budget
+    /// twice. Every other caller keeps the per-statement meaning the MCP server
+    /// has always had, so nothing but a hook changes.
+    pub single_busy_budget: bool,
 }
 
 impl StoreConfig {
@@ -390,6 +399,7 @@ impl StoreConfig {
             dedupe_window: Duration::from_secs(15 * 60),
             model_dir: crate::semantic::explicit_dir(),
             memory_language: None,
+            single_busy_budget: false,
         }
     }
 
@@ -424,18 +434,49 @@ impl StoreError {
     /// with words only it still holds.
     pub const CAPTURE_RETRY: &'static str = "Leteo could not keep this subagent's learnings: another process was writing to the store. That text is gone with the subagent unless you send it — call mem_capture_passive with the subagent's final message.";
 
-    /// The same loss said out loud, whatever refused the write.
+    /// The same loss said out loud, whatever refused the write — and whatever
+    /// was kept before it did.
     ///
-    /// A busy store is the one cause a retry mends, so it is the one that asks
-    /// for one. Every other cause loses the learnings just as completely, and
-    /// the agent is told so with the cause it can act on rather than being sent
-    /// to make the identical write fail a second time.
-    pub fn capture_lost(&self) -> String {
+    /// A busy store is the one cause a retry mends. Since #202 it is also the
+    /// one cause whose text is not lost at all: the hook writes the capture to
+    /// the spool beside the database and a later open replays it, so `spooled`
+    /// is the difference between "send it again" and "nothing to do". A capture
+    /// that stopped part way has already committed the learnings before the one
+    /// that failed, so `saved` is said rather than claiming the whole text is
+    /// gone — each learning is its own transaction, and there is nothing to
+    /// roll back.
+    pub fn capture_lost(&self, saved: usize, spooled: bool) -> String {
+        let kept = match saved {
+            0 => String::new(),
+            1 => "One learning was stored before it stopped. ".to_owned(),
+            saved => format!("{saved} learnings were stored before it stopped. "),
+        };
+        if spooled {
+            let kept_for_later = if saved == 0 {
+                "It is kept for later"
+            } else {
+                "The rest are kept for later"
+            };
+            return format!(
+                "Leteo could not store this subagent's learnings yet, because another process is \
+                 writing to the store. {kept}{kept_for_later} and stored when the store is free; \
+                 nothing to do."
+            );
+        }
         if self.is_busy() {
-            return Self::CAPTURE_RETRY.to_owned();
+            if saved == 0 {
+                return Self::CAPTURE_RETRY.to_owned();
+            }
+            return format!(
+                "Leteo could not keep the rest of this subagent's learnings: another process was \
+                 writing to the store. {kept}What is left is gone with the subagent unless you \
+                 send it — call mem_capture_passive with the subagent's final message."
+            );
         }
         format!(
-            "Leteo could not keep this subagent's learnings: {self}. That text is gone with the subagent, and sending it again will fail the same way until this is fixed — run `leteo doctor`."
+            "Leteo could not keep this subagent's learnings: {self}. {kept}That text is gone with \
+             the subagent, and sending it again will fail the same way until this is fixed — run \
+             `leteo doctor`."
         )
     }
     pub const BUSY_ADVICE: &'static str = "another process is writing to the store, so this did nothing and nothing was half-written; try again in a moment";
@@ -612,6 +653,10 @@ pub struct Store {
     /// What `open` had left of its budget once the schema pass was done. See
     /// [`Store::budget_left_after_opening`].
     budget_left_after_opening: Duration,
+    /// When the whole process must have stopped waiting for another writer,
+    /// for the callers that asked for one budget rather than one per statement.
+    /// See [`StoreConfig::single_busy_budget`] and [`Store::wait_deadline`].
+    process_deadline: Option<std::time::Instant>,
 }
 
 impl Store {
@@ -675,6 +720,7 @@ impl Store {
         connection.busy_timeout(left)?;
         Ok(Self {
             connection,
+            process_deadline: config.single_busy_budget.then_some(deadline),
             config,
             budget_left_after_opening: left,
         })
@@ -713,9 +759,28 @@ impl Store {
     /// same file. Taking the lock at `BEGIN` is what makes the timeout mean
     /// what it says.
     pub(crate) fn write_transaction(&mut self) -> Result<Transaction<'_>, StoreError> {
+        // A caller that asked for one budget for the whole process gets what is
+        // left of it, so a second write cannot wait the full budget again.
+        // `busy_timeout(0)` when the deadline has passed is the answer: fail
+        // now, which is what "out of budget" means.
+        if let Some(deadline) = self.process_deadline {
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            self.connection.busy_timeout(left)?;
+        }
         Ok(self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?)
+    }
+
+    /// The instant this process must stop waiting for another writer.
+    ///
+    /// A hook's budget belongs to the whole process, so this is the same
+    /// instant every write is held to and what the drain at the end of the hook
+    /// is bounded by. Every other caller keeps the per-statement meaning and
+    /// answers with what a fresh wait would be given.
+    pub fn wait_deadline(&self) -> std::time::Instant {
+        self.process_deadline
+            .unwrap_or_else(|| std::time::Instant::now() + self.config.busy_timeout)
     }
 
     /// The open connection, for callers that need to reach past the store's
@@ -1060,6 +1125,7 @@ pub(crate) use search::DEFAULT_SEARCH_LIMIT;
 pub use search::MAX_QUERY_BYTES;
 
 mod observations;
+pub use observations::CaptureFailure;
 
 mod sessions;
 

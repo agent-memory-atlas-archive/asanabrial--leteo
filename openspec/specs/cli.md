@@ -28,10 +28,18 @@ duties about what an answer explains.
 
 4. **`leteo doctor` reports; `leteo doctor --repair` fixes.** The repair restores
    missing full-text triggers, rebuilds the indexes, recomputes stale hashes,
-   and folds the memory types an older adoption copied verbatim through
-   `normalize::kind`, reporting `restored_triggers`, `rebuilt`, `rehashed`, and
-   `folded_types` beside the ordinary report. `--project <name>` adds that
-   project's statistics.
+   folds the memory types an older adoption copied verbatim through
+   `normalize::kind`, and drains the spool a busy hook kept captures in,
+   reporting `restored_triggers`, `rebuilt`, `rehashed`, and `folded_types`
+   beside the ordinary report. `--project <name>` adds that project's
+   statistics.
+
+   The spool is a directory beside the database, not a table, so it has its own
+   check: `hook_spool` counts the captures waiting for a later open and names the
+   age of the oldest, passing when there are none and failing with
+   `leteo doctor --repair` as the remedy otherwise
+   ([`hooks.md`](hooks.md) §22, [`store-and-schema.md`](store-and-schema.md)
+   §19).
 
    `--check <code>` selects which verdict comes back and what `healthy` is
    computed from — every check still runs. That is deliberate rather than

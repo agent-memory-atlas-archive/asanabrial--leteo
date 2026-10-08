@@ -2,6 +2,18 @@
 
 use super::*;
 
+/// Why a passive capture stopped, and what it managed to store first.
+///
+/// Carried rather than folded into [`StoreError`] because the count is a fact
+/// about the run and not about the failure: the caller that says what happened
+/// needs both, and the one that only reports an error can take the error alone.
+#[derive(Debug)]
+pub struct CaptureFailure {
+    pub error: StoreError,
+    /// What reached the store before the error stopped the capture.
+    pub partial: PassiveCaptureResult,
+}
+
 /// The page of memories somebody sees when they have not searched for
 /// anything, built in one place.
 ///
@@ -1367,10 +1379,18 @@ impl Store {
         Ok(())
     }
 
+    /// Stores the learnings one subagent left, reporting what got in before a
+    /// failure stopped it.
+    ///
+    /// Each learning is its own transaction, so a capture that meets a busy
+    /// store part way through has already committed the learnings before the
+    /// one that failed. Returning only the error threw that away, and the
+    /// message the hook printed then said the whole text was gone when part of
+    /// it was in the store — see [`StoreError::capture_lost`].
     pub fn passive_capture(
         &mut self,
         input: PassiveCapture,
-    ) -> Result<PassiveCaptureResult, StoreError> {
+    ) -> Result<PassiveCaptureResult, CaptureFailure> {
         let project = normalize::project(&input.project);
         let learnings = normalize::extract_learnings(&input.content);
         // Bounded here rather than in the extractor, because the extractor is
@@ -1391,14 +1411,22 @@ impl Store {
             // collects copies.
             let (_, hash) =
                 normalize::stored_content(&learning, self.config.max_observation_length);
-            let duplicate = self.connection.query_row(
+            let duplicate = match self.connection.query_row(
                 "SELECT EXISTS(
                     SELECT 1 FROM observations WHERE normalized_hash = ?1
                       AND ifnull(project, '') = ?2 AND deleted_at IS NULL
                  )",
                 params![hash, project],
                 |row| row.get::<_, bool>(0),
-            )?;
+            ) {
+                Ok(duplicate) => duplicate,
+                Err(error) => {
+                    return Err(CaptureFailure {
+                        error: error.into(),
+                        partial: result,
+                    });
+                }
+            };
             if duplicate {
                 result.duplicates += 1;
                 continue;
@@ -1409,7 +1437,7 @@ impl Store {
             // shorter than that is cut once here and never shown cut at all —
             // see `normalize::TITLE_CHARS`.
             let title = normalize::truncate_words(&learning, normalize::TITLE_CHARS);
-            let outcome = self.add_observation(AddObservation {
+            let outcome = match self.add_observation(AddObservation {
                 session_id: input.session_id.clone(),
                 kind: "passive".to_owned(),
                 title,
@@ -1419,7 +1447,15 @@ impl Store {
                 scope: "project".to_owned(),
                 topic_key: None,
                 prompt_sync_id: None,
-            })?;
+            }) {
+                Ok(outcome) => outcome,
+                Err(error) => {
+                    return Err(CaptureFailure {
+                        error,
+                        partial: result,
+                    });
+                }
+            };
             // What was stored, rather than what was handed over. There is a
             // second, narrower guard inside `add_observation`, and counting the
             // call as a save meant a learning it folded into an existing row

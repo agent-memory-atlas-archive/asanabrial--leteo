@@ -385,9 +385,10 @@ leteo setup opencode --dry-run
 ```
 
 **Keeping it well.** `doctor` runs every check and says which one failed and
-why; `--repair` carries out the three that are safe to make on their own —
-restoring missing full-text triggers, rebuilding the indexes, and recomputing
-stale hashes.
+why; `--repair` carries out the repairs that are safe to make on their own —
+restoring missing full-text triggers, rebuilding the indexes, recomputing
+stale hashes, folding the memory types an older adoption left unfolded, and
+replaying any captures a busy hook kept beside the store.
 `export` and `import` move a store between machines, and `obsidian-export`
 writes it into a vault as Markdown:
 

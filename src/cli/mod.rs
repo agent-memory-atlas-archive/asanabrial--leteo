@@ -367,8 +367,14 @@ pub async fn run(cli: Cli) -> Result<()> {
     // A hook gives up before the agent that launched it does. The number is on
     // the event — see `HookEvent::store_wait` — because it is the event that
     // knows how long anybody is waiting.
+    //
+    // And it is one budget for the whole process, not one per statement: an
+    // event that writes twice — a session created and then a prompt — would
+    // otherwise spend it twice and outlast its agent. See
+    // `StoreConfig::single_busy_budget`.
     if let Command::Hook { event, .. } = &cli.command {
         config.busy_timeout = crate::hooks::HookEvent::from(*event).store_wait();
+        config.single_busy_budget = true;
     }
     let data_directory = config
         .database_path
@@ -376,6 +382,25 @@ pub async fn run(cli: Cli) -> Result<()> {
         .map(Path::to_path_buf)
         .context("the Leteo database path has no parent directory")?;
     let cloud_config_path = crate::cloud::ClientConfig::path_in(&data_directory);
+    // The payload is read before the store is opened.
+    //
+    // A hook that cannot open the store still has to be able to keep a
+    // `subagent-stop` capture: the text is the subagent's only copy, and the
+    // old order opened the store first, returned on the open error, and never
+    // read the event at all. Reading first is also what lets a malformed
+    // payload warn without touching the store. Only a hook reads standard
+    // input; every other command must not block on a terminal that is not
+    // feeding it.
+    let hook_input = match &cli.command {
+        Command::Hook { .. } => Some(match crate::hooks::read_input(std::io::stdin()) {
+            Ok(input) => (input, None),
+            Err(error) => (
+                crate::hooks::HookInput::default(),
+                Some(format!("hook payload could not be read: {error:#}")),
+            ),
+        }),
+        _ => None,
+    };
     // A hook answers even when the store cannot be opened at all.
     //
     // The hook module says it plainly — "hooks sit on the agent's critical
@@ -391,8 +416,24 @@ pub async fn run(cli: Cli) -> Result<()> {
     // the agent's verbose mode shows it. `leteo doctor` is the place to look
     // next, and it is the one command that has to keep failing loudly.
     let store = Store::open(config.clone());
-    if let (Command::Hook { verbose, .. }, Err(error)) = (&cli.command, &store) {
+    if let (Command::Hook { event, verbose }, Err(error)) = (&cli.command, &store) {
         eprintln!("leteo hook: the store could not be opened: {error:#}");
+        // A busy store is the one open failure that is not a reason to give up
+        // on the event. A `subagent-stop` capture is the subagent's only copy,
+        // so it is written beside the database for the next open to replay;
+        // every other event is bookkeeping a later one repeats anyway.
+        if error.is_busy()
+            && crate::hooks::HookEvent::from(*event) == crate::hooks::HookEvent::SubagentStop
+            && let Some((input, _)) = &hook_input
+            && let Some((capture, directory)) = crate::hooks::pending_capture(input)
+        {
+            let _ = crate::hooks::spool::spool(
+                &data_directory,
+                crate::hooks::HookEvent::SubagentStop.hook_event_name(),
+                &capture,
+                &directory,
+            );
+        }
         if *verbose {
             print_json(&serde_json::json!({
                 "warnings": [format!("open Leteo store: {error:#}")],
@@ -704,6 +745,11 @@ pub async fn run(cli: Cli) -> Result<()> {
                 .transpose()?;
             let rehashed = repair.then(|| store.recompute_stale_hashes()).transpose()?;
             let folded = repair.then(|| store.fold_observation_types()).transpose()?;
+            // And the captures a busy hook left beside the database. Before the
+            // report, so the `hook_spool` check describes the spool as it is
+            // after the repair rather than as it was when somebody asked.
+            let spool_deadline = store.wait_deadline();
+            let _ = repair.then(|| crate::hooks::spool::drain(&mut store, spool_deadline));
             let (report, stats) = store.doctor_scoped(check.as_deref(), project.as_deref())?;
             // The report stays at the top level so existing readers keep
             // working; the scoping fields are additions beside it.
@@ -853,6 +899,11 @@ pub async fn run(cli: Cli) -> Result<()> {
         }
         Command::Mcp { tools, project } => {
             let autosync = start_background_autosync(&config, &cloud_config_path)?;
+            // The MCP server is a long-lived process that will be writing for
+            // the rest of the session, so this is the best moment to replay what
+            // a busy hook could not store. Bounded by the store's own budget.
+            let deadline = store.wait_deadline();
+            crate::hooks::spool::drain(&mut store, deadline);
             let served = crate::mcp::run_stdio_with_options(
                 Arc::new(Mutex::new(store)),
                 crate::mcp::McpOptions {
@@ -894,17 +945,13 @@ pub async fn run(cli: Cli) -> Result<()> {
             // The store filled with sessions nobody could find and prompts that
             // were never saved, and nothing anywhere said why.
             //
-            // So the fallback stays and the reason travels with it. The hook
-            // still answers, still never blocks; the outcome now carries a
-            // warning naming what could not be read, which `--verbose` prints
-            // and `leteo doctor` is the place to look next.
-            let (input, unreadable) = match crate::hooks::read_input(std::io::stdin()) {
-                Ok(input) => (input, None),
-                Err(error) => (
-                    crate::hooks::HookInput::default(),
-                    Some(format!("hook payload could not be read: {error:#}")),
-                ),
-            };
+            // So the fallback stays and the reason travels with it. The payload
+            // is read before the store is opened — see above, where a busy open
+            // can still spool a capture — and the outcome carries a warning
+            // naming what could not be read, which `--verbose` prints and
+            // `leteo doctor` is the place to look next.
+            let (input, unreadable) =
+                hook_input.unwrap_or_else(|| (crate::hooks::HookInput::default(), None));
             match crate::hooks::run(&mut store, event.into(), &input) {
                 Ok(mut outcome) => {
                     if let Some(warning) = unreadable {

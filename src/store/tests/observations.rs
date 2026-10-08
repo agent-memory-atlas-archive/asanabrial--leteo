@@ -860,7 +860,13 @@ fn passive_capture_extracts_saves_and_deduplicates_learnings() {
             project: "leteo".to_owned(),
             source: String::new(),
         });
-    assert!(matches!(missing, Err(StoreError::SessionNotFound(id)) if id == "missing"));
+    assert!(matches!(
+        missing,
+        Err(CaptureFailure {
+            error: StoreError::SessionNotFound(id),
+            ..
+        }) if id == "missing"
+    ));
 }
 
 #[test]

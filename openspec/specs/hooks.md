@@ -40,9 +40,14 @@ deadline, so every promise here is a promise about time as much as content.
    patience. The write path's half of the same fact is
    [`mcp-tools.md`](mcp-tools.md) §5.
 
-3. **The store is opened inside the hook path, not before it.** The promise that
-   a hook never blocks was once written in `hooks` and broken in `cli`, which
-   opened the database on the way to calling it.
+3. **The payload is read before the store is opened, and a hook answers even
+   when the store cannot be opened.** The store is opened on the way into the
+   hook path, and an open that fails prints `{}` and exits 0 rather than
+   blocking the agent. Reading the payload first is what lets a `subagent-stop`
+   whose open fails busy still keep its capture (§22), and it means a malformed
+   payload warns without touching the store. The promise that a hook never
+   blocks was once written in `hooks` and broken in `cli`, which opened the
+   database before the payload and exited 1 on the open error.
 
 4. **`session-start` returns the opening context.** Recent sessions with their
    last activity, recent prompts, and the memories most worth having in front of
@@ -239,24 +244,26 @@ deadline, so every promise here is a promise about time as much as content.
    the number said and the queue handed over cannot come to mean different
    things.
 
-14. **A hook that loses to another writer says so where it can be read, and one
-   of them says what to do.** A failure inside a hook is a warning: on stderr,
-   in the outcome, where `--verbose` shows it. The agent gets `{}`. That is
-   right almost everywhere — a prompt that was not recorded or a session that
+14. **A hook that loses to another writer keeps a `subagent-stop` capture
+   instead of only warning.** A failure inside a hook is otherwise a warning: on
+   stderr, in the outcome, where `--verbose` shows it. The agent gets `{}`. That
+   is right almost everywhere — a prompt that was not recorded or a session that
    was not closed is nothing the agent can put back, and a workflow finishing
    dozens of subagents cannot afford a line each.
 
    `subagent-stop` is the exception, for the reason §10 already gives: the
    learnings live in the text this hook was handed and nowhere else, because the
-   subagent finishes and its context is discarded. The agent reading the answer
-   still holds the only copy. So a capture that did not happen is said whatever
-   the voice setting is — it is not a report about memories, it is a thing to
-   do — and it is said whatever refused the write, with the remedy the cause
-   allows: a busy store asks for `mem_capture_passive` with the same text, and
-   anything else names its cause instead of sending the identical write to fail
-   a second time. Timed under a genuinely held write lock, this event spends
-   8.93 s of its agent's 10, so the loss it reports is the one that arrives
-   after the waiting is over.
+   subagent finishes and its context is discarded. Since #202 a busy store does
+   not lose them: the capture is written to the spool beside the database (§22)
+   and a later open replays it, so the line the agent reads says it was kept for
+   later and asks for nothing. The spool write happens only when the store error
+   is `is_busy()` — every other refusal would fail again on replay, and that
+   line names its cause instead of sending the identical write to fail a second
+   time. A capture that stopped part way has already committed the learnings
+   before the one that failed, so the line says what was kept rather than
+   claiming the whole text is gone. Timed under a genuinely held write lock,
+   this event spends 8.93 s of its agent's 10, so the spooling is the last thing
+   that happens before it answers.
 
 15. **A snippet inside a learnings section is neither a boundary nor a
    learning.** The section `subagent-stop` reads ends at the next line opening
@@ -415,6 +422,41 @@ deadline, so every promise here is a promise about time as much as content.
    hook path, and a Rust guard that reads the file so `cargo test` watches the
    export too.
 
+22. **A capture a busy store refused is kept beside the database and replayed
+   by the next open.** One JSON file per capture, under
+   `<database parent>/hooks/spool/` — the same `hooks/` the reminder state uses
+   — written to a temporary name that ends `.tmp` and renamed into place, so a
+   drain running at the same time never reads half a turn and never mistakes
+   the in-flight temporary for an entry. The entry records the event, an ISO
+   timestamp, the `PassiveCapture` fields and the session's directory; the
+   content is passed through
+   `normalize::strip_private` before it reaches the disk, so the `<private>`
+   promise holds for a file that outlives the process that wrote it
+   ([`project.md`](../project.md) §3).
+
+   A drain claims an entry by renaming it to a `.claimed-<pid>` name, which is
+   atomic, so two drainers take different entries rather than both replaying
+   one. It replays oldest first, and before `Store::passive_capture` it ensures
+   the session from the entry's own session id, project and directory — the
+   busy-open path spools before `ensure_session` could run, so an entry can name
+   a session no store ever created, and replaying it without that would fail
+   `SessionNotFound` and delete the subagent's only copy. On success the entry
+   goes, on the first busy error the drain stops and puts the entry back,
+   and any other error counts the entry dropped and removes it — a retry cannot
+   mend it, and keeping it would make `doctor` report a spool that can never
+   drain. The drain is bounded by what is left of the caller's budget, so it
+   cannot outlast the agent waiting for the answer. It runs at the end of every
+   hook, at `leteo mcp` startup, and in `doctor --repair`.
+
+   The spool holds at most `SPOOL_CAP` (1,000) entries and drops the oldest past
+   that, and an entry older than `SPOOL_RETENTION_DAYS` (7) is dropped on the
+   next spool write or drain without being replayed — a subagent's learnings
+   belong to the conversation that produced them. Both numbers are one constant
+   each, read by the behaviour and the tests, and named here so the limit that
+   is published is the limit that is applied. `doctor` reports what is waiting
+   as `hook_spool` ([`store-and-schema.md`](store-and-schema.md) §4), and
+   `doctor --repair` drains it.
+
 ## Invariants
 
 - Every event finishes inside its agent's patience even when the wait overruns.
@@ -445,6 +487,17 @@ deadline, so every promise here is a promise about time as much as content.
   `a_session_start_in_an_agreeing_directory_says_nothing_about_projects`, and
   the lookup's error half by
   `a_session_start_says_when_it_could_not_check_the_directorys_history`
+- `src/hooks/spool.rs` — §22's spool: the directory, the entry format, the cap
+  and retention, and the drain. Held by
+  `a_capture_that_meets_a_held_store_is_kept_once_it_is_free`,
+  `a_spooled_capture_drained_twice_is_stored_once`,
+  `a_spooled_capture_without_a_session_is_stored_when_drained`,
+  `a_temporary_file_is_not_a_spool_entry`,
+  `two_drainers_claim_each_entry_once`,
+  `a_drain_with_no_budget_left_writes_nothing`,
+  `the_spool_drops_the_oldest_past_its_cap`,
+  `the_spool_drops_entries_past_their_retention`, and, from `tests/`,
+  `a_capture_hook_spools_over_a_store_it_cannot_open`
 - `src/recall.rs` — the sizes and the rendering shared with the CLI. §5 is
   held by `a_session_line_and_a_prompt_line_are_cut_for_opposite_reasons` and,
   for the two sections that also carry a content preview, by
