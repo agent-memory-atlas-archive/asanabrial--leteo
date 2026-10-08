@@ -987,7 +987,7 @@ impl LeteoMcpServer {
                 project: context.project,
                 source,
             })
-            .map_err(store_error)?;
+            .map_err(|failure| store_error(failure.error))?;
         Ok(Json(CapturePassiveOutput::new(result, context.envelope)))
     }
 

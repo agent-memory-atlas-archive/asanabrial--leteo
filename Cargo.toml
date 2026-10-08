@@ -147,6 +147,11 @@ tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
 
 [dev-dependencies]
 assert_cmd = "2.1.1"
+# The integration guard for the hook spool has to hold a real write lock while
+# the binary tries to open the store, and only a second SQLite connection can
+# do that. The same version and features the crate itself links, so this is the
+# one SQLite build the tests and the product share.
+rusqlite = { version = "0.39.0", features = ["bundled-full"] }
 tempfile = "3.23.0"
 tower = { version = "0.5.3", features = ["util"] }
 

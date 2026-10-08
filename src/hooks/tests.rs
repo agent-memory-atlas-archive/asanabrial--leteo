@@ -1,10 +1,11 @@
 use std::path::Path;
+use std::time::{Duration, Instant};
 
 use tempfile::TempDir;
 
 use super::*;
 use crate::{
-    memory::model::AddObservation,
+    memory::model::{AddObservation, PassiveCapture},
     store::{Store, StoreConfig},
 };
 
@@ -1745,6 +1746,66 @@ fn a_locked_store_costs_a_hook_a_warning_rather_than_its_whole_budget() {
     holder.execute_batch("ROLLBACK").unwrap();
 }
 
+/// One wait budget per hook process, not one per statement.
+///
+/// `busy_timeout` was installed once and applied to every statement, so an event
+/// that wrote twice — a session created and then a prompt — could wait the whole
+/// budget twice and outlast its agent. A hook's budget is now a deadline for the
+/// process: each write gets what is left of it, so a second write after a spent
+/// budget fails at once instead of waiting again. Read off the connection rather
+/// than timed, because a stopwatch on a loaded runner reports the scheduler —
+/// the same reason `budget_left_after_opening` exists.
+#[test]
+fn a_second_write_spends_what_is_left_of_the_hooks_budget() {
+    let (temp, store) = store();
+    let database = store.database_path().to_path_buf();
+    drop(store);
+
+    let budget = HookEvent::UserPromptSubmit.store_wait();
+    let mut store = Store::open(StoreConfig {
+        busy_timeout: budget,
+        single_busy_budget: true,
+        ..StoreConfig::new(&database)
+    })
+    .unwrap();
+    let before: i64 = store
+        .connection()
+        .query_row("PRAGMA busy_timeout", [], |row| row.get(0))
+        .unwrap();
+    assert!(
+        before > 0,
+        "the open leaves a budget for the writes that follow: {before} ms"
+    );
+
+    // The lock arrives after the open, so the schema pass did not spend the
+    // budget and there is a real one for the two writes to share.
+    let holder = rusqlite::Connection::open(&database).unwrap();
+    holder
+        .busy_timeout(std::time::Duration::from_secs(30))
+        .unwrap();
+    holder.execute_batch("BEGIN IMMEDIATE").unwrap();
+
+    // A prompt from a session that does not exist yet: `ensure_session` writes,
+    // and then `add_prompt` writes again.
+    let asking = HookInput {
+        prompt: "una pregunta que hay que guardar".to_owned(),
+        ..input(temp.path())
+    };
+    let outcome = run(&mut store, HookEvent::UserPromptSubmit, &asking).unwrap();
+    assert!(!outcome.warnings.is_empty(), "{outcome:?}");
+
+    let after: i64 = store
+        .connection()
+        .query_row("PRAGMA busy_timeout", [], |row| row.get(0))
+        .unwrap();
+    assert!(
+        after < before,
+        "the second write must get what is left rather than the whole budget again: \
+         {before} ms before, {after} ms after"
+    );
+    holder.execute_batch("ROLLBACK").unwrap();
+}
+
 /// Every hook finishes inside its agent's patience even when the wait overruns.
 ///
 /// The ladder only works if Leteo gives up first: a hook that is killed
@@ -2134,7 +2195,7 @@ fn start_session(store: &mut Store, directory: &Path) -> String {
         .unwrap_or_default()
 }
 
-/// A subagent's learnings lost to a busy store are the one silence worth breaking.
+/// A capture the store refuses says what happened, and what to do about it.
 ///
 /// Every hook that loses to another writer says so — on stderr, in the outcome's
 /// warnings, where `--verbose` shows it. The agent gets `{}`. That is right
@@ -2144,12 +2205,12 @@ fn start_session(store: &mut Store, directory: &Path) -> String {
 ///
 /// `subagent-stop` is the exception, and it is the one the spec already calls
 /// out: the learnings live in the text this hook was handed and nowhere else,
-/// because the subagent finishes and its context is discarded. So the agent
-/// reading this still holds the only copy, and it is the one case where saying
-/// so buys something — a sentence that says what to do rather than what
-/// happened.
+/// because the subagent finishes and its context is discarded. Since #202 a
+/// busy store does not lose them at all — the capture is spooled and a later
+/// open replays it — so that line says "kept for later" and asks for nothing.
+/// A refusal a retry cannot mend still loses them, and that line says what to do.
 #[test]
-fn a_capture_lost_to_a_busy_store_tells_the_agent_what_to_do() {
+fn a_capture_the_store_refuses_says_what_happened_and_what_to_do() {
     let temp = TempDir::new().unwrap();
     let path = temp.path().join("busy.db");
     crate::settings::save(
@@ -2204,8 +2265,12 @@ fn a_capture_lost_to_a_busy_store_tells_the_agent_what_to_do() {
     assert_eq!(refused.observations_captured, 0, "{refused:?}");
     let said = refused.system_message.clone().unwrap_or_default();
     assert!(
-        said.contains("mem_capture_passive"),
-        "the agent still holds the only copy, so it is told to send it: {said:?}"
+        said.contains("kept for later"),
+        "a busy store keeps the capture rather than losing it: {said:?}"
+    );
+    assert!(
+        !said.contains("mem_capture_passive"),
+        "and asks for nothing, because there is nothing to send: {said:?}"
     );
     assert!(
         refused
@@ -2213,6 +2278,11 @@ fn a_capture_lost_to_a_busy_store_tells_the_agent_what_to_do() {
             .get("systemMessage")
             .is_some_and(|value| value.as_str() == Some(said.as_str())),
         "and on the channel the agent reads, not only in the warnings"
+    );
+    assert_eq!(
+        spool::pending(&spool::directory(store.data_dir())).entries,
+        1,
+        "and the capture is beside the store for a later open"
     );
 
     blocker.execute_batch("ROLLBACK").unwrap();
@@ -2260,6 +2330,361 @@ fn a_capture_lost_to_a_busy_store_tells_the_agent_what_to_do() {
         "and the agent is not told about a prompt it cannot re-send: {:?}",
         quiet.response()
     );
+}
+
+/// A capture that meets a held store is kept once the store is free.
+///
+/// The whole point of the spool: a `subagent-stop` is the one event whose text
+/// is the subagent's only copy, and a busy store used to lose it after a
+/// warning. The capture is written beside the database, and the next hook
+/// replays it through the same door.
+#[test]
+fn a_capture_that_meets_a_held_store_is_kept_once_it_is_free() {
+    let (temp, mut store) = store();
+    let directory = temp.path().to_path_buf();
+    run(&mut store, HookEvent::SessionStart, &input(&directory)).unwrap();
+    let database = store.database_path().to_path_buf();
+    let data_dir = store.data_dir().to_path_buf();
+    drop(store);
+
+    let holder = rusqlite::Connection::open(&database).unwrap();
+    holder
+        .busy_timeout(std::time::Duration::from_secs(30))
+        .unwrap();
+    holder.execute_batch("BEGIN IMMEDIATE").unwrap();
+
+    let mut store = Store::open(StoreConfig {
+        busy_timeout: std::time::Duration::from_millis(50),
+        ..StoreConfig::new(&database)
+    })
+    .unwrap();
+    let learned = HookInput {
+        session_id: "agent-session".to_owned(),
+        cwd: directory.to_string_lossy().into_owned(),
+        project: Some("hook-project".to_owned()),
+        last_assistant_message: "## Key Learnings:
+1. A learning that has to survive a store somebody else was writing"
+            .to_owned(),
+        ..HookInput::default()
+    };
+    let refused = run(&mut store, HookEvent::SubagentStop, &learned).unwrap();
+    assert_eq!(refused.observations_captured, 0, "{refused:?}");
+    let spool_dir = spool::directory(&data_dir);
+    assert_eq!(
+        spool::pending(&spool_dir).entries,
+        1,
+        "the capture is kept beside the store"
+    );
+
+    holder.execute_batch("ROLLBACK").unwrap();
+
+    // The next hook replays what the busy one left, at the end of its own run.
+    run(&mut store, HookEvent::SessionStart, &input(&directory)).unwrap();
+    assert_eq!(
+        spool::pending(&spool_dir).entries,
+        0,
+        "and it is drained once the store can take it"
+    );
+    assert_eq!(
+        store
+            .recent_observations(Some("hook-project"), Some(10), true)
+            .unwrap()
+            .len(),
+        1,
+        "with the learning in the store"
+    );
+}
+
+/// A capture drained twice is stored once.
+///
+/// The drain removes an entry it replayed, so a second drain of the same text
+/// can only happen when the entry is written again — a replay of a copy left by
+/// a crash, or a hook that spooled the same turn twice. The store's hash check
+/// is what makes that a no-op rather than a second memory.
+#[test]
+fn a_spooled_capture_drained_twice_is_stored_once() {
+    let (temp, mut store) = store();
+    let directory = temp.path().to_path_buf();
+    run(&mut store, HookEvent::SessionStart, &input(&directory)).unwrap();
+    let data_dir = store.data_dir().to_path_buf();
+    let capture = PassiveCapture {
+        session_id: "agent-session".to_owned(),
+        project: "hook-project".to_owned(),
+        content: "## Key Learnings:
+1. A learning a double drain must not store twice"
+            .to_owned(),
+        source: "subagent-stop".to_owned(),
+    };
+
+    spool::spool(&data_dir, "SubagentStop", &capture).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let first = spool::drain(&mut store, deadline);
+    assert_eq!(first.stored, 1, "{first:?}");
+
+    // Aged past the dedupe window, so the narrow guard inside `add_observation`
+    // cannot be what makes the second drain a no-op. The check that holds with
+    // no time window under it is the hash.
+    rusqlite::Connection::open(store.database_path())
+        .unwrap()
+        .execute(
+            "UPDATE observations SET created_at = datetime('now', '-200 minutes')",
+            [],
+        )
+        .unwrap();
+
+    spool::spool(&data_dir, "SubagentStop", &capture).unwrap();
+    let second = spool::drain(&mut store, deadline);
+    assert_eq!(
+        second.stored, 0,
+        "the same learning is not stored again: {second:?}"
+    );
+    assert_eq!(
+        store
+            .recent_observations(Some("hook-project"), Some(10), true)
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+/// Two drainers take different entries rather than both replaying one.
+///
+/// A claim is a rename, which is atomic, so the number of entries taken across
+/// two drains is the number of entries there were. Reading each entry in place
+/// instead would have both drainers replay all of them.
+#[test]
+fn two_drainers_claim_each_entry_once() {
+    let (temp, mut store) = store();
+    let directory = temp.path().to_path_buf();
+    run(&mut store, HookEvent::SessionStart, &input(&directory)).unwrap();
+    let database = store.database_path().to_path_buf();
+    let data_dir = store.data_dir().to_path_buf();
+    let count = 8;
+    for index in 0..count {
+        let capture = PassiveCapture {
+            session_id: "agent-session".to_owned(),
+            project: "hook-project".to_owned(),
+            content: format!(
+                "## Key Learnings:
+1. Learning number {index} that only one drainer may claim"
+            ),
+            source: "subagent-stop".to_owned(),
+        };
+        spool::spool(&data_dir, "SubagentStop", &capture).unwrap();
+    }
+    drop(store);
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let first = std::thread::spawn({
+        let database = database.clone();
+        move || {
+            let mut store = Store::open(StoreConfig::new(&database)).unwrap();
+            spool::drain(&mut store, deadline).claimed
+        }
+    });
+    let second = std::thread::spawn({
+        let database = database.clone();
+        move || {
+            let mut store = Store::open(StoreConfig::new(&database)).unwrap();
+            spool::drain(&mut store, deadline).claimed
+        }
+    });
+    let claimed = first.join().unwrap() + second.join().unwrap();
+    assert_eq!(
+        claimed, count,
+        "each entry is claimed by exactly one drainer"
+    );
+
+    let store = Store::open(StoreConfig::new(&database)).unwrap();
+    assert_eq!(
+        store
+            .recent_observations(Some("hook-project"), Some(50), true)
+            .unwrap()
+            .len(),
+        count,
+        "and each learning is stored once"
+    );
+}
+
+/// A drain out of budget writes nothing and leaves the spool for later.
+///
+/// The deadline is the hook's own, so a drain that runs at the end of an event
+/// cannot outlast the agent waiting for the answer. A drain already past it has
+/// to stop before taking anything rather than spend a wait it does not have.
+#[test]
+fn a_drain_with_no_budget_left_writes_nothing() {
+    let (temp, mut store) = store();
+    let directory = temp.path().to_path_buf();
+    run(&mut store, HookEvent::SessionStart, &input(&directory)).unwrap();
+    let data_dir = store.data_dir().to_path_buf();
+    let capture = PassiveCapture {
+        session_id: "agent-session".to_owned(),
+        project: "hook-project".to_owned(),
+        content: "## Key Learnings:
+1. A learning a drain with no budget has to leave alone"
+            .to_owned(),
+        source: "subagent-stop".to_owned(),
+    };
+    spool::spool(&data_dir, "SubagentStop", &capture).unwrap();
+
+    let report = spool::drain(&mut store, Instant::now() - Duration::from_secs(1));
+    assert_eq!(
+        report.claimed, 0,
+        "nothing is taken past the deadline: {report:?}"
+    );
+    assert_eq!(report.stored, 0, "{report:?}");
+    assert_eq!(
+        spool::pending(&spool::directory(&data_dir)).entries,
+        1,
+        "the entry is still there for a later drain"
+    );
+    assert_eq!(
+        store
+            .recent_observations(Some("hook-project"), Some(10), true)
+            .unwrap()
+            .len(),
+        0
+    );
+}
+
+/// A spool write past the cap drops the oldest entries.
+#[test]
+fn the_spool_drops_the_oldest_past_its_cap() {
+    let (_temp, store) = store();
+    let data_dir = store.data_dir().to_path_buf();
+    let directory = spool::directory(&data_dir);
+    let capture = |index: usize| PassiveCapture {
+        session_id: "agent-session".to_owned(),
+        project: "hook-project".to_owned(),
+        content: format!(
+            "## Key Learnings:
+1. Learning number {index} written past the cap"
+        ),
+        source: "subagent-stop".to_owned(),
+    };
+
+    // One entry first, so the one the cap has to drop is known by name.
+    spool::spool(&data_dir, "SubagentStop", &capture(0)).unwrap();
+    let oldest = std::fs::read_dir(&directory)
+        .unwrap()
+        .flatten()
+        .map(|entry| entry.path())
+        .find(|path| path.extension().is_some_and(|suffix| suffix == "json"))
+        .expect("the first entry is on disk");
+
+    for index in 1..=spool::SPOOL_CAP {
+        spool::spool(&data_dir, "SubagentStop", &capture(index)).unwrap();
+    }
+    assert_eq!(
+        spool::pending(&directory).entries,
+        spool::SPOOL_CAP,
+        "the cap is the limit that is applied"
+    );
+    assert!(
+        !oldest.exists(),
+        "the oldest entry is the one the cap dropped"
+    );
+}
+
+/// An entry past its retention is dropped without being replayed.
+#[test]
+fn the_spool_drops_entries_past_their_retention() {
+    let (_temp, mut store) = store();
+    let data_dir = store.data_dir().to_path_buf();
+    let directory = spool::directory(&data_dir);
+    std::fs::create_dir_all(&directory).unwrap();
+    let stale = chrono::Utc::now().timestamp_millis()
+        - (spool::SPOOL_RETENTION_DAYS + 1) * 24 * 60 * 60 * 1_000;
+    let path = directory.join(format!(
+        "{stale:013}-{:010}-000000.json",
+        std::process::id()
+    ));
+    let body = serde_json::json!({
+        "event": "SubagentStop",
+        "at": "2020-01-01T00:00:00Z",
+        "session_id": "agent-session",
+        "project": "hook-project",
+        "content": "## Key Learnings:\n1. An old learning retention has to drop",
+        "source": "subagent-stop",
+    })
+    .to_string();
+    std::fs::write(&path, &body).unwrap();
+    assert_eq!(
+        spool::pending(&directory).entries,
+        1,
+        "the old entry is there to begin with"
+    );
+
+    // A spool write sweeps it away before adding the new one.
+    spool::spool(
+        &data_dir,
+        "SubagentStop",
+        &PassiveCapture {
+            session_id: "agent-session".to_owned(),
+            project: "hook-project".to_owned(),
+            content: "## Key Learnings:
+1. A fresh learning written after the old one expired"
+                .to_owned(),
+            source: "subagent-stop".to_owned(),
+        },
+    )
+    .unwrap();
+    assert!(!path.exists(), "the stale entry is gone");
+    assert_eq!(
+        spool::pending(&directory).entries,
+        1,
+        "only the fresh one is left"
+    );
+
+    // And a drain sweeps it too.
+    std::fs::write(&path, &body).unwrap();
+    let _ = spool::drain(&mut store, Instant::now() + Duration::from_secs(5));
+    assert!(!path.exists(), "the drain drops what it would not replay");
+}
+
+/// The doctor counts what is waiting and names the repair.
+#[test]
+fn doctor_counts_the_spool() {
+    let (_temp, store) = store();
+    let data_dir = store.data_dir().to_path_buf();
+    spool::spool(
+        &data_dir,
+        "SubagentStop",
+        &PassiveCapture {
+            session_id: "agent-session".to_owned(),
+            project: "hook-project".to_owned(),
+            content: "## Key Learnings:
+1. A learning waiting for the doctor to count it"
+                .to_owned(),
+            source: "subagent-stop".to_owned(),
+        },
+    )
+    .unwrap();
+
+    let check = |store: &Store| {
+        store
+            .doctor()
+            .unwrap()
+            .checks
+            .into_iter()
+            .find(|check| check.code == "hook_spool")
+            .expect("the doctor reports the spool")
+    };
+    let failed = check(&store);
+    assert!(!failed.ok, "a non-empty spool is reported");
+    let detail = failed.detail.unwrap_or_default();
+    assert!(detail.contains('1'), "the count is said: {detail:?}");
+    assert!(detail.contains("oldest"), "and the age: {detail:?}");
+    assert!(
+        detail.contains("doctor --repair"),
+        "and the remedy: {detail:?}"
+    );
+
+    let directory = spool::directory(&data_dir);
+    for entry in std::fs::read_dir(&directory).unwrap().flatten() {
+        std::fs::remove_file(entry.path()).unwrap();
+    }
+    assert!(check(&store).ok, "an empty spool is the ordinary state");
 }
 
 /// A payload that parsed and said nothing is not the same as no payload.

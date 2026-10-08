@@ -86,7 +86,10 @@ there from any provenance, and how it says when something has gone wrong.
    `sqlite_integrity`, `foreign_keys`, four full-text `*_integrity` checks,
    four `*_sync` row-count checks, `observation_hash_sync`,
    `observation_type_searchable`, `full_text_triggers`, `topic_key_uniqueness`,
-   `settings_readable`, `semantic_model`, `journal_mode`, `busy_timeout`.
+   `settings_readable`, `semantic_model`, `journal_mode`, `busy_timeout`,
+   `hook_spool`. `hook_spool` counts the captures a busy hook kept for a later
+   open and names the age of the oldest, and `doctor --repair` drains them
+   (§19).
    `semantic_model` is the one check about a file and not the database, and says
    which of three conditions holds: the model found and verified (and where),
    not installed, or present and not the model this build accepts, each with the
@@ -472,6 +475,17 @@ there from any provenance, and how it says when something has gone wrong.
     be no fresher; copies older than `BACKUPS_KEPT` (3), read by the schema each
     names, are pruned. `uninstall` does not remove these copies — see
     [`cli.md`](cli.md) §18.
+
+19. **The spool is a directory beside the database, not a table in it.** A
+    capture a busy hook could not store is one JSON file under
+    `<database parent>/hooks/spool/`, so the store's schema is untouched by it
+    and an older binary that does not know the directory still opens the store.
+    It is the same `hooks/` the reminder state uses, so a store keeps its side
+    files in one place. `doctor` reads it without opening any of the files — the
+    count of entries and the age of the oldest, from the file names — and
+    reports `hook_spool`; `doctor --repair` drains it through
+    `Store::passive_capture`, the same door a live hook uses. The directory, the
+    format, the cap and the retention are [`hooks.md`](hooks.md) §22.
 
 ## Invariants
 

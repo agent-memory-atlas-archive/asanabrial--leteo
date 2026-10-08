@@ -28,6 +28,7 @@ use crate::{
 mod context;
 mod nudge;
 mod session;
+pub(crate) mod spool;
 #[cfg(test)]
 mod tests;
 
@@ -327,11 +328,52 @@ pub fn read_input(mut reader: impl Read) -> Result<HookInput> {
     Ok(input)
 }
 
+/// The capture a `subagent-stop` payload describes, worked out without a store.
+///
+/// The CLI reads the payload before it opens the store, so a capture whose open
+/// fails busy can still be spooled — and that path has no session to override
+/// the project from, because there is no store to ask. The project and session
+/// are therefore the payload's own; a replay normalises both again.
+pub(crate) fn pending_capture(input: &HookInput) -> Option<PassiveCapture> {
+    if input.output().trim().is_empty() {
+        return None;
+    }
+    let directory = resolve_directory(&input.cwd);
+    let detection = detect_project(&directory);
+    let project = resolve_project(input, &detection);
+    let session_id = resolve_session_id(input, &project);
+    Some(capture_of(input, &session_id, &project))
+}
+
+/// The capture a payload stores, under the session and project already resolved.
+///
+/// One place for the default producer name, because both doors into the spool —
+/// a hook that reached the store and one that could not open it — have to record
+/// the same text for the same subagent.
+fn capture_of(input: &HookInput, session_id: &str, project: &str) -> PassiveCapture {
+    PassiveCapture {
+        session_id: session_id.to_owned(),
+        content: input.output().to_owned(),
+        project: project.to_owned(),
+        source: input.producer().unwrap_or("subagent-stop").to_owned(),
+    }
+}
+
 /// Runs one lifecycle event against the store.
 ///
 /// Hooks sit on the agent's critical path, so recoverable problems are
 /// collected as warnings instead of aborting the run.
 pub fn run(store: &mut Store, event: HookEvent, input: &HookInput) -> Result<HookOutcome> {
+    let outcome = run_event(store, event, input)?;
+    // Whatever a busy store left beside the database, replayed now that this
+    // hook is finishing. Bounded by what is left of this hook's own budget, so
+    // the drain cannot outlast the agent that is waiting for the answer.
+    let deadline = store.wait_deadline();
+    spool::drain(store, deadline);
+    Ok(outcome)
+}
+
+fn run_event(store: &mut Store, event: HookEvent, input: &HookInput) -> Result<HookOutcome> {
     let directory = resolve_directory(&input.cwd);
     let detection = detect_project(&directory);
     let mut project = resolve_project(input, &detection);
@@ -589,12 +631,8 @@ pub fn run(store: &mut Store, event: HookEvent, input: &HookInput) -> Result<Hoo
             let output = input.output();
             if !output.trim().is_empty() {
                 ensure_session(store, &session_id, &project, &directory, &mut outcome);
-                match store.passive_capture(PassiveCapture {
-                    session_id: session_id.clone(),
-                    content: output.to_owned(),
-                    project: project.clone(),
-                    source: input.producer().unwrap_or("subagent-stop").to_owned(),
-                }) {
+                let capture = capture_of(input, &session_id, &project);
+                match store.passive_capture(capture.clone()) {
                     Ok(result) => {
                         outcome.observations_captured = result.saved;
                         outcome.observations_extracted = Some(result.extracted);
@@ -623,7 +661,7 @@ pub fn run(store: &mut Store, event: HookEvent, input: &HookInput) -> Result<Hoo
                             ));
                         }
                     }
-                    Err(error) => {
+                    Err(failure) => {
                         // The one silence here that costs something that cannot
                         // be got back.
                         //
@@ -636,11 +674,18 @@ pub fn run(store: &mut Store, event: HookEvent, input: &HookInput) -> Result<Hoo
                         // case where saying so is worth a line — and the line
                         // says what to do rather than what happened.
                         //
-                        // Whatever refused the write: the learnings are gone
-                        // either way, and which of the two sentences comes back
-                        // is `capture_lost`'s to decide — a busy store is the
-                        // one cause worth being sent to retry.
-                        lost_capture = Some(error.capture_lost());
+                        // A busy store is no longer a loss at all: the capture
+                        // is written to the spool beside the database and a
+                        // later open replays it, so `capture_lost` is told
+                        // whether that worked and says "kept for later" when it
+                        // did. A capture that stopped part way has already
+                        // committed some learnings, so its count is handed over
+                        // too rather than claiming the whole text is gone.
+                        let error = failure.error;
+                        let spooled = error.is_busy()
+                            && spool::spool(store.data_dir(), event.hook_event_name(), &capture)
+                                .is_ok();
+                        lost_capture = Some(error.capture_lost(failure.partial.saved, spooled));
                         outcome.warnings.push(said("passive capture", &error));
                     }
                 }
@@ -649,11 +694,12 @@ pub fn run(store: &mut Store, event: HookEvent, input: &HookInput) -> Result<Hoo
             // dozens of subagents in one turn, and most of them report nothing
             // worth storing; a line each would bury the turn's answer.
             //
-            // The exception is above: a capture the store was too busy to take
-            // is work that disappears with the subagent's context, and the
-            // agent reading this still has the text to send again. That one is
-            // said whatever the voice setting is, because it is not a report
-            // about memories — it is a thing to do.
+            // The exception is above: a capture the store refused is either
+            // kept beside the database for a later open to replay or, for a
+            // cause a retry cannot mend, work that disappears with the
+            // subagent's context. Either way it is said whatever the voice
+            // setting is — one is a thing to do while the text is still here,
+            // the other is a thing to know.
             if let Some(lost) = lost_capture {
                 outcome.system_message = Some(lost);
             } else if voice.reports() {

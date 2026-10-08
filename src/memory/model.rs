@@ -1082,6 +1082,7 @@ impl DoctorCheck {
         "full_text_triggers",
         "journal_mode",
         "busy_timeout",
+        "hook_spool",
     ];
 }
 

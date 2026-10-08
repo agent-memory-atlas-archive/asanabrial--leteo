@@ -707,6 +707,26 @@ impl Store {
                 ),
             ),
         });
+        // Captures a busy store could not take and no later open has replayed.
+        //
+        // A busy store is not damage, and the check says so with work waiting
+        // rather than with a fault: the count, the age of the oldest, and the
+        // flag that replays them. Empty is the ordinary state and passes, so
+        // the check is silent until a hook has actually lost a race.
+        let spool = crate::hooks::spool::pending(&crate::hooks::spool::directory(self.data_dir()));
+        record(match spool.entries {
+            0 => DoctorCheck::passed("hook_spool"),
+            entries => DoctorCheck::failed(
+                "hook_spool",
+                format!(
+                    "{entries} hook capture(s) are waiting beside the store to be stored and the oldest is {} old; `leteo doctor --repair` replays them",
+                    spool
+                        .oldest
+                        .map(crate::hooks::spool::describe_age)
+                        .unwrap_or_else(|| "a moment".to_owned())
+                ),
+            ),
+        });
 
         let healthy = issues.is_empty();
         Ok(DoctorReport {
