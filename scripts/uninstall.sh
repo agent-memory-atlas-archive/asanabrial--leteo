@@ -91,24 +91,39 @@ fi
 # for one, after it has already kept the model files it did not recognise. It
 # takes a model file only when the file hashes to the pin it was built with, and
 # the by-name removal below does not look at content, so it must not run behind a
-# binary that has decided to keep a file. A binary that is executable and still
-# cannot start -- the wrong architecture, a truncated download -- judged
-# nothing, and the shell says so with 126 or 127 before any of it ran; counting
-# that as a run left the model behind and cited a report that was never printed.
-# `handled` is the narrower claim that it finished, and gates only the data
-# files, which the binary and this script name identically, so trying them again
-# after a failure undoes no judgment.
+# binary that has decided to keep a file. Started is read from what the binary
+# itself printed, and not from the shell's exit code: a binary of the wrong
+# architecture is answered with 126 or 127 by bash, but dash re-runs it as a
+# script on ENOEXEC and exits 2, which looks like the binary failing, or like it
+# succeeding when the file is empty. Two things count, either one: the line
+# `leteo uninstall --yes` prints before it judges anything, and a line of its
+# JSON report. The second is for a binary built before that line existed, which
+# an older archive can leave beside this script; it judged the model and kept
+# what it did not recognise, and no marker is no reason to delete it. The key is
+# one no shell error, and no script dash re-ran, would print. A binary that
+# printed neither judged nothing, and counting it as a run left the model behind
+# and cited a report that was never printed. `handled` is the narrower claim
+# that it finished, and gates only the data files, which the binary and this
+# script name identically, so trying them again after a failure undoes no
+# judgment.
+STARTED_MARKER="leteo uninstall: started"
 ran=0
 handled=0
 if [ -x "$BINARY" ]; then
     say "  removing agent configuration and memories"
     status=0
-    "$BINARY" uninstall --yes || status=$?
-    case "$status" in
-        0) ran=1; handled=1 ;;
-        126|127) say "  could not start leteo uninstall; carrying on with the files" ;;
-        *) ran=1; say "  leteo uninstall failed; carrying on with the files" ;;
-    esac
+    output=$("$BINARY" uninstall --yes 2>&1) || status=$?
+    printf '%s\n' "$output"
+    if printf '%s\n' "$output" | grep -Eqx "$STARTED_MARKER|  \"model_removed\": (true|false),?"; then
+        ran=1
+        if [ "$status" -eq 0 ]; then
+            handled=1
+        else
+            say "  leteo uninstall failed; carrying on with the files"
+        fi
+    else
+        say "  could not start leteo uninstall; carrying on with the files"
+    fi
 else
     say "  no binary to ask, removing the data directory directly"
 fi

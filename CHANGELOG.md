@@ -203,11 +203,13 @@ to fetch.
 
 - **The uninstall scripts no longer count a binary that cannot start as one that
   judged the model.** `uninstall.sh` treated any executable as having run, so a
-  binary that failed to start (exit 126 or 127) left the model files behind and
-  pointed at a report that was never printed; `uninstall.ps1` now agrees with it
-  and retries the data files after a failed run, as the shell script already did.
-  CI now runs both scripts behind a binary that judged the model and one that
-  cannot start (#177).
+  binary that failed to start left the model files behind and pointed at a report
+  that was never printed; `uninstall.ps1` now agrees with it and retries the data
+  files after a failed run, as the shell script already did. Both scripts decide
+  that the binary started from the line `leteo uninstall: started`, which
+  `uninstall --yes` now prints on stderr before it judges anything, and not from an
+  exit code: under dash a binary of the wrong architecture is re-run as a script
+  and exits 2, which the 126-or-127 rule counted as a run (#179).
 
 - **Changing a remote split a project in two without a word.** The project is
   re-derived from `origin` on every call, so adding a remote to a repository named by
