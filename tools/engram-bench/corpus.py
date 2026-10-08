@@ -211,6 +211,45 @@ def queries():
             qs.append(dict(kind=kind, q=q, target=t["key"], project=t["project"]))
     return qs
 
+# Questions the corpus cannot answer. A stage that has nothing to give should say
+# so, because the agent believes what memory returns and a confident list of
+# unrelated memories is worse than an empty answer.
+#
+# They are about people, offices, money and the law, none of which any memory
+# here is about, and each names its project so the question is asked of a store
+# that really holds nothing for it. They are not in `queries()`: their kind is
+# their own and they have no target to rank, so they never enter the answerable
+# MRR. They are the `no_answer` half of the corpus the harness charges for.
+NO_ANSWER = [
+    (A, "what is our parental leave policy"),
+    (A, "who approves travel expenses"),
+    (A, "how many vacation days do we get"),
+    (A, "what is the guest wifi password"),
+    (A, "when is the next company all-hands"),
+    (A, "how do I request a new laptop"),
+    (A, "what is the referral bonus for new hires"),
+    (A, "which health insurance provider do we use"),
+    (A, "what is the dress code for the offsite"),
+    (A, "how do I book a meeting room"),
+    (A, "what is the coffee machine brand in the kitchen"),
+    (A, "when does the office close for the holidays"),
+    (B, "cuál es la política de vacaciones"),
+    (B, "cómo pido un portátil nuevo"),
+    (B, "cuándo es la cena de empresa"),
+    (B, "qué proveedor de nóminas usamos"),
+    (B, "cómo se solicita una baja médica"),
+    (B, "cuál es el menú de la cafetería"),
+    (B, "cómo se reserva una sala de reuniones"),
+    (B, "qué gimnasio tiene descuento para empleados"),
+    (B, "cuántos días de teletrabajo hay"),
+    (B, "quién aprueba los gastos de viaje"),
+    (B, "dónde está la primera planta"),
+    (B, "cuál es el horario de verano"),
+]
+
+def no_answer():
+    return [dict(kind="no_answer", q=q, project=p) for p, q in NO_ANSWER]
+
 if __name__ == "__main__":
     c = corpus(); q = queries()
     from collections import Counter

@@ -19,6 +19,10 @@
   "empty": {
     "ALL": 2
   },
+  "no_answer": {
+    "confident": 0,
+    "bytes": 5500
+  },
   "inflection": {
     "ca": 1.0,
     "de": 1.0,

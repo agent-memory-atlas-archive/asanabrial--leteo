@@ -628,7 +628,16 @@ impl Store {
     ) -> Vec<Candidate> {
         let floor = (!nearest_answered).then_some(crate::semantic::FLOOR);
         match self.semantic_candidates(query, options, limit, floor) {
-            Ok(found) if nearest_answered => super::semantic_stage::fuse(lexical, found, limit),
+            // A `nearest` answer is the weakest lexical claim, and the semantic
+            // list beside it is what pads the page: on a question the store
+            // cannot answer, one shared word reaches `nearest` and the stage
+            // then fills the slots with unrelated memories. The lexical answer
+            // stands; the meaning is merged in only as far as it can stand
+            // beside it. See `semantic::MERGE_CAP`.
+            Ok(mut found) if nearest_answered => {
+                found.truncate(crate::semantic::MERGE_CAP);
+                super::semantic_stage::fuse(lexical, found, limit)
+            }
             Ok(found) => found,
             // No usable model is a state `doctor` reports and `leteo model install`
             // mends, and the stage is simply off; it is not a fault of this search.

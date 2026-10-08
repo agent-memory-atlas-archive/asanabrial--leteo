@@ -14,6 +14,17 @@ All notable changes to Leteo are documented in this file.
   already index and the ratchet's floors are held to its stems. Each new
   language has an inflection set and a 1.000 floor (#183).
 
+### Fixed
+
+- **A `nearest` answer no longer comes back as a page of unrelated memories.**
+  The semantic stage merged its whole list beside a lexical answer that had
+  reached `nearest` through one shared word, so a question the store could not
+  answer filled every slot. It now merges only its best five. The benchmark
+  carries 24 questions about things no memory in it is about and reports, per
+  engine, how many come back with something, how many without a caveat, and the
+  reply bytes; the mean on those questions fell from 10,900 to 5,493 bytes
+  (#197).
+
 ## [0.3.0] - 2026-10-07
 
 Search by meaning, by half-remembered words and through typos, stemming in the

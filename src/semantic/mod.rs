@@ -86,6 +86,17 @@ pub const MAX_TOKENS: usize = 128;
 /// Basque score .177 without the floor and .044 with it.
 pub const FLOOR: f32 = 0.30;
 
+/// How many semantic candidates may be merged into a `nearest` answer.
+///
+/// The lexical stage was answering anyway, so the meaning is added beside it
+/// rather than instead of it: the page already holds the memories one shared
+/// word reached, and everything the cosine brings after that is padding. On a
+/// question the store cannot answer, that padding is what turns one shared word
+/// into a full page of unrelated memories. The best semantic match is kept -- it
+/// is the one the stage has an opinion about -- and the tail is dropped.
+/// Measured against `tools/engram-bench`'s no-answer questions.
+pub const MERGE_CAP: usize = 5;
+
 /// Where the repository keeps the model, relative to its root.
 ///
 /// What the default download address assumes -- the files committed here are the

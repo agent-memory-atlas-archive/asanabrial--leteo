@@ -7,7 +7,7 @@ from collections import defaultdict
 STATE = tempfile.mkdtemp(prefix="leteo-ratchet-")
 os.environ["BENCH_STATE"] = STATE
 
-from corpus import corpus, queries
+from corpus import corpus, no_answer, queries
 from mcpclient import MCP
 import inflection
 
@@ -99,6 +99,29 @@ def measure():
             sizes[name] = len(text.encode())
         _, text, _ = call(alpha, "mem_context", {})
         sizes["context"] = len(text.encode())
+
+        # The questions the corpus cannot answer. A stage with nothing to give
+        # should say so: a confident list of unrelated memories is worse than an
+        # empty answer, because the agent believes what memory returns. What is
+        # gated is the replies carrying no caveat at all -- an empty answer and
+        # one that says the match is weak both tell the agent not to rely on it.
+        # The words-only stages are a separate question the issue leaves alone.
+        asked = no_answer()
+        answered, confident, no_answer_bytes = 0, 0, []
+        for q in asked:
+            reply, text, _ = call(servers[q["project"]], "mem_search", {"query": q["q"], "limit": SEARCH_LIMIT})
+            if not (reply.get("results") or []):
+                continue
+            answered += 1
+            no_answer_bytes.append(len(text.encode()))
+            if not reply.get("hint"):
+                confident += 1
+        no_answer_stats = dict(
+            total=len(asked),
+            answered=answered,
+            confident=confident,
+            bytes=round(statistics.mean(no_answer_bytes)) if no_answer_bytes else 0,
+        )
     finally:
         for m in servers.values():
             try:
@@ -113,7 +136,7 @@ def measure():
     # measured in one store written in Spanish.
     strict = inflection.measure(STATE)
     return dict(mrr=mrr, hit1=hit1, inflection=strict, counts={k: len(v) for k, v in ranks.items()}, bytes=sizes,
-                empty={k: empty[k] for k in ranks}, median_ms=statistics.median(millis))
+                empty={k: empty[k] for k in ranks}, median_ms=statistics.median(millis), no_answer=no_answer_stats)
 
 
 def propose(got):
@@ -123,6 +146,11 @@ def propose(got):
         "bytes": {k: (v // 100 + 1) * 100 for k, v in sorted(got["bytes"].items())},
         "empty": {"ALL": got["empty"]["ALL"]},
         "inflection": {k: math.floor(v["mrr"] * 1000 + 1e-9) / 1000 for k, v in sorted(got["inflection"].items())},
+        # A ceiling, like `empty` and `bytes`: the count of no-answer questions
+        # answered without a caveat, and the size of those replies, can only be
+        # allowed to fall.
+        "no_answer": {"confident": got["no_answer"]["confident"],
+                      "bytes": (got["no_answer"]["bytes"] // 100 + 1) * 100},
     }
 
 
@@ -166,6 +194,18 @@ def judge(got, floors):
         value = got["bytes"].get(name)
         if value is not None and value > ceiling:
             breaches.append(f"bytes {name}: measured {value}, ceiling {ceiling}")
+    # The no-answer questions: how many come back with a reply that carries no
+    # caveat, and how big those replies are. Both are ceilings, because a stage
+    # with nothing to give should say less, not more.
+    for name, ceiling in floors.get("no_answer", {}).items():
+        value = got["no_answer"].get(name)
+        if value is None:
+            raise CannotRun(f"floors.json bounds no-answer {name!r}, which was not measured "
+                            f"(measured: {sorted(got['no_answer'])})")
+        if value > ceiling:
+            breaches.append(f"no-answer {name}: measured {value}, ceiling {ceiling}")
+        elif value < ceiling:
+            raisable.append(f"no-answer {name}: measured {value} is below its ceiling {ceiling}")
     return breaches, raisable
 
 
@@ -190,6 +230,9 @@ def main():
         print(f"  strict {k:3}  n={v['n']:3}  hit@1 {v['hit1']:.3f}  MRR {v['mrr']:.3f}  floor {floors['inflection'].get(k, float('nan')):.3f}")
     for k, v in sorted(got["bytes"].items()):
         print(f"  {k:15} {v:6} bytes  ceiling {floors['bytes'].get(k, 0)}")
+    na = got["no_answer"]
+    print(f"  no-answer {na['answered']}/{na['total']} answered, {na['confident']} with no caveat, "
+          f"mean {na['bytes']} bytes  ceiling {floors.get('no_answer', {})}")
     breaches, raisable = judge(got, floors)
     for line in raisable:
         print("RAISE?", line)
