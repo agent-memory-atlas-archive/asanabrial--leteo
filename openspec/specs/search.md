@@ -405,7 +405,12 @@ before any of it.
        stays empty.
     2. On a **`nearest`** answer it merges the semantic list with the lexical
        one by reciprocal rank fusion, as the two full-text indexes are merged in
-       §2, and with no floor — the lexical stage was answering anyway.
+       §2, with no floor — the lexical stage was answering anyway — and only the
+       best `semantic::MERGE_CAP`, 5, of the semantic list. The lexical answer
+       already stands; everything the cosine brings past its best is padding. A
+       question the store cannot answer reaches `nearest` through one word it
+       happens to share, and without the cap that one word comes back as a full
+       page of unrelated memories.
     3. An answer from any stronger stage is never touched, and does not so much
        as load the model. A search that answers is the search it was.
 
@@ -488,6 +493,18 @@ before any of it.
     words and the lexical stages answer all of them. That is the property being
     checked — the stage does no harm where it has nothing to do — and not
     evidence that it helps.
+
+    **What it does with a question it cannot answer.** `tools/engram-bench`'s
+    corpus carries 24 questions about things no memory in it is about -- parental
+    leave, travel expenses, the coffee machine -- and the harness reports, per
+    engine, how many come back with results, how many of those carry no sentence
+    saying the match is weak, and how big the replies are. With the model, 21 of
+    the 24 come back with something, and none of them without a caveat: a reply
+    that is not empty either reached the lexical stages through one shared word
+    or carries the sentence above. What the cap moved is the size: the mean
+    reply on those questions fell from 10,900 to 5,493 bytes when a `nearest`
+    answer stopped merging the whole semantic list and kept only its best five.
+    `floors.json` holds both as ceilings, 0 and 5,500.
 
     **What it costs**, measured on an Apple M-series machine:
 
