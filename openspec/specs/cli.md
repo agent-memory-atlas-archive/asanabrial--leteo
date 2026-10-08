@@ -347,6 +347,22 @@ duties about what an answer explains.
     one refusal would end the run. Every failure names the command and exits
     non-zero.
 
+18. **`leteo uninstall` removes Leteo, and never a file it did not write.**
+    Without `--yes` it is the preview: nothing is touched, and the report is what
+    would go. With it, every agent it configured, the store, its `-wal`/`-shm`
+    sidecars, `settings.json`, `cloud.json` and the `hooks` reminder clocks go,
+    and the model goes by the rule in §16. `--keep-data` is the one flag: it
+    leaves the data directory alone — the store, the settings, and any
+    `leteo.db.pre-schema-N` copy a migration left
+    ([`store-and-schema.md`](store-and-schema.md) §18) — while the binary and
+    every agent still go. Nothing is matched by a broad prefix: the store and its
+    sidecars are named exactly, so a hand-made `leteo.db.bak-before-migrate` —
+    the name the upgrade notes used to ask for — is kept, and so is a
+    `pre-schema` copy, which is the only way back from a one-way migration. The
+    report's `data_kept` says a kept store was kept on purpose, and `complete()`
+    reads that as finished rather than as a partial removal. A directory that
+    still holds something not named here is kept and named, never emptied.
+
 ## Invariants
 
 - Every documented command exists, and every command is documented. A test in

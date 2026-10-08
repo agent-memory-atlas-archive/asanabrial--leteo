@@ -218,6 +218,69 @@ fn a_data_directory_of_only_leteos_own_files_goes_entirely() {
     assert!(!data.exists(), "nothing of ours may be left behind");
 }
 
+#[test]
+fn a_hand_made_backup_is_not_leteos_to_take() {
+    // The release notes used to ask for exactly this name, and a bare `leteo.db`
+    // prefix matched it: the one file a person was told to make was deleted by
+    // the command that deletes the store. A migration copy went the same way,
+    // and it is the only way back from a one-way upgrade.
+    let temp = TempDir::new().unwrap();
+    let data = temp.path().join("data");
+    std::fs::create_dir_all(&data).unwrap();
+    std::fs::write(data.join("leteo.db"), b"store").unwrap();
+    std::fs::write(data.join("leteo.db-wal"), b"wal").unwrap();
+    std::fs::write(data.join("leteo.db.bak-before-migrate"), b"mine").unwrap();
+    std::fs::write(data.join("leteo.db.pre-schema-21"), b"the way back").unwrap();
+
+    let removed = uninstall_everything_for(&probe_in(temp.path()), &data, fake_exe(temp.path()));
+
+    assert!(!data.join("leteo.db").exists(), "the store goes");
+    assert!(!data.join("leteo.db-wal").exists(), "and its sidecars");
+    assert!(
+        data.join("leteo.db.bak-before-migrate").exists(),
+        "a copy a person made is theirs, whatever it is called: {:?}",
+        removed.remaining
+    );
+    assert!(
+        data.join("leteo.db.pre-schema-21").exists(),
+        "and a migration copy stays, because it is the way back"
+    );
+    assert!(removed.data_removed, "{removed:?}");
+}
+
+#[test]
+fn keep_data_leaves_the_store_where_it_is() {
+    let temp = TempDir::new().unwrap();
+    let data = temp.path().join("data");
+    let mut store =
+        crate::store::Store::open(crate::store::StoreConfig::new(data.join("leteo.db"))).unwrap();
+    store.create_session("s1", "leteo", "C:/repo").unwrap();
+    drop(store);
+
+    let mut options = probe_in(temp.path());
+    options.keep_data = true;
+    let removed = uninstall_everything_for(&options, &data, fake_exe(temp.path()));
+
+    assert!(data.join("leteo.db").exists(), "the store is what was kept");
+    assert!(
+        removed.memories.is_some(),
+        "and it was counted before the choice"
+    );
+    assert!(removed.data_kept, "{removed:?}");
+    assert!(
+        removed.complete(),
+        "a kept store is a success, not a partial removal: {removed:?}"
+    );
+    assert!(
+        removed
+            .remaining
+            .iter()
+            .any(|line| line.contains("--keep-data")),
+        "and it says why: {:?}",
+        removed.remaining
+    );
+}
+
 /// One model file with its real content, hard-linked from the checkout where
 /// the filesystem allows and copied where it does not. Deleting the link leaves
 /// the checkout's file alone. The hash check means a stand-in cannot be junk.

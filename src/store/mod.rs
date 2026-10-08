@@ -670,7 +670,7 @@ impl Store {
             )
         });
         crate::stemming::register(&connection, language)?;
-        prepare(&connection, config.busy_timeout)?;
+        prepare(&connection, config.busy_timeout, &config.database_path)?;
         let left = deadline.saturating_duration_since(std::time::Instant::now());
         connection.busy_timeout(left)?;
         Ok(Self {

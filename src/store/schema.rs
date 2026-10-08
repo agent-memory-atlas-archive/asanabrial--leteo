@@ -196,7 +196,11 @@ pub(super) const LAST_PRE_RELEASE_VERSION: i32 = 17;
 /// locked", which reads as data loss from the outside.
 ///
 /// Every step is idempotent, so waiting and repeating is safe.
-pub(super) fn prepare(connection: &Connection, wait: Duration) -> Result<(), StoreError> {
+pub(super) fn prepare(
+    connection: &Connection,
+    wait: Duration,
+    path: &Path,
+) -> Result<(), StoreError> {
     // The same budget the connection's `busy_timeout` gets, not a second five
     // seconds of its own. Two independent clocks meant a hook told to give up
     // after two seconds took four and a half: this loop spent its own deadline
@@ -206,7 +210,7 @@ pub(super) fn prepare(connection: &Connection, wait: Duration) -> Result<(), Sto
     let deadline = std::time::Instant::now() + wait;
     let mut backoff = Duration::from_millis(10);
     loop {
-        match prepare_once(connection) {
+        match prepare_once(connection, path) {
             Ok(()) => return Ok(()),
             Err(error) if is_busy(&error) && std::time::Instant::now() < deadline => {
                 std::thread::sleep(backoff);
@@ -217,7 +221,7 @@ pub(super) fn prepare(connection: &Connection, wait: Duration) -> Result<(), Sto
     }
 }
 
-fn prepare_once(connection: &Connection) -> Result<(), StoreError> {
+fn prepare_once(connection: &Connection, path: &Path) -> Result<(), StoreError> {
     // The pragmas stay outside: `journal_mode` cannot run inside a transaction,
     // and `foreign_keys` is ignored within one.
     //
@@ -296,10 +300,15 @@ fn prepare_once(connection: &Connection) -> Result<(), StoreError> {
     // stamps a fixture at whatever this build understands.
     //
     // One lookup in `sqlite_master`, which is what the shape test costs.
-    if schema_version(connection)? == SCHEMA_VERSION && table_exists(connection, "prompts")? {
+    let version = schema_version(connection)?;
+    if version == SCHEMA_VERSION && table_exists(connection, "prompts")? {
         refresh_statistics(connection);
         return Ok(());
     }
+    // Before the transaction, because the copy has to be of the store as the
+    // migration found it, and outside it because `VACUUM INTO` cannot run
+    // inside one. See `backup_before_migrate`.
+    backup_before_migrate(connection, path, version)?;
     let transaction = Transaction::new_unchecked(connection, TransactionBehavior::Immediate)?;
     migrate(&transaction)?;
     transaction.commit()?;
@@ -344,6 +353,88 @@ fn refresh_statistics(connection: &Connection) {
 /// Reports which schema version a database is stamped with.
 pub(super) fn schema_version(connection: &Connection) -> Result<i32, rusqlite::Error> {
     connection.query_row("PRAGMA user_version", [], |row| row.get(0))
+}
+
+/// How many pre-migration copies a store keeps.
+///
+/// A migration is one-way: an older binary refuses the store afterwards
+/// (`SchemaTooNew`), and there is no downgrade path. The copy is the only way
+/// back, so it is not optional — but it is not a version history either. Three
+/// cover the upgrades somebody is likely to roll back through; past that the
+/// directory holds more copies than the thing being copied.
+pub(super) const BACKUPS_KEPT: usize = 3;
+
+/// The infix every pre-migration copy carries, before the schema it came from.
+///
+/// The release notes used to ask a person to copy `leteo.db` with its `-wal`
+/// and `-shm` by hand, and this is the name they were told to give nothing.
+/// `uninstall` treats anything carrying it as Leteo's own, and
+/// `doctor` reads it back, so the three agree on one shape.
+pub(super) const BACKUP_INFIX: &str = ".pre-schema-";
+
+/// Copies the store before a migration rewrites its schema, and prunes old
+/// copies.
+///
+/// `prepare` migrates inside one `BEGIN IMMEDIATE`, which is safe against an
+/// interrupted process and useless against an interrupted *decision*: the
+/// migration is one-way, and until now the only copy was one the release notes
+/// told a person to make by hand, `-wal` and `-shm` included. A `VACUUM INTO`
+/// snapshot is one consistent file with the WAL already folded in — the copy
+/// that was being asked for, and one nobody has to remember to make.
+///
+/// Taken only when there is something to lose: a store already at this version
+/// is not migrated, and a brand-new file (stamp 0) has nothing in it. Named for
+/// the schema it came from, so both a person and `doctor` can read which way
+/// back it is.
+fn backup_before_migrate(
+    connection: &Connection,
+    path: &Path,
+    from: i32,
+) -> Result<(), StoreError> {
+    if from <= 0 || from >= SCHEMA_VERSION {
+        return Ok(());
+    }
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "leteo.db".to_owned());
+    let target = path.with_file_name(format!("{name}{BACKUP_INFIX}{from}"));
+    // A copy left by an earlier attempt at this same migration is the same
+    // copy: `VACUUM INTO` refuses an existing destination, and overwriting it
+    // would be no fresher. The first one stands.
+    if target.exists() {
+        return Ok(());
+    }
+    connection.execute("VACUUM INTO ?1", [target.to_string_lossy().as_ref()])?;
+    prune_backups(path, &name);
+    Ok(())
+}
+
+/// Keeps the newest [`BACKUPS_KEPT`] copies, read by the schema each came from.
+///
+/// Best-effort, like the removal of stale nudge files: a copy that cannot be
+/// pruned is a copy kept, which is the safe direction, and never a reason the
+/// migration should not run.
+fn prune_backups(path: &Path, name: &str) {
+    let Some(directory) = path.parent() else {
+        return;
+    };
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return;
+    };
+    let prefix = format!("{name}{BACKUP_INFIX}");
+    let mut copies: Vec<(i32, PathBuf)> = entries
+        .flatten()
+        .filter_map(|entry| {
+            let file = entry.file_name().to_string_lossy().into_owned();
+            let version = file.strip_prefix(&prefix)?.parse::<i32>().ok()?;
+            Some((version, entry.path()))
+        })
+        .collect();
+    copies.sort_by_key(|copy| std::cmp::Reverse(copy.0));
+    for (_, older) in copies.into_iter().skip(BACKUPS_KEPT) {
+        let _ = std::fs::remove_file(older);
+    }
 }
 
 /// Whether the database holds a table by this name.

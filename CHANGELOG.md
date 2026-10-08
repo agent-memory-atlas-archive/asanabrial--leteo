@@ -14,7 +14,20 @@ All notable changes to Leteo are documented in this file.
   already index and the ratchet's floors are held to its stems. Each new
   language has an inflection set and a 1.000 floor (#183).
 
+- **A migration leaves a restorable copy of the store it rewrote.** Opening a
+  store stamped below the current schema now snapshots it first, to
+  `leteo.db.pre-schema-N`, with `VACUUM INTO` — one consistent file with the WAL
+  already folded in, so it is a way back from a one-way upgrade without copying
+  `-wal` and `-shm` by hand. The newest three copies are kept. (#199)
+
 ### Fixed
+
+- **`uninstall` stops deleting copies people made.** It matched the data
+  directory by a bare `leteo.db` prefix, which is every hand-made
+  `leteo.db.bak-before-migrate` and every `pre-schema` copy a migration left —
+  the one file the upgrade notes asked for, deleted by the command that deletes
+  the store. The store and its sidecars are now named exactly, and
+  `uninstall --yes --keep-data` leaves the data directory itself. (#199)
 
 - **A `nearest` answer no longer comes back as a page of unrelated memories.**
   The semantic stage merged its whole list beside a lexical answer that had

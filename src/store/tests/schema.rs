@@ -1703,3 +1703,50 @@ fn adding_calendar_months_happens_only_where_this_test_names() {
         sql_sites.len()
     );
 }
+
+#[test]
+fn a_migration_leaves_a_copy_at_the_schema_it_came_from() {
+    // The one-way door the backup closes. A migration rewrites the schema in
+    // place; afterwards an older binary refuses the store, so the copy taken
+    // before it is the only way back. Rewound one version rather than driven
+    // through the pre-release band, so the migration that runs is a real one and
+    // the copy it must leave is the schema it actually read.
+    let (temp, store) = store();
+    let path = store.database_path().to_path_buf();
+    store
+        .connection
+        .execute_batch(&format!("PRAGMA user_version = {}", SCHEMA_VERSION - 1))
+        .unwrap();
+    drop(store);
+
+    let reopened = Store::open(StoreConfig::new(path.clone())).unwrap();
+
+    let copy = path.with_file_name(format!("leteo.db.pre-schema-{}", SCHEMA_VERSION - 1));
+    assert!(
+        copy.exists(),
+        "a migration must leave the schema it came from beside the store"
+    );
+    // Restorable is the claim, so the test restores it the only way that
+    // matters: open it and read what it says its schema is.
+    let restored = Connection::open(&copy).unwrap();
+    let version: i32 = restored
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(
+        version,
+        SCHEMA_VERSION - 1,
+        "the copy still carries the schema it was taken at"
+    );
+    drop(restored);
+
+    let migrated: i32 = reopened
+        .connection
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(
+        migrated, SCHEMA_VERSION,
+        "and the store beside it moved forward"
+    );
+    drop(reopened);
+    drop(temp);
+}
