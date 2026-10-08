@@ -212,11 +212,42 @@ fn an_unknown_revision_falls_back_to_the_ceiling_and_gets_no_cache_fields() {
     );
 }
 
+/// A refusal the parameters never got past keeps its text and has no structured
+/// half, at every revision.
+///
+/// rmcp refuses a call whose arguments do not match the tool's schema before
+/// any tool runs, as a tool-level error whose only content is the message. It
+/// has no `structuredContent` to repeat, so the reply shape has nothing to
+/// duplicate or replace — and a regression that swapped every text block for a
+/// pointer would leave the caller with the pointer and no message at all.
+#[test]
+fn a_refusal_with_no_structured_half_keeps_its_text() {
+    for revision in ["2024-11-05", "2025-06-18", "2025-11-25", "2026-07-28"] {
+        let reply = call_tool_at(revision, "mem_doctor", json!({"bogus": 1}));
+        assert_eq!(
+            reply["isError"].as_bool(),
+            Some(true),
+            "{revision} should refuse parameters the tool does not take: {reply}"
+        );
+        assert!(
+            reply.get("structuredContent").is_none(),
+            "{revision} answered a schema refusal with a structured half: {reply}"
+        );
+        let text = reply["content"][0]["text"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{revision} dropped the refusal text: {reply}"));
+        assert!(
+            text.contains("unknown field `bogus`"),
+            "{revision} replaced the refusal text with a pointer: {text}"
+        );
+    }
+}
+
 /// One `tools/call`, driven through the real binary over stdio at a revision.
 ///
-/// The text half is a property of the session's negotiated revision, and that
-/// lives in the session rather than in any type a unit test can hold — so the
-/// test that the JSON is not repeated has to speak the protocol.
+/// The reply a session receives is built from the negotiated revision, which
+/// lives in the session rather than in any type a unit test can hold, so the
+/// text half is read where the client reads it: over the protocol.
 fn call_tool_at(
     protocol_version: &str,
     name: &str,
@@ -275,41 +306,65 @@ fn call_tool_at(
     result
 }
 
-/// A structured-output session gets one sentence; a legacy one gets the JSON.
+/// Every revision reads the whole answer as text, `structuredContent` beside it.
 ///
-/// `structuredContent` was introduced at `2025-06-18`, so from there the text
-/// block no longer repeats it; below, and for a version the server does not
-/// know (answered at its `2025-11-25` ceiling), the text is the whole answer.
+/// The protocol says a tool returning structured content SHOULD also return the
+/// serialized JSON in a text block; it says SHOULD, not MUST, so a client that
+/// reads only `content` is conformant and would otherwise render nothing. No
+/// measurement has shown a client that feeds `structuredContent` to its model
+/// and ignores the text, so the JSON is sent to every client rather than kept
+/// from one on a revision guess. The server's ceiling is `2025-11-25`, so a
+/// version it does not know is exercised through that revision.
+///
 /// `mem_doctor` takes no parameters and always answers, so the shape of the
 /// reply is the only thing under test.
 #[test]
-fn a_structured_session_gets_one_sentence_and_a_legacy_one_gets_the_json() {
-    let sentence = "Result in structuredContent.";
-    for revision in ["2025-06-18", "2025-11-25", "2026-07-28"] {
+fn every_revision_reads_the_whole_answer_as_text() {
+    for revision in [
+        "2024-11-05",
+        "2025-03-26",
+        "2025-06-18",
+        "2025-11-25",
+        "2026-07-28",
+        "9999-99-99",
+    ] {
         let reply = call_tool_at(revision, "mem_doctor", json!({}));
-        assert_eq!(
-            reply["content"][0]["text"].as_str(),
-            Some(sentence),
-            "{revision} reads structured output, so the text is a pointer: {reply}"
-        );
-        assert!(
-            reply.get("structuredContent").is_some(),
-            "{revision} still carries the whole answer: {reply}"
-        );
-    }
-
-    for revision in ["2025-03-26", "2024-11-05"] {
-        let reply = call_tool_at(revision, "mem_doctor", json!({}));
-        let text = reply["content"][0]["text"].as_str().expect("a text block");
-        assert_ne!(
-            text, sentence,
-            "{revision} cannot read structured output, so it gets the JSON"
-        );
-        let parsed: serde_json::Value =
-            serde_json::from_str(text).expect("the legacy text is the JSON answer");
+        let text = reply["content"][0]["text"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{revision} answered with no text block: {reply}"));
+        let parsed: serde_json::Value = serde_json::from_str(text)
+            .unwrap_or_else(|error| panic!("{revision} text is not JSON: {error}: {text}"));
         assert_eq!(
             parsed, reply["structuredContent"],
-            "{revision} reads the whole answer as text"
+            "{revision} must read the whole answer as text"
+        );
+    }
+}
+
+/// A refusal carries its code as text at every revision.
+///
+/// The recovery flows — an ambiguous directory offering `available_projects`
+/// and a `recovery_token`, a store that is busy and says so — are read from the
+/// text block by a client that cannot read `structuredContent`, so a refusal
+/// shortened to a pointer sentence would leave them unusable.
+#[test]
+fn a_refusal_carries_its_code_as_text_at_every_revision() {
+    for revision in ["2024-11-05", "2025-06-18", "2025-11-25", "2026-07-28"] {
+        let reply = call_tool_at(revision, "mem_get_observation", json!({"id": 999999}));
+        assert_eq!(
+            reply["isError"].as_bool(),
+            Some(true),
+            "{revision} should refuse an observation that does not exist: {reply}"
+        );
+        let text = reply["content"][0]["text"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{revision} refusal lost its text: {reply}"));
+        let parsed: serde_json::Value = serde_json::from_str(text)
+            .unwrap_or_else(|error| panic!("{revision} refusal text is not JSON: {error}: {text}"));
+        assert_eq!(
+            parsed["error"]["code"].as_str(),
+            Some("observation_not_found"),
+            "{revision} refusal must carry its code as text: {parsed}"
         );
     }
 }

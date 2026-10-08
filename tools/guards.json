@@ -54,24 +54,6 @@
     "new": "} else if false {"
   },
   {
-    "name": "mcp: the text half is sent to a structured client too",
-    "file": "src/mcp/mod.rs",
-    "old": "    if structured_output && result.structured_content.is_some() {",
-    "new": "    if false {"
-  },
-  {
-    "name": "mcp: every revision is treated as structured",
-    "file": "src/mcp/mod.rs",
-    "old": "            .is_some_and(|version| version.as_str() >= STRUCTURED_OUTPUT_REVISION);",
-    "new": "            .is_some_and(|_| true);"
-  },
-  {
-    "name": "mcp: a text-only refusal loses its text",
-    "file": "src/mcp/mod.rs",
-    "old": "    if structured_output && result.structured_content.is_some() {",
-    "new": "    if structured_output {"
-  },
-  {
     "name": "mcp: a preview description promises characters again",
     "file": "src/mcp/tools.rs",
     "old": "The memory comes back as a 400-byte preview marked `content_truncated`; read one in full with mem_get_observation.",

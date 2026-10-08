@@ -5056,13 +5056,12 @@ fn no_tool_answers_with_the_whole_of_what_it_was_given() {
 
     let mut sizes: Vec<(&str, usize)> = Vec::new();
     let mut note = |name: &'static str, value: serde_json::Value| {
-        // What the agent receives, which is the answer once: a session on
-        // `STRUCTURED_OUTPUT_REVISION` or later reads the structured half and
-        // one short sentence, and an older one reads the same JSON as text
-        // with the structured copy ignored. `reply_for_session` is the
-        // production shape, so a change that starts echoing again fails here
-        // rather than in a copy of the reply written for this test.
-        let entero = super::reply_for_session(rmcp::model::CallToolResult::structured(value), true);
+        // The reply as the server sends it, which is the answer twice: the JSON
+        // in `structuredContent` and the same JSON again in the text block, so
+        // a client that reads only text still gets it. Weighed here rather than
+        // in a copy of the reply written for this test, so a surface that
+        // starts echoing what it was given fails on the shape production uses.
+        let entero = rmcp::model::CallToolResult::structured(value);
         sizes.push((
             name,
             serde_json::to_string(&entero).unwrap_or_default().len(),
@@ -5175,49 +5174,6 @@ fn no_tool_answers_with_the_whole_of_what_it_was_given() {
     assert!(
         whole.observation.content.len() > ROOM,
         "mem_get_observation is the one tool that hands a body over whole"
-    );
-}
-
-/// The text half is sent only to a client that cannot read the structured one.
-///
-/// From protocol revision `2025-06-18` a client may read `structuredContent`,
-/// so the JSON stops being repeated as text; below it the text block is the
-/// whole answer. The two revisions are driven over the wire in
-/// `tests/mcp_protocol.rs`; this holds the transformation itself, including
-/// the shape it must not touch — a refusal the parameters never got past,
-/// which carries text and no `structured_content` at all.
-#[test]
-fn the_short_text_replaces_the_duplicate_only_for_a_structured_session() {
-    let value = json!({"count": 3});
-    let structured = rmcp::model::CallToolResult::structured(value.clone());
-
-    let modern = super::reply_for_session(structured.clone(), true);
-    assert_eq!(modern.structured_content.as_ref(), Some(&value));
-    assert_eq!(modern.content.len(), 1);
-    assert!(
-        !serde_json::to_string(&modern.content)
-            .unwrap()
-            .contains("count"),
-        "the structured half must not be repeated in the text block: {:?}",
-        modern.content
-    );
-
-    let legacy = super::reply_for_session(structured.clone(), false);
-    assert_eq!(legacy.structured_content.as_ref(), Some(&value));
-    assert!(
-        serde_json::to_string(&legacy.content)
-            .unwrap()
-            .contains("count"),
-        "a legacy session still reads the whole answer as text"
-    );
-
-    let text_only = rmcp::model::CallToolResult::error(vec![rmcp::model::ContentBlock::text(
-        "unknown field `limit`",
-    )]);
-    let unchanged = super::reply_for_session(text_only.clone(), true);
-    assert_eq!(
-        unchanged.content, text_only.content,
-        "a reply with nothing structured has no duplicate to remove"
     );
 }
 

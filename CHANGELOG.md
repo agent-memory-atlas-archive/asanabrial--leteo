@@ -20,6 +20,23 @@ All notable changes to Leteo are documented in this file.
   already folded in, so it is a way back from a one-way upgrade without copying
   `-wal` and `-shm` by hand. The newest three copies are kept. (#199)
 
+### Changed
+
+- **Every tool reply carries its JSON as text again, at every protocol
+  revision.** 0.3.0 made a reply on `2025-06-18` or later send one sentence —
+  `Result in structuredContent.` — instead of repeating the answer, on the
+  premise that a client negotiating that revision reads the structured half.
+  The protocol says SHOULD, not MUST, and nothing had measured which clients
+  feed `structuredContent` to their model, so a client that reads only
+  `content` got nothing usable and a refusal lost its `error.code` and the
+  `available_projects` and `recovery_token` the ambiguous-directory recovery
+  flow reads. The JSON is now sent beside `structuredContent` at every
+  revision, refusals included, until a client is measured that reads the
+  structured half and not the text. The cost is the duplicate on the wire —
+  about twice the bytes for a reply both blocks carry — and the "half of every
+  reply, paid in an agent's context" the 0.3.0 note claimed was never measured
+  as a token count (#112, #200).
+
 ### Fixed
 
 - **`uninstall` stops deleting copies people made.** It matched the data
