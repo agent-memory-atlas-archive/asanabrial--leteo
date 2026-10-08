@@ -367,9 +367,10 @@ pub(super) const BACKUPS_KEPT: usize = 3;
 /// The infix every pre-migration copy carries, before the schema it came from.
 ///
 /// The release notes used to ask a person to copy `leteo.db` with its `-wal`
-/// and `-shm` by hand, and this is the name they were told to give nothing.
-/// `uninstall` treats anything carrying it as Leteo's own, and
-/// `doctor` reads it back, so the three agree on one shape.
+/// and `-shm` by hand, and this is the name they were told to give it. It is a
+/// person's to read and not a program's to parse: `uninstall` names the store
+/// and its sidecars exactly, so it leaves every copy alone, and nothing reads
+/// the schema back out of the suffix.
 pub(super) const BACKUP_INFIX: &str = ".pre-schema-";
 
 /// Copies the store before a migration rewrites its schema, and prunes old
@@ -384,9 +385,8 @@ pub(super) const BACKUP_INFIX: &str = ".pre-schema-";
 ///
 /// Taken only when there is something to lose: a store already at this version
 /// is not migrated, and a brand-new file (stamp 0) has nothing in it. Named for
-/// the schema it came from, so both a person and `doctor` can read which way
-/// back it is.
-fn backup_before_migrate(
+/// the schema it came from, so a person can read which way back it is.
+pub(super) fn backup_before_migrate(
     connection: &Connection,
     path: &Path,
     from: i32,
@@ -415,7 +415,7 @@ fn backup_before_migrate(
 /// Best-effort, like the removal of stale nudge files: a copy that cannot be
 /// pruned is a copy kept, which is the safe direction, and never a reason the
 /// migration should not run.
-fn prune_backups(path: &Path, name: &str) {
+pub(super) fn prune_backups(path: &Path, name: &str) {
     let Some(directory) = path.parent() else {
         return;
     };

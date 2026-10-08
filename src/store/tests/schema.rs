@@ -1750,3 +1750,111 @@ fn a_migration_leaves_a_copy_at_the_schema_it_came_from() {
     drop(reopened);
     drop(temp);
 }
+
+#[test]
+fn pruning_keeps_the_newest_copies_and_ignores_a_name_it_cannot_read() {
+    // The copy is the only way back from a one-way migration, and the pruning
+    // is what stops the directory holding more copies than the thing being
+    // copied. A bug in the sort would delete the newest — the one a person
+    // reaches for — and nothing else would notice.
+    let temp = TempDir::new().unwrap();
+    let path = temp.path().join("leteo.db");
+    let copy = |from: i32| temp.path().join(format!("leteo.db.pre-schema-{from}"));
+    for from in [18, 19, 20, 21, 22] {
+        std::fs::write(copy(from), b"older").unwrap();
+    }
+    // A name that carries the infix and does not parse, and one that is not a
+    // copy at all: neither is a candidate, so neither is pruned.
+    let unreadable = temp.path().join("leteo.db.pre-schema-x");
+    std::fs::write(&unreadable, b"not a schema").unwrap();
+    let stranger = temp.path().join("leteo.db.bak-before-migrate");
+    std::fs::write(&stranger, b"mine").unwrap();
+
+    prune_backups(&path, "leteo.db");
+
+    for from in [20, 21, 22] {
+        assert!(
+            copy(from).exists(),
+            "the newest {BACKUPS_KEPT} copies stay: {from} went, and it should not have"
+        );
+    }
+    for from in [18, 19] {
+        assert!(
+            !copy(from).exists(),
+            "a copy past the newest {BACKUPS_KEPT} goes: {from} stayed, and it should not"
+        );
+    }
+    assert!(
+        unreadable.exists(),
+        "a suffix that is not a schema is not a copy, so it is left alone"
+    );
+    assert!(
+        stranger.exists(),
+        "and a file that is not named like a copy is not pruned"
+    );
+}
+
+#[test]
+fn a_copy_left_by_an_earlier_attempt_stands() {
+    // `VACUUM INTO` refuses an existing destination, and overwriting it would
+    // be no fresher than the copy already there. The first one stands, and the
+    // early return is what makes the second open of a half-migrated store work
+    // rather than fail.
+    let temp = TempDir::new().unwrap();
+    let path = temp.path().join("leteo.db");
+    let connection = Connection::open(&path).unwrap();
+    let from = SCHEMA_VERSION - 1;
+    let target = temp.path().join(format!("leteo.db.pre-schema-{from}"));
+    std::fs::write(&target, b"an earlier attempt").unwrap();
+
+    backup_before_migrate(&connection, &path, from).unwrap();
+
+    assert_eq!(
+        std::fs::read(&target).unwrap(),
+        b"an earlier attempt",
+        "the copy already there is the same copy, and stands"
+    );
+}
+
+#[test]
+fn a_copy_that_cannot_be_taken_stops_the_open() {
+    // A backup that fails is not a migration that carries on without one: an
+    // unwritable destination has to abort the open, because the alternative is
+    // a one-way migration with no way back and no word about it.
+    let temp = TempDir::new().unwrap();
+    let connection = Connection::open(temp.path().join("leteo.db")).unwrap();
+    // The copy's parent is a file, so `VACUUM INTO` cannot write beside it.
+    let blocker = temp.path().join("blocker");
+    std::fs::write(&blocker, b"file").unwrap();
+
+    let outcome = backup_before_migrate(&connection, &blocker.join("leteo.db"), SCHEMA_VERSION - 1);
+
+    assert!(
+        outcome.is_err(),
+        "a copy that cannot be taken has to be an error, not silence: {outcome:?}"
+    );
+}
+
+#[test]
+fn there_is_no_copy_when_there_is_nothing_to_lose() {
+    // A brand-new file has nothing in it and a store already at this version is
+    // not migrated, so neither is copied — a copy of either would be a file
+    // named for a migration that did not happen.
+    let temp = TempDir::new().unwrap();
+    let path = temp.path().join("leteo.db");
+    let connection = Connection::open(&path).unwrap();
+
+    for from in [0, SCHEMA_VERSION] {
+        backup_before_migrate(&connection, &path, from).unwrap();
+    }
+
+    for from in [0, SCHEMA_VERSION] {
+        assert!(
+            !temp
+                .path()
+                .join(format!("leteo.db.pre-schema-{from}"))
+                .exists(),
+            "nothing is copied at stamp {from}"
+        );
+    }
+}

@@ -630,6 +630,19 @@ mod tests {
         use clap::CommandFactory;
         Cli::command().debug_assert();
     }
+
+    #[test]
+    fn uninstall_takes_the_yes_and_the_keep_data_flags() {
+        // The two flags `uninstall` carries: `--yes` carries the removal out,
+        // and `--keep-data` leaves the store and its migration copies where
+        // they are. Both reach `SetupOptions` in `cli/mod.rs`.
+        let parsed = parse(&["uninstall", "--yes", "--keep-data"]).unwrap();
+        let Command::Uninstall { yes, keep_data } = parsed.command else {
+            panic!("expected the uninstall command");
+        };
+        assert!(yes, "the flag that carries the removal out");
+        assert!(keep_data, "and the one that keeps the store out of it");
+    }
 }
 
 #[cfg(test)]
