@@ -222,7 +222,12 @@ jobs:
         # spelled is decided per operating system rather than per architecture.
         os: [ubuntu-latest, ubuntu-22.04-arm, macos-latest, windows-latest]
     steps:
+      # The full history, because `repository_guards.rs` reads a commit range to
+      # refuse a change that edits the comparison corpus together with the search
+      # it measures; a shallow checkout cannot name the base that range needs.
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:

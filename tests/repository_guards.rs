@@ -1451,3 +1451,103 @@ fn strip_list_marker(line: &str) -> Option<&str> {
     let rest = line.strip_prefix('-')?;
     (rest.is_empty() || rest.starts_with(char::is_whitespace)).then(|| rest.trim_start())
 }
+
+/// A commit does not change the comparison corpus together with the search it
+/// scores.
+///
+/// `tools/engram-bench/comparison_corpus.py` is the held-out corpus the Engram
+/// comparison is measured on, and `ratchet.py` gates on a different one
+/// (`corpus.py`) so the ratchet cannot tune against it. The hold-out only means
+/// something if a ranking change cannot also move the queries that are supposed
+/// to measure it: editing both in one commit is how a benchmark becomes its own
+/// tuning set, and nothing else in the repository would say so.
+///
+/// Read from git, because "a commit" is the unit the rule names and a working
+/// tree cannot show one. The base is the branch the change targets when CI names
+/// it, and `origin/main` otherwise; when none resolves — a shallow clone, a
+/// checkout with no remote — the guard says so and passes rather than failing a
+/// build for the wrong reason. `ci.yml`'s `unit-tests` checkout fetches the full
+/// history so the base is there.
+#[test]
+fn a_commit_does_not_change_the_comparison_corpus_with_the_search_it_scores() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let corpus = "tools/engram-bench/comparison_corpus.py";
+    let Some(base) = comparison_base(root) else {
+        eprintln!("comparison-corpus guard: no base commit to diff against; nothing to check");
+        return;
+    };
+    let range = format!("{base}..HEAD");
+    let Some(log) = git(root, &["rev-list", &range]) else {
+        eprintln!(
+            "comparison-corpus guard: `git rev-list {range}` did not answer; nothing to check"
+        );
+        return;
+    };
+
+    let mut offenders = Vec::new();
+    for commit in log.split_whitespace() {
+        let files =
+            git(root, &["show", "--pretty=format:", "--name-only", commit]).unwrap_or_default();
+        let mut touches_corpus = false;
+        let mut touches_search = false;
+        for file in files.lines().map(str::trim).filter(|file| !file.is_empty()) {
+            touches_corpus |= file == corpus;
+            touches_search |=
+                file.starts_with("src/store/search") || file.starts_with("src/store/semantic");
+        }
+        if touches_corpus && touches_search {
+            offenders.push(commit.to_owned());
+        }
+    }
+
+    assert!(
+        offenders.is_empty(),
+        "these commits change the comparison corpus and the search it measures \
+         together: {offenders:?}. The corpus is held out from the ratchet on \
+         purpose; edit `comparison_corpus.py` in a commit of its own so a ranking \
+         change cannot be tuned against the corpus that measures it."
+    );
+}
+
+/// The commit a change is measured against, or `None` when git cannot name one.
+///
+/// CI names the pull request's target branch in `GITHUB_BASE_REF`; a push or a
+/// dispatch does not, and `origin/main` is the base that workflow merges into.
+/// The last resort is the parent of `HEAD`, which is what a repository with no
+/// remote can still answer.
+fn comparison_base(root: &Path) -> Option<String> {
+    let mut candidates = Vec::new();
+    if let Ok(base) = std::env::var("GITHUB_BASE_REF")
+        && !base.trim().is_empty()
+    {
+        candidates.push(format!("origin/{}", base.trim()));
+    }
+    candidates.extend([
+        "origin/main".to_owned(),
+        "main".to_owned(),
+        "HEAD^".to_owned(),
+    ]);
+    for candidate in candidates {
+        if let Some(base) = git(root, &["merge-base", &candidate, "HEAD"]) {
+            let base = base.trim();
+            if !base.is_empty() {
+                return Some(base.to_owned());
+            }
+        }
+    }
+    None
+}
+
+/// One `git` invocation in `root`, or `None` when git could not answer.
+fn git(root: &Path, args: &[&str]) -> Option<String> {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(args)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8(output.stdout).ok()
+}
