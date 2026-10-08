@@ -173,15 +173,21 @@ def no_answer_table(results):
     ]
     for engine in ("engram", "leteo"):
         rows = results.get("no_answer_" + engine, [])
+        # No rows at all is not a zero: the run has no measurement of this
+        # engine's no-answer behaviour, and a `0.00` there reads as a measured
+        # failure. The dash says the number was not taken.
+        if not rows:
+            lines.append(f"| {engine} | — | — | — | — |")
+            continue
         answered = [r for r in rows if r["n"]]
         confident = sum(1 for r in answered if not r["caveat"])
-        precision = (len(rows) - confident) / len(rows) if rows else 0
-        mean_bytes = statistics.mean(r["bytes"] for r in answered) if answered else 0
+        precision = (len(rows) - confident) / len(rows)
+        bytes_cell = f"{statistics.mean(r['bytes'] for r in answered):.0f}" if answered else "—"
         lines.append(
             f"| {engine} | {len(answered)} of {len(rows)} "
             f"| {confident} "
             f"| {precision:.2f} "
-            f"| {mean_bytes:.0f} |"
+            f"| {bytes_cell} |"
         )
     return "\n".join(lines)
 
