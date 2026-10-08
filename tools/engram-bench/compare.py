@@ -159,6 +159,29 @@ def parse_any(stdout):
     return out
 
 
+def no_answer_table(results):
+    """What each engine does with a question its store cannot answer.
+
+    `with no caveat` is the number that matters: an empty reply and one that
+    carries a sentence saying the match is weak both tell the agent not to rely
+    on it, and only a reply that does neither is a confident wrong answer.
+    """
+    lines = [
+        "| engine | answered | with no caveat | mean reply bytes |",
+        "|---|---:|---:|---:|",
+    ]
+    for engine in ("engram", "leteo"):
+        rows = results.get("no_answer_" + engine, [])
+        answered = [r for r in rows if r["n"]]
+        mean_bytes = statistics.mean(r["bytes"] for r in answered) if answered else 0
+        lines.append(
+            f"| {engine} | {len(answered)} of {len(rows)} "
+            f"| {sum(1 for r in answered if not r['caveat'])} "
+            f"| {mean_bytes:.0f} |"
+        )
+    return "\n".join(lines)
+
+
 def leads_sentence(results, any_mrr):
     kinds = sorted({r["kind"] for r in results["engram"]})
     default = [
@@ -316,6 +339,20 @@ def main():
         out.append("### Warm-search latency and reply size")
         out.append("")
         out.append(timing_block(results))
+        out.append("")
+        out.append("### Questions the corpus cannot answer")
+        out.append("")
+        out.append(
+            textwrap.fill(
+                "A stage with nothing to give should say so: a confident list of unrelated "
+                "memories is worse than an empty answer, because the agent believes what memory "
+                "returns. \"with no caveat\" counts the replies that come back with results and "
+                "no sentence saying the match is weak.",
+                width=88,
+            )
+        )
+        out.append("")
+        out.append(no_answer_table(results))
         out.append("")
         out.append("### Engram with its opt-in `match_mode: \"any\"`")
         out.append("")
