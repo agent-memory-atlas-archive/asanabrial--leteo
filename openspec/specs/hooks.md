@@ -425,17 +425,23 @@ deadline, so every promise here is a promise about time as much as content.
 22. **A capture a busy store refused is kept beside the database and replayed
    by the next open.** One JSON file per capture, under
    `<database parent>/hooks/spool/` — the same `hooks/` the reminder state uses
-   — written to a temporary name and renamed into place, so a drain running at
-   the same time never reads half a turn. The entry records the event, an ISO
-   timestamp, and the `PassiveCapture` fields; the content is passed through
+   — written to a temporary name that ends `.tmp` and renamed into place, so a
+   drain running at the same time never reads half a turn and never mistakes
+   the in-flight temporary for an entry. The entry records the event, an ISO
+   timestamp, the `PassiveCapture` fields and the session's directory; the
+   content is passed through
    `normalize::strip_private` before it reaches the disk, so the `<private>`
    promise holds for a file that outlives the process that wrote it
    ([`project.md`](../project.md) §3).
 
    A drain claims an entry by renaming it to a `.claimed-<pid>` name, which is
    atomic, so two drainers take different entries rather than both replaying
-   one. It replays oldest first through `Store::passive_capture`; on success the
-   entry goes, on the first busy error the drain stops and puts the entry back,
+   one. It replays oldest first, and before `Store::passive_capture` it ensures
+   the session from the entry's own session id, project and directory — the
+   busy-open path spools before `ensure_session` could run, so an entry can name
+   a session no store ever created, and replaying it without that would fail
+   `SessionNotFound` and delete the subagent's only copy. On success the entry
+   goes, on the first busy error the drain stops and puts the entry back,
    and any other error counts the entry dropped and removes it — a retry cannot
    mend it, and keeping it would make `doctor` report a spool that can never
    drain. The drain is bounded by what is left of the caller's budget, so it
@@ -485,6 +491,8 @@ deadline, so every promise here is a promise about time as much as content.
   and retention, and the drain. Held by
   `a_capture_that_meets_a_held_store_is_kept_once_it_is_free`,
   `a_spooled_capture_drained_twice_is_stored_once`,
+  `a_spooled_capture_without_a_session_is_stored_when_drained`,
+  `a_temporary_file_is_not_a_spool_entry`,
   `two_drainers_claim_each_entry_once`,
   `a_drain_with_no_budget_left_writes_nothing`,
   `the_spool_drops_the_oldest_past_its_cap`,

@@ -1010,6 +1010,27 @@ fn a_capture_hook_spools_over_a_store_it_cannot_open() {
     assert_eq!(entries, 1, "the capture was kept beside the store");
 
     holder.execute_batch("ROLLBACK").expect("release the lock");
+
+    // The next open replays it. `doctor --repair` is one of the three drain
+    // points, and the session the busy open never created is ensured from the
+    // entry before the replay, so the learning lands rather than being deleted
+    // as a `SessionNotFound` the retry cannot mend.
+    leteo(&database)
+        .arg("doctor")
+        .arg("--repair")
+        .assert()
+        .success();
+    let found = run_json(
+        leteo(&database)
+            .arg("search")
+            .arg("survive an open")
+            .arg("--all-projects"),
+    );
+    assert_eq!(
+        found.as_array().expect("search results").len(),
+        1,
+        "the learning is found after the lock is released: {found}"
+    );
 }
 
 /// `leteo search` says why it came back empty, where a person will see it.

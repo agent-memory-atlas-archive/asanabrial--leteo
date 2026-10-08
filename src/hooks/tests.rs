@@ -2416,7 +2416,7 @@ fn a_spooled_capture_drained_twice_is_stored_once() {
         source: "subagent-stop".to_owned(),
     };
 
-    spool::spool(&data_dir, "SubagentStop", &capture).unwrap();
+    spool::spool(&data_dir, "SubagentStop", &capture, "").unwrap();
     let deadline = Instant::now() + Duration::from_secs(5);
     let first = spool::drain(&mut store, deadline);
     assert_eq!(first.stored, 1, "{first:?}");
@@ -2432,7 +2432,7 @@ fn a_spooled_capture_drained_twice_is_stored_once() {
         )
         .unwrap();
 
-    spool::spool(&data_dir, "SubagentStop", &capture).unwrap();
+    spool::spool(&data_dir, "SubagentStop", &capture, "").unwrap();
     let second = spool::drain(&mut store, deadline);
     assert_eq!(
         second.stored, 0,
@@ -2470,7 +2470,7 @@ fn two_drainers_claim_each_entry_once() {
             ),
             source: "subagent-stop".to_owned(),
         };
-        spool::spool(&data_dir, "SubagentStop", &capture).unwrap();
+        spool::spool(&data_dir, "SubagentStop", &capture, "").unwrap();
     }
     drop(store);
 
@@ -2525,7 +2525,7 @@ fn a_drain_with_no_budget_left_writes_nothing() {
             .to_owned(),
         source: "subagent-stop".to_owned(),
     };
-    spool::spool(&data_dir, "SubagentStop", &capture).unwrap();
+    spool::spool(&data_dir, "SubagentStop", &capture, "").unwrap();
 
     let report = spool::drain(&mut store, Instant::now() - Duration::from_secs(1));
     assert_eq!(
@@ -2564,7 +2564,7 @@ fn the_spool_drops_the_oldest_past_its_cap() {
     };
 
     // One entry first, so the one the cap has to drop is known by name.
-    spool::spool(&data_dir, "SubagentStop", &capture(0)).unwrap();
+    spool::spool(&data_dir, "SubagentStop", &capture(0), "").unwrap();
     let oldest = std::fs::read_dir(&directory)
         .unwrap()
         .flatten()
@@ -2573,7 +2573,7 @@ fn the_spool_drops_the_oldest_past_its_cap() {
         .expect("the first entry is on disk");
 
     for index in 1..=spool::SPOOL_CAP {
-        spool::spool(&data_dir, "SubagentStop", &capture(index)).unwrap();
+        spool::spool(&data_dir, "SubagentStop", &capture(index), "").unwrap();
     }
     assert_eq!(
         spool::pending(&directory).entries,
@@ -2604,6 +2604,7 @@ fn the_spool_drops_entries_past_their_retention() {
         "at": "2020-01-01T00:00:00Z",
         "session_id": "agent-session",
         "project": "hook-project",
+        "directory": "",
         "content": "## Key Learnings:\n1. An old learning retention has to drop",
         "source": "subagent-stop",
     })
@@ -2627,6 +2628,7 @@ fn the_spool_drops_entries_past_their_retention() {
                 .to_owned(),
             source: "subagent-stop".to_owned(),
         },
+        "",
     )
     .unwrap();
     assert!(!path.exists(), "the stale entry is gone");
@@ -2658,6 +2660,7 @@ fn doctor_counts_the_spool() {
                 .to_owned(),
             source: "subagent-stop".to_owned(),
         },
+        "",
     )
     .unwrap();
 
@@ -2685,6 +2688,72 @@ fn doctor_counts_the_spool() {
         std::fs::remove_file(entry.path()).unwrap();
     }
     assert!(check(&store).ok, "an empty spool is the ordinary state");
+}
+
+/// A spooled capture whose session never existed is still stored when drained.
+///
+/// The busy-open path spools before `ensure_session` could run, so the entry can
+/// name a session no store ever created. The drain ensures it from the entry's
+/// own session and project, exactly as a live `subagent-stop` does, rather than
+/// letting `passive_capture` fail `SessionNotFound` and delete the subagent's
+/// only copy — which is the loss the spool exists to prevent.
+#[test]
+fn a_spooled_capture_without_a_session_is_stored_when_drained() {
+    let (_temp, mut store) = store();
+    let data_dir = store.data_dir().to_path_buf();
+    let capture = PassiveCapture {
+        session_id: "never-created".to_owned(),
+        project: "hook-project".to_owned(),
+        content: "## Key Learnings:
+1. A learning whose session was never created before the busy open"
+            .to_owned(),
+        source: "subagent-stop".to_owned(),
+    };
+    spool::spool(&data_dir, "SubagentStop", &capture, "C:/repo").unwrap();
+
+    let report = spool::drain(&mut store, Instant::now() + Duration::from_secs(5));
+    assert_eq!(report.stored, 1, "the capture is stored: {report:?}");
+    assert_eq!(report.dropped, 0, "and not dropped: {report:?}");
+    assert_eq!(
+        store
+            .recent_observations(Some("hook-project"), Some(10), true)
+            .unwrap()
+            .len(),
+        1,
+        "the learning reached the store"
+    );
+    assert!(
+        store.get_session("never-created").is_ok(),
+        "and the session it named was ensured"
+    );
+}
+
+/// A temporary file is not an entry, so a concurrent drain never claims one.
+///
+/// `spool` writes to a `.tmp` name and renames it into place. If the temporary
+/// ended in `.json`, `entries` would enumerate it and a concurrent drain could
+/// claim a half-written turn, drop it as litter, and leave the writer's rename
+/// failing — the capture lost, which is the atomicity the rename exists to buy.
+#[test]
+fn a_temporary_file_is_not_a_spool_entry() {
+    let (_temp, mut store) = store();
+    let data_dir = store.data_dir().to_path_buf();
+    let directory = spool::directory(&data_dir);
+    std::fs::create_dir_all(&directory).unwrap();
+    assert!(
+        !spool::temporary_name("2026-01-01-0-0.json").ends_with(".json"),
+        "the temporary is not a name the drain enumerates"
+    );
+    let temporary = directory.join("0000000000000-0000000000-000000.json.tmp");
+    std::fs::write(&temporary, b"{").unwrap();
+
+    assert_eq!(
+        spool::pending(&directory).entries,
+        0,
+        "an in-flight temporary is not counted"
+    );
+    let report = spool::drain(&mut store, Instant::now() + Duration::from_secs(5));
+    assert_eq!(report.claimed, 0, "and never claimed: {report:?}");
 }
 
 /// A payload that parsed and said nothing is not the same as no payload.

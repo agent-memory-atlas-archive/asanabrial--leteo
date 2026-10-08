@@ -334,7 +334,7 @@ pub fn read_input(mut reader: impl Read) -> Result<HookInput> {
 /// fails busy can still be spooled — and that path has no session to override
 /// the project from, because there is no store to ask. The project and session
 /// are therefore the payload's own; a replay normalises both again.
-pub(crate) fn pending_capture(input: &HookInput) -> Option<PassiveCapture> {
+pub(crate) fn pending_capture(input: &HookInput) -> Option<(PassiveCapture, String)> {
     if input.output().trim().is_empty() {
         return None;
     }
@@ -342,7 +342,10 @@ pub(crate) fn pending_capture(input: &HookInput) -> Option<PassiveCapture> {
     let detection = detect_project(&directory);
     let project = resolve_project(input, &detection);
     let session_id = resolve_session_id(input, &project);
-    Some(capture_of(input, &session_id, &project))
+    Some((
+        capture_of(input, &session_id, &project),
+        directory.to_string_lossy().into_owned(),
+    ))
 }
 
 /// The capture a payload stores, under the session and project already resolved.
@@ -683,8 +686,13 @@ fn run_event(store: &mut Store, event: HookEvent, input: &HookInput) -> Result<H
                         // too rather than claiming the whole text is gone.
                         let error = failure.error;
                         let spooled = error.is_busy()
-                            && spool::spool(store.data_dir(), event.hook_event_name(), &capture)
-                                .is_ok();
+                            && spool::spool(
+                                store.data_dir(),
+                                event.hook_event_name(),
+                                &capture,
+                                &directory.to_string_lossy(),
+                            )
+                            .is_ok();
                         lost_capture = Some(error.capture_lost(failure.partial.saved, spooled));
                         outcome.warnings.push(said("passive capture", &error));
                     }

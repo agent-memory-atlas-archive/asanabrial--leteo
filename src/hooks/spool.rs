@@ -67,6 +67,9 @@ struct Entry {
     at: String,
     session_id: String,
     project: String,
+    /// The directory the session belongs to, so a replay can ensure the session
+    /// the busy-open path never got to create.
+    directory: String,
     content: String,
     source: String,
 }
@@ -112,7 +115,13 @@ pub struct DrainReport {
 ///
 /// The entry is written to a temporary file in the same directory and renamed
 /// into place, so a drain running at the same time never sees half of a turn.
-pub(crate) fn spool(data_dir: &Path, event: &str, capture: &PassiveCapture) -> std::io::Result<()> {
+/// See [`temporary_name`] for why the temporary is not a name the drain reads.
+pub(crate) fn spool(
+    data_dir: &Path,
+    event: &str,
+    capture: &PassiveCapture,
+    session_directory: &str,
+) -> std::io::Result<()> {
     let dir = directory(data_dir);
     fs::create_dir_all(&dir)?;
     sweep(&dir, now_millis());
@@ -122,17 +131,28 @@ pub(crate) fn spool(data_dir: &Path, event: &str, capture: &PassiveCapture) -> s
         at: chrono::Utc::now().to_rfc3339(),
         session_id: capture.session_id.clone(),
         project: capture.project.clone(),
+        directory: session_directory.to_owned(),
         content: normalize::strip_private(&capture.content),
         source: capture.source.clone(),
     };
     let body = serde_json::to_vec(&entry).map_err(std::io::Error::other)?;
     let name = entry_name(now_millis());
-    let temporary = dir.join(format!(".tmp-{name}"));
+    let temporary = dir.join(temporary_name(&name));
     fs::write(&temporary, &body)?;
     fs::rename(&temporary, dir.join(&name))?;
 
     enforce_cap(&dir);
     Ok(())
+}
+
+/// The name `spool` writes before renaming it into place.
+///
+/// It ends `.tmp` and not `.json`, because [`entries`] treats every `.json` name
+/// as a capture: a temporary that ended in `.json` would be enumerated by a
+/// concurrent drain, claimed, and read before the writer had finished it, which
+/// is the half-a-turn read the rename exists to prevent.
+pub(super) fn temporary_name(name: &str) -> String {
+    format!("{name}.tmp")
 }
 
 /// Replays what a busy store left behind, oldest first.
@@ -171,6 +191,23 @@ pub(crate) fn drain(store: &mut Store, deadline: Instant) -> DrainReport {
                 continue;
             }
         };
+        // The capture can name a session that does not exist yet: the busy-open
+        // path spools before `ensure_session` could run, and a fresh store has
+        // no session row at all. Ensure it from the entry, exactly as a live
+        // `subagent-stop` does, so the replay stores the learnings instead of
+        // failing `SessionNotFound` and deleting the subagent's only copy.
+        match store.create_session(&entry.session_id, &entry.project, &entry.directory) {
+            Ok(_) => {}
+            Err(error) if error.is_busy() => {
+                let _ = fs::rename(&claimed, &path);
+                break;
+            }
+            Err(_) => {
+                let _ = fs::remove_file(&claimed);
+                report.dropped += 1;
+                continue;
+            }
+        }
         match store.passive_capture(entry.capture()) {
             Ok(result) => {
                 report.stored += result.saved;
