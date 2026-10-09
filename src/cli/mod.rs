@@ -233,6 +233,7 @@ pub async fn run(cli: Cli) -> Result<()> {
             }
             return Ok(());
         }
+        #[cfg(feature = "cloud-server")]
         Command::Cloud {
             command: CloudCommand::Serve,
         } => {
@@ -265,6 +266,7 @@ pub async fn run(cli: Cli) -> Result<()> {
             print_json(&remote.health().await?)?;
             return Ok(());
         }
+        #[cfg(feature = "cloud-server")]
         Command::Cloud {
             command: CloudCommand::Admin { command },
         } => {
@@ -1257,6 +1259,7 @@ async fn run_conflicts(store: &mut Store, command: ConflictsCommand) -> Result<(
 ///
 /// These commands operate on PostgreSQL directly, like `cloud serve`, so they
 /// read the same environment configuration and never touch the local store.
+#[cfg(feature = "cloud-server")]
 async fn run_cloud_admin(command: &CloudAdminCommand) -> Result<()> {
     let config = crate::cloud::CloudConfig::from_env();
     if config.database_url.trim().is_empty() {
@@ -1367,6 +1370,7 @@ async fn run_cloud_admin(command: &CloudAdminCommand) -> Result<()> {
 }
 
 /// Accepts a numeric principal identifier or a display name.
+#[cfg(feature = "cloud-server")]
 async fn resolve_principal(store: &crate::cloud::CloudStore, principal: &str) -> Result<i64> {
     if let Ok(id) = principal.trim().parse::<i64>() {
         return Ok(id);

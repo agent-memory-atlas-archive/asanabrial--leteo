@@ -83,6 +83,33 @@ pub struct ImportedChunk {
     pub data: ChunkData,
 }
 
+/// One mutation as it travels to a peer's mutation endpoint.
+///
+/// This lives with the wire format rather than with the PostgreSQL store that
+/// receives it: the client builds one to push and the server reads one back, so
+/// a copy on either side of the `cloud-server` feature would be the second
+/// definition this type exists to prevent.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MutationEntry {
+    pub project: String,
+    pub entity: String,
+    pub entity_key: String,
+    pub op: String,
+    pub payload: Value,
+}
+
+/// A mutation read back from a peer, carrying the sequence it was stored under.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct StoredMutation {
+    pub seq: i64,
+    pub project: String,
+    pub entity: String,
+    pub entity_key: String,
+    pub op: String,
+    pub payload: Value,
+    pub occurred_at: String,
+}
+
 fn null_to_default<'de, D, T>(deserializer: D) -> std::result::Result<T, D::Error>
 where
     D: serde::Deserializer<'de>,

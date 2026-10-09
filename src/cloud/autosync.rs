@@ -7,11 +7,11 @@ use thiserror::Error;
 use crate::{
     memory::model::SyncMutation,
     store::{Store, StoreError},
+    sync::MutationEntry,
 };
 
 use super::{
     MAX_MUTATION_BATCH_SIZE,
-    cloudstore::MutationEntry,
     remote::{HttpStatusError, RemoteClient, RemoteError},
 };
 

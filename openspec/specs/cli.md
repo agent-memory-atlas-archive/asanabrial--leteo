@@ -380,6 +380,16 @@ duties about what an answer explains.
     reads that as finished rather than as a partial removal. A directory that
     still holds something not named here is kept and named, never emptied.
 
+19. **The cloud client is in every build; the server half is behind a feature.**
+    `leteo cloud health`, `sync`, `config`, `status` and `enroll` are part of
+    the default binary, and `leteo serve` — the background replication loop —
+    stays a top-level command. The two that host rather than talk to a peer —
+    `leteo cloud serve` and `leteo cloud admin` — are compiled only under the
+    off-by-default `cloud-server` cargo feature, which is what keeps PostgreSQL
+    and the HTTP framework out of an ordinary installation. The container image
+    in `docker/Dockerfile` is the build that turns it on. See
+    [`replication.md`](replication.md).
+
 ## Invariants
 
 - Every documented command exists, and every command is documented. A test in

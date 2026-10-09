@@ -416,6 +416,7 @@ pub enum ConflictsCommand {
 
 #[derive(Debug, Subcommand)]
 pub enum CloudCommand {
+    #[cfg(feature = "cloud-server")]
     Serve,
     Health {
         #[arg(long, env = "LETEO_CLOUD_SERVER")]
@@ -447,12 +448,14 @@ pub enum CloudCommand {
         remove: bool,
     },
     /// Server-side administration against the cloud PostgreSQL database.
+    #[cfg(feature = "cloud-server")]
     Admin {
         #[command(subcommand)]
         command: CloudAdminCommand,
     },
 }
 
+#[cfg(feature = "cloud-server")]
 #[derive(Debug, Subcommand)]
 pub enum CloudAdminCommand {
     /// Create the first administrator and print its managed token once.

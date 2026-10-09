@@ -44,7 +44,9 @@ src/
   cli/         the command-line surface
   recall/…     recall.rs, the opening context an agent is handed
   semantic/    the model the semantic search stage reads: where it is, the hashes it must have, and how it is installed
-  sync/, cloud/  optional replication to a PostgreSQL peer
+  sync/, cloud/  optional replication to a PostgreSQL peer; the client is in
+                 every build and the server half is behind the off-by-default
+                 `cloud-server` cargo feature
   setup/, tui/   installing into an agent, and the interactive configuration
 migrations/    the SQL, embedded at build time; never edited once released
 assets/model/  the embedding model a release packs beside the binary (tools/semantic/ rebuilds it)

@@ -9,8 +9,8 @@ use thiserror::Error;
 use crate::{
     memory::model::SyncMutation,
     sync::{
-        ChunkData, Manifest, ManifestChunk, canonicalize_for_project, chunk_id, decode_chunk,
-        encode_chunk,
+        ChunkData, Manifest, ManifestChunk, MutationEntry, StoredMutation,
+        canonicalize_for_project, chunk_id, decode_chunk, encode_chunk,
     },
 };
 
@@ -31,26 +31,6 @@ pub enum CloudStoreError {
     ChunkNotFound,
     #[error("cloud chunk id already exists with different data")]
     ChunkConflict,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct MutationEntry {
-    pub project: String,
-    pub entity: String,
-    pub entity_key: String,
-    pub op: String,
-    pub payload: Value,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct StoredMutation {
-    pub seq: i64,
-    pub project: String,
-    pub entity: String,
-    pub entity_key: String,
-    pub op: String,
-    pub payload: Value,
-    pub occurred_at: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

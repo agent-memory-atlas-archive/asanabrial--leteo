@@ -297,7 +297,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
-      - run: cargo test --locked -- --ignored
+      - run: cargo test --locked --features cloud-server -- --ignored
         env:
           TEST_DATABASE_URL: postgres://postgres:leteo-test@127.0.0.1:5432/leteo_test
 

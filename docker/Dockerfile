@@ -24,7 +24,10 @@ COPY src ./src
 # something this repository's history can show, and CI now builds this image on
 # every pull request.
 COPY migrations ./migrations
-RUN cargo build --release --locked --bin leteo
+# The cloud server lives behind `cloud-server`, off by default so an ordinary
+# installation compiles no PostgreSQL and no HTTP framework. This image is the
+# one build that turns it on.
+RUN cargo build --release --locked --features cloud-server --bin leteo
 
 FROM debian:bookworm-slim AS runtime
 
