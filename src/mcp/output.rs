@@ -597,6 +597,9 @@ pub(super) struct DoctorOutput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) project_stats: Option<ProjectStatsOutput>,
     pub(super) healthy: bool,
+    /// What this build is: its version, the commit it was built from, and the
+    /// schema it supports, as `leteo --version` prints it.
+    pub(super) version: String,
     /// What the store is stamped at, and what this build reads. Carried so an
     /// agent can say which of the two is behind when a binary refuses a store.
     pub(super) schema_version: i32,
@@ -646,6 +649,7 @@ impl DoctorOutput {
             check,
             project_stats: project_stats.map(Into::into),
             healthy: report.healthy,
+            version: report.version,
             schema_version: report.schema_version,
             schema_supported: report.schema_supported,
             checks: report.checks.into_iter().map(Into::into).collect(),

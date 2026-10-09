@@ -337,7 +337,7 @@ fn initialize_metadata_identifies_leteo_package() {
 
     assert_eq!(info.server_info.name, "leteo");
     assert_eq!(info.server_info.title.as_deref(), Some("Leteo"));
-    assert_eq!(info.server_info.version, env!("CARGO_PKG_VERSION"));
+    assert_eq!(info.server_info.version, crate::build_info::version());
     assert!(info.capabilities.tools.is_some());
     let instructions = info.instructions.expect("server instructions");
     assert!(

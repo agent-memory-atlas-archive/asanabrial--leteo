@@ -979,6 +979,14 @@ useful part out of a context window has failed even if every field is right.
     returns the versions the retention bound keeps, and nothing walks further
     back.
 
+23. **The server says which build it is.** The `initialize` answer's
+    `serverInfo.version` is the identity `leteo --version` prints — the version,
+    the commit it was built from and the schema it supports — rather than the
+    bare `CARGO_PKG_VERSION` it used to carry, and `mem_doctor`'s report carries
+    it too, as `version`. The reason is the one [`cli.md`](cli.md) §19 gives for
+    `doctor`: when a store is refused, the first question is which binary
+    refused it, and between releases the version alone does not answer.
+
 ## Invariants
 
 - Titles printed into anything an agent reads are folded to a single line and

@@ -52,6 +52,7 @@
 //! fixed shape. Prose written inline in a screen is prose no translation will
 //! ever find.
 
+pub mod build_info;
 pub mod cli;
 pub mod cloud;
 pub mod engram;
