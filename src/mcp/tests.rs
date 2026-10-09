@@ -3924,10 +3924,6 @@ fn no_sentence_an_agent_reads_carries_the_source_it_was_written_in() {
             crate::mcp::output::UNNAMED_SUMMARY_HINT.to_owned(),
         ),
         (
-            "unfiled kind hint",
-            crate::mcp::output::UNFILED_KIND_HINT.to_owned(),
-        ),
-        (
             "memory directive",
             crate::setup::MEMORY_DIRECTIVE.to_owned(),
         ),
@@ -4083,7 +4079,7 @@ fn the_descriptions_publish_the_preview_length_the_code_cuts_at() {
 }
 
 #[test]
-fn a_memory_filed_under_a_word_nothing_searches_for_is_told_so() {
+fn a_type_outside_the_vocabulary_is_filed_where_a_filter_can_reach_it() {
     let (_temp, server) = test_server(McpOptions::default());
     {
         let mut store = server.lock_store().unwrap();
@@ -4092,7 +4088,7 @@ fn a_memory_filed_under_a_word_nothing_searches_for_is_told_so() {
             .unwrap();
     }
 
-    let unfiled = server
+    let folded = server
         .mem_save(Parameters(
             serde_json::from_value(json!({
                 "session_id": "unfiled",
@@ -4105,16 +4101,19 @@ fn a_memory_filed_under_a_word_nothing_searches_for_is_told_so() {
         .unwrap()
         .0;
     assert_eq!(
-        unfiled.observation.kind, "optimization",
-        "the word survives"
+        folded.observation.kind, "discovery",
+        "a word no filter can name folds onto one it can"
     );
     assert_eq!(
-        unfiled.hint.as_deref(),
-        Some(crate::mcp::output::UNFILED_KIND_HINT),
-        "and the agent is told a filter will never reach it"
+        folded.hint, None,
+        "and there is nothing to warn about: the memory is reachable"
     );
 
-    for (kind, stored) in [("discovery", "discovery"), ("bug", "bugfix")] {
+    for (kind, stored) in [
+        ("discovery", "discovery"),
+        ("bug", "bugfix"),
+        ("implementation", "discovery"),
+    ] {
         let filed = server
             .mem_save(Parameters(
                 serde_json::from_value(json!({
@@ -6492,9 +6491,9 @@ fn a_diagnosis_lists_examples_of_the_damage_and_counts_the_rest() {
 
     let report = store.doctor().unwrap();
     assert_eq!(
-        report.foreign_key_violations.len(),
-        orphans,
-        "el informe del store va entero"
+        report.foreign_key_violations.as_ref().map(Vec::len),
+        Some(orphans),
+        "the store's own report is the whole list"
     );
 
     let server = LeteoMcpServer::with_options(Arc::new(Mutex::new(store)), McpOptions::default());
@@ -6502,14 +6501,14 @@ fn a_diagnosis_lists_examples_of_the_damage_and_counts_the_rest() {
         .mem_doctor(Parameters(serde_json::from_value(json!({})).unwrap()))
         .expect("the diagnosis answers");
     assert_eq!(
-        answered.foreign_key_violations.len(),
-        VIOLATION_EXAMPLES,
-        "el agente ve ejemplos"
+        answered.foreign_key_violations.as_ref().map(Vec::len),
+        Some(VIOLATION_EXAMPLES),
+        "the agent sees examples"
     );
     assert_eq!(
         answered.foreign_key_violations_omitted,
         orphans - VIOLATION_EXAMPLES,
-        "y cuántas no ve"
+        "and how many it does not see"
     );
     assert!(
         answered
@@ -6879,13 +6878,12 @@ fn a_scope_leteo_does_not_know_is_refiled_and_the_reply_says_so() {
     assert_eq!(both_known.observation.scope, "personal");
     assert!(both_known.hint.is_none(), "{:?}", both_known.hint);
 
+    // An unknown type folds onto a documented one and is filed quietly; the
+    // scope is the value that is replaced, so it is the one that is said.
     let odd_kind = save(&server, "Odd kind", "implementation", "personal");
-    let hint = odd_kind.hint.unwrap_or_default();
-    assert!(hint.contains("type is not one of"), "{hint}");
-    assert!(
-        !hint.contains("Scope"),
-        "nothing was said against the scope: {hint}"
-    );
+    assert_eq!(odd_kind.observation.kind, "discovery");
+    assert_eq!(odd_kind.observation.scope, "personal");
+    assert!(odd_kind.hint.is_none(), "{:?}", odd_kind.hint);
 
     let odd_scope = save(&server, "Odd scope", "decision", "personnal");
     assert_eq!(
@@ -6905,10 +6903,11 @@ fn a_scope_leteo_does_not_know_is_refiled_and_the_reply_says_so() {
     );
 
     let both_odd = save(&server, "Both odd", "implementation", "personnal");
+    assert_eq!(both_odd.observation.kind, "discovery");
     let hint = both_odd.hint.unwrap_or_default();
     assert!(
-        hint.contains("type is not one of") && hint.contains("personnal"),
-        "two mistakes are two sentences: {hint}"
+        hint.contains("personnal") && !hint.contains("type"),
+        "the scope is still named, and the type is not a mistake any more: {hint}"
     );
 }
 

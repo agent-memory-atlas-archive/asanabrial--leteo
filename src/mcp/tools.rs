@@ -124,13 +124,12 @@ impl LeteoMcpServer {
                 })
         };
 
-        let unfiled = !crate::memory::rules::is_searchable_kind(&outcome.observation.kind);
         let refiled = asked_scope
             .filter(|asked| !crate::memory::normalize::SCOPES.contains(&asked.as_str()))
             .map(|asked| crate::mcp::output::refiled_scope_hint(&asked));
         // Computed before the outcome is consumed by `SaveOutput::new`, and
         // reported beside the other hints rather than instead of them: a save
-        // can shrink a body and be filed under an unknown type in one call.
+        // can shrink a body and be filed under an unknown scope in one call.
         let shrink = outcome
             .replaced
             .filter(|replaced| replaced.shrunk)
@@ -140,9 +139,6 @@ impl LeteoMcpServer {
         saved.storage_truncation =
             crate::mcp::output::storage_truncation(content_cut, stored_bytes);
         let mut hints = Vec::new();
-        if unfiled {
-            hints.push(UNFILED_KIND_HINT.to_owned());
-        }
         if let Some(scope) = refiled {
             hints.push(scope);
         }
