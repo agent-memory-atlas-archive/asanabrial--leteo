@@ -235,6 +235,19 @@ pub struct UpdateObservation {
     pub title: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<String>,
+    /// A span of the stored body to replace, rather than the whole of it.
+    ///
+    /// The body is read and edited inside the same write transaction, so what
+    /// this counts against is what the row holds at that moment. The count is
+    /// what makes the edit safe: a `find` that is absent or names more than one
+    /// span is refused rather than guessed at, and the caller's `content` and
+    /// `find` are two ways to write the body and are refused together.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub find: Option<String>,
+    /// What replaces the single span `find` names. Absent means the span is
+    /// removed, and `replace` without `find` is refused.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub replace: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub project: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -330,6 +343,16 @@ pub struct UpdateOutcome {
     /// for a metadata-only change, which is out of the version history's scope.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub replaced: Option<ReplacedContent>,
+    /// The length the storage bound saw for a body a find/replace edited, when
+    /// it cut it.
+    ///
+    /// A full-body write hands the tool the text it sent, so the tool computes
+    /// its own cut from that; a find/replace never holds the edited text, so
+    /// the store — which does — reports it. Absent when the bound cut nothing,
+    /// and always absent for a write that was not a find/replace, whose cut
+    /// the caller measures from its own `content`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edited_cut: Option<usize>,
 }
 
 /// The title and body a later write replaced, as a read hands them back.

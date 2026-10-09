@@ -553,6 +553,7 @@ fn updates_pins_and_reviews_observations() {
                 project: Some(" New--Project ".to_owned()),
                 scope: Some("personal".to_owned()),
                 topic_key: Some(" Architecture/Auth Model ".to_owned()),
+                ..UpdateObservation::default()
             },
         )
         .unwrap();
