@@ -1598,6 +1598,45 @@ fn doctor_exits_non_zero_only_when_it_found_an_error() {
     assert_eq!(broken["healthy"], json!(false), "{broken}");
 }
 
+/// `leteo --version` names the build, not only the release number.
+///
+/// The reason the issue exists: a binary built from `main` between releases
+/// printed the last release's version while it already understood a schema no
+/// release did, so two binaries were indistinguishable when a store was
+/// refused. The commit and the schema are what tell them apart.
+#[test]
+fn version_names_the_build_and_the_schema_it_supports() {
+    let temp = tempfile::tempdir().expect("create CLI test directory");
+    let output = leteo(&temp.path().join("version.db"))
+        .arg("--version")
+        .output()
+        .expect("run leteo --version");
+    assert!(output.status.success());
+    let printed = String::from_utf8(output.stdout).expect("--version prints UTF-8");
+    let printed = printed.trim();
+    assert_eq!(
+        printed,
+        format!("leteo {}", leteo::build_info::version()),
+        "the flag prints the name and the build identity"
+    );
+    assert!(
+        printed.contains("schema "),
+        "the supported schema is part of the identity: {printed}"
+    );
+}
+
+/// `doctor` names the build it ran from, as `--version` does.
+#[test]
+fn doctor_reports_the_build_identity() {
+    let temp = tempfile::tempdir().expect("create CLI test directory");
+    let report = run_json(leteo(&temp.path().join("identity.db")).arg("doctor"));
+    assert_eq!(
+        report["version"],
+        json!(leteo::build_info::version()),
+        "{report}"
+    );
+}
+
 #[test]
 fn the_search_command_says_which_limit_ended_the_list() {
     // The sentence existed on one of the two surfaces that can reach the cap.

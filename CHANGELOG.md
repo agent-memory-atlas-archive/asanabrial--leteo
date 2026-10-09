@@ -6,6 +6,13 @@ All notable changes to Leteo are documented in this file.
 
 ### Added
 
+- **`leteo --version` names the build, not only the release.** It prints the
+  commit it was built from and the schema it supports — `leteo 0.3.0 (f712df8,
+  schema 22)` — embedded by `build.rs` at compile time and degrading to the
+  version and the schema alone when there is no git to read. `doctor` and the
+  MCP `serverInfo` carry the same string, so a store that was refused can say
+  which binary refused it (#208).
+
 - **`leteo doctor --check <code>` runs only the check it names.** Asking about
   `busy_timeout` no longer pays for `PRAGMA integrity_check`, which is several
   seconds over a 96 MB store. The counts and pragmas are still gathered, and a

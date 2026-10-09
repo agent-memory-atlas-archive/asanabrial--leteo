@@ -701,7 +701,7 @@ impl ServerHandler for LeteoMcpServer {
                 .build(),
         )
         .with_server_info(
-            rmcp::model::Implementation::new("leteo", env!("CARGO_PKG_VERSION"))
+            rmcp::model::Implementation::new("leteo", crate::build_info::version())
                 .with_title("Leteo"),
         )
         .with_instructions(SERVER_INSTRUCTIONS)

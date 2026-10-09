@@ -362,6 +362,11 @@ fn the_doctor_says_what_the_store_is_at_and_what_this_build_reads() {
 
     assert_eq!(report.schema_supported, SCHEMA_VERSION);
     assert_eq!(
+        report.version,
+        crate::build_info::version(),
+        "the report names the build that ran, as `--version` does"
+    );
+    assert_eq!(
         report.schema_version, SCHEMA_VERSION,
         "a store this build opened has been brought to the version it reads"
     );

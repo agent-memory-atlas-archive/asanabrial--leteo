@@ -3,7 +3,7 @@ use super::*;
 #[derive(Debug, Parser)]
 #[command(
     name = "leteo",
-    version,
+    version = crate::build_info::version(),
     about = "Persistent memory for AI coding agents"
 )]
 pub struct Cli {
