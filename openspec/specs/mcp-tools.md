@@ -228,6 +228,12 @@ useful part out of a context window has failed even if every field is right.
    `leteo doctor` still prints the inventory: a pipe has no context window to
    spend, which is the same split `mem_context` and `leteo context` make.
 
+   Each check in the report carries a `severity` — `error`, `warning` or
+   `info` — and `healthy` is the absence of an `error`, so an agent can tell a
+   degraded capability from a broken store; see
+   [`store-and-schema.md`](store-and-schema.md) §4. A `check` argument runs only
+   that check.
+
    Held over the whole surface rather than tool by tool, so the next budget
    cannot arrive without one — which is how the last two were found. Both
    `mem_search` and `mem_review` carried the same note beside their `limit`,
@@ -484,8 +490,7 @@ useful part out of a context window has failed even if every field is right.
 
 8. **A hint explains an answer the caller did not expect.** No match, a partial
    match, a summary saved without a name, nothing extracted from a passive
-   capture, a type outside the eight — each has one sentence saying what
-   happened and what to do about it.
+   capture — each has one sentence saying what happened and what to do about it.
 
    An empty answer from a read the directory narrowed says which of its two
    reasons it is: the store has never heard of this, or it is filed in another

@@ -34,10 +34,9 @@ pub(super) struct SaveParams {
     /// Backward-compatible alias for content.
     pub(super) observation: Option<String>,
     /// One of: bugfix, decision, policy, architecture, discovery, pattern,
-    /// config, preference. The category is a search filter, so a word outside this list
-    /// is a memory that filtering never returns — a real store collected
-    /// `implementation`, `feature` and `manual` that way. Close synonyms are
-    /// folded on the way in; anything else is kept verbatim.
+    /// config, preference. The category is a search filter, and a word outside
+    /// this list folds onto `discovery` on the way in, so the memory is still
+    /// reachable by a filter. Close synonyms fold onto their own kind.
     #[serde(rename = "type", default = "default_observation_type")]
     pub(super) kind: String,
     /// Name of the tool that produced the observation.
@@ -420,7 +419,8 @@ pub(super) struct NoParams {}
 pub(super) struct DoctorParams {
     /// Project context to report; diagnostics remain store-wide.
     pub(super) project: Option<String>,
-    /// Optional upstream diagnostic check code; the local report includes all checks.
+    /// Optional diagnostic check code. When given, only that check runs and
+    /// the report carries it alone; an unknown code is refused.
     pub(super) check: Option<String>,
 }
 
