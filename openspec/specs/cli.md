@@ -380,7 +380,23 @@ duties about what an answer explains.
     reads that as finished rather than as a partial removal. A directory that
     still holds something not named here is kept and named, never emptied.
 
-19. **The cloud client is in every build; the server half is behind a feature.**
+19. **`leteo --version` names the build, not only the release.** It prints the
+    version, the commit it was built from and the schema it supports —
+    `leteo 0.3.0 (f712df8, schema 22)`, or `(f712df8-dirty, schema 22)` for a
+    tree with uncommitted changes. The commit is embedded by `build.rs` at
+    compile time and is the one part that can be missing: a crates.io tarball,
+    or a source copy without `.git`, prints the version and the schema alone.
+    `doctor` carries the same string as `version`, beside the two schema numbers
+    it already reported.
+
+    This is the failure it answers: a binary built from `main` on 2026-10-06
+    reported `leteo 0.2.1` while it already understood schema 22, which no
+    released 0.2.1 does, so pointing an agent at a real 0.2.1 failed with "this
+    database is at schema version 22, but this build of Leteo understands 18"
+    and nothing told the two binaries apart. The commit and the schema are what
+    tell them apart.
+
+20. **The cloud client is in every build; the server half is behind a feature.**
     `leteo cloud health`, `sync`, `config`, `status` and `enroll` are part of
     the default binary, and `leteo serve` — the background replication loop —
     stays a top-level command. The two that host rather than talk to a peer —
@@ -405,6 +421,8 @@ duties about what an answer explains.
 
 - `src/cli/args.rs` — the parser, and the single list of hook event names
 - `src/cli/mod.rs` — the commands
+- `build.rs`, `src/build_info.rs` — the build identity `--version` and `doctor`
+  print (§19)
 - `scripts/build-install.sh`, `scripts/build-install.ps1` — build and install
   the checkout (§17)
 - `tools/build-install/check.sh` — runs both behind stand-in `rustup`, `cargo`
