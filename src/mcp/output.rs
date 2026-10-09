@@ -1252,7 +1252,27 @@ pub(super) struct ContextOutput {
     /// How many sessions the byte budget left out.
     #[serde(default, skip_serializing_if = "is_zero_usize")]
     pub(super) sessions_omitted: usize,
+    /// Set when the byte bound asked for was still not met after every entry
+    /// was dropped, because the envelope alone is larger than the bound.
+    ///
+    /// `byte_limit` can shrink the answer but cannot shrink it past what it
+    /// always carries — the project, the language, the empty lists. A value
+    /// under that floor is answered as well as it can be and says so, rather
+    /// than reporting a bound it did not keep.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(super) byte_limit_unmet: bool,
 }
+
+/// The bytes a `mem_context` answer carries before it holds any memory, session
+/// or prompt — the floor a `byte_limit` cannot shrink past.
+///
+/// Measured by serializing the empty answer with the default language, which
+/// came to 350 bytes. `within` drops entries but never the envelope, so a bound
+/// below this cannot be met and the reply says so with `byte_limit_unmet`. The
+/// floor is the *default* envelope; a chosen language directive is longer and
+/// moves the true floor, which is why the not-met answer is decided by
+/// measuring the reply rather than by comparing against this number.
+pub(crate) const CONTEXT_ENVELOPE_FLOOR: usize = 350;
 
 /// A memory named rather than quoted: what it is, and how to fetch it.
 #[derive(Debug, Serialize, schemars::JsonSchema)]
@@ -1389,6 +1409,7 @@ impl ContextOutput {
             memories_omitted: 0,
             prompts_omitted: 0,
             sessions_omitted: 0,
+            byte_limit_unmet: false,
         }
     }
 
@@ -1426,6 +1447,10 @@ impl ContextOutput {
                 self.sessions_omitted += 1;
                 continue;
             }
+            // Nothing left to drop and the answer is still over the bound: the
+            // envelope alone is larger than what was asked for. Reported rather
+            // than returned as though the bound had been kept.
+            self.byte_limit_unmet = true;
             return self;
         }
     }
