@@ -435,6 +435,43 @@ fn a_session_summary_is_neither_returned_nor_embedded() {
     );
 }
 
+/// A summary is returned, and embedded, when the query names the type.
+///
+/// `is_searchable_kind` says a search narrowed by type can return a summary; the
+/// stage used to exclude it whatever the caller asked, so `type:
+/// session_summary` got nothing and no vector was ever made for one. Naming the
+/// type is the one way to ask for a summary, and the one case the stage embeds
+/// and returns it.
+#[test]
+fn a_session_summary_is_returned_and_embedded_when_the_type_is_named() {
+    let Some((_temp, mut store, _keys)) = store_with_keys() else {
+        return;
+    };
+    let mut summary = observation("s1", JWT_TITLE, JWT_BODY);
+    summary.kind = SESSION_SUMMARY.to_owned();
+    let summary = store.add_observation(summary).unwrap().observation;
+
+    let by_type = SearchOptions {
+        kind: Some(SESSION_SUMMARY.to_owned()),
+        ..on()
+    };
+    let found = store.search(ASKED_IN_SPANISH, by_type).unwrap();
+    assert_eq!(
+        ids(&found),
+        vec![summary.id],
+        "a type-narrowed search returns the summary: {found:?}"
+    );
+    let embedded: i64 = store
+        .connection
+        .query_row(
+            "SELECT COUNT(*) FROM observation_vectors WHERE observation_id = ?1",
+            [summary.id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(embedded, 1, "and a vector is made for it");
+}
+
 /// Hiding a deleted memory is done twice — by the clause every stage reads, and
 /// again by the fetch — so a test that only asks whether a deleted memory comes
 /// back cannot tell whether the first of them works. What the first protects is
