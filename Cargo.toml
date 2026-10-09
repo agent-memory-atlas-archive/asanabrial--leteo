@@ -28,6 +28,7 @@ rust-version = "1.97"
 # crate tarball it would be a JavaScript program shipped to somebody who already
 # has the source and a compiler.
 include = [
+    "/build.rs",
     "/src/**",
     "/migrations/**",
     "/openspec/**",

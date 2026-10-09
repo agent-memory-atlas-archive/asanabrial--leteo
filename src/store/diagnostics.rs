@@ -802,6 +802,7 @@ impl Store {
             healthy: !checks
                 .iter()
                 .any(|check| !check.ok && check.severity == DoctorSeverity::Error),
+            version: crate::build_info::version().to_owned(),
             schema_version: schema_version(&self.connection)?,
             schema_supported: SCHEMA_VERSION,
             checks,

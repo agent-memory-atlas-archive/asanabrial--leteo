@@ -1146,6 +1146,13 @@ impl DoctorCheck {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DoctorReport {
     pub healthy: bool,
+    /// What this build is: its version, the commit it was built from, and the
+    /// schema it supports, as `leteo --version` prints it.
+    ///
+    /// Here for the same reason the two numbers below are: when a store is
+    /// refused, the first question is which binary refused it, and between
+    /// releases the version alone does not answer.
+    pub version: String,
     /// What this database is stamped at, and what the running build reads.
     ///
     /// Facts rather than a check: a store whose version this build does not
