@@ -98,7 +98,7 @@ impl Store {
         let mut statement = self.connection.prepare(&format!(
             "SELECT o.id, o.type, v.vector FROM observations o
              CROSS JOIN observation_vectors v ON v.observation_id = o.id
-             WHERE {visible} AND o.type != ?4
+             WHERE {visible} AND (?4 IS NULL OR o.type != ?4)
                AND v.model = ?5 AND v.source_key = {SOURCE_KEY}"
         ))?;
         let mut scored: Vec<(f32, i64, String)> = Vec::new();
@@ -106,7 +106,8 @@ impl Store {
             options.kind,
             options.project,
             options.scope,
-            crate::memory::model::SESSION_SUMMARY,
+            super::search::excludes_summaries(options)
+                .then_some(crate::memory::model::SESSION_SUMMARY),
             semantic::MODEL_ID,
         ])?;
         while let Some(row) = rows.next()? {
@@ -209,16 +210,18 @@ impl Store {
     /// The ids, and keys, of the memories in scope whose vector is missing, from
     /// another model, or made from text that has since changed.
     ///
-    /// Session summaries are not embedded: the stage never returns one, for the
-    /// reason every relaxed stage leaves them out, so a vector for one would be
-    /// space and time spent on a row nothing reads.
+    /// Session summaries are not embedded unless the query names the type: the
+    /// stage never returns one otherwise, for the reason every relaxed stage
+    /// leaves them out, so a vector for one would be space and time spent on a
+    /// row nothing reads. A query that asks for the type does read them, so
+    /// they are embedded for it.
     fn stale_vectors(&self, options: &SearchOptions) -> Result<Vec<(i64, String)>, StageError> {
         let visible = visible_observations(1, 2, 3);
         let mut statement = self.connection.prepare(&format!(
             "SELECT o.id, {SOURCE_KEY}
              FROM observations o
              LEFT JOIN observation_vectors v ON v.observation_id = o.id
-             WHERE {visible} AND o.type != ?4
+             WHERE {visible} AND (?4 IS NULL OR o.type != ?4)
                AND (v.observation_id IS NULL OR v.model != ?5 OR v.source_key != {SOURCE_KEY})"
         ))?;
         let rows = statement.query_map(
@@ -226,7 +229,8 @@ impl Store {
                 options.kind,
                 options.project,
                 options.scope,
-                crate::memory::model::SESSION_SUMMARY,
+                super::search::excludes_summaries(options)
+                    .then_some(crate::memory::model::SESSION_SUMMARY),
                 semantic::MODEL_ID,
             ],
             |row| Ok((row.get(0)?, row.get(1)?)),

@@ -145,7 +145,9 @@ before any of it.
    question and the right answer to almost none. Measured before the fix: 6
    strict-pass answers led by 0 summaries, against 74 relaxed answers led by 54.
    Strict matches still return summaries — if every word is in one, it is the
-   answer.
+   answer. A query that names the type (`type: session_summary`) asked for one,
+   so every stage skips the exclusion for it and `visible_observations` narrows
+   to it; that is the only way a summary is found from a loosened question.
 
 7. **Every narrowing is normalised before it is compared.** Project, scope, and
    type are folded on the way in exactly as they were folded when the memory was
@@ -424,7 +426,9 @@ before any of it.
     `visible_observations` in `src/store/search.rs`, and the ranked stages, the
     title scan and this stage all read it: not deleted, not hidden by a judged
     verdict (§9), inside the type, project and scope asked about. Session
-    summaries are left out, for §6's reason, and are not embedded.
+    summaries are left out, for §6's reason, and are not embedded — unless the
+    query names the type, which is the one way to ask for one and the one case a
+    vector is made for it.
 
     **Where the vectors live.** In `observation_vectors`, one row per memory,
     made lazily: when the stage fires it embeds whatever is in scope and has no
