@@ -1049,10 +1049,16 @@ pub struct DoctorCheck {
     /// Whether the check holds. A `warning` is a finding — `ok` is false — that
     /// leaves the store healthy; only an `error` makes it unhealthy.
     pub ok: bool,
-    /// The weight of the finding, or `info` when there is none.
-    pub severity: DoctorSeverity,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
+    /// The weight of the finding, or `info` when there is none.
+    ///
+    /// Last, and not beside `ok` where it reads, because the fields above it
+    /// are a wire shape somebody reads by position: `tools/semantic/check_install.sh`
+    /// greps `"code":"…","ok":true,"detail":"…"` out of `leteo doctor`, and a
+    /// field inserted between `ok` and `detail` failed every installer check
+    /// that asks whether doctor verifies the model. A new field is appended.
+    pub severity: DoctorSeverity,
 }
 
 /// What one full-text index held before a rebuild and after it.

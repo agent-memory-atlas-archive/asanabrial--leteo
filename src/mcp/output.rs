@@ -681,11 +681,14 @@ impl DoctorOutput {
 pub(super) struct DoctorCheckOutput {
     pub(super) code: String,
     pub(super) ok: bool,
-    /// `error`, `warning` or `info`. Only an `error` makes the report
-    /// unhealthy; a `warning` is a degraded capability and is kept here.
-    pub(super) severity: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) detail: Option<String>,
+    /// `error`, `warning` or `info`. Only an `error` makes the report
+    /// unhealthy; a `warning` is a degraded capability and is kept here.
+    ///
+    /// Appended after `detail`, as on [`crate::memory::model::DoctorCheck`],
+    /// so the two reports carry the same fields in the same order.
+    pub(super) severity: String,
 }
 
 impl From<crate::memory::model::DoctorCheck> for DoctorCheckOutput {
