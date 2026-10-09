@@ -187,6 +187,11 @@ impl LeteoMcpServer {
             ),
             None => None,
         };
+        // The cut a full-body write makes is measured from the text the caller
+        // sent; a find/replace never holds the edited text, so its cut comes
+        // back on the outcome instead. Reading it from `params.content` here is
+        // what would silently report no cut for every find/replace, because
+        // `content` is absent for one.
         let content_cut = params.content.as_deref().and_then(|content| {
             crate::memory::normalize::cut_length(content, store.max_observation_length())
         });
@@ -198,6 +203,8 @@ impl LeteoMcpServer {
                     kind: params.kind,
                     title: params.title,
                     content: params.content,
+                    find: params.find,
+                    replace: params.replace,
                     project,
                     scope: params.scope,
                     topic_key: params.topic_key,
@@ -211,9 +218,14 @@ impl LeteoMcpServer {
             .unwrap_or_default();
         drop(store);
 
-        let replaced = outcome.replaced;
-        let stored_bytes = outcome.observation.content.len();
-        let mut observation = ObservationOutput::from(outcome.observation).preview();
+        let UpdateOutcome {
+            observation: updated,
+            replaced,
+            edited_cut,
+        } = outcome;
+        let content_cut = content_cut.or(edited_cut);
+        let stored_bytes = updated.content.len();
+        let mut observation = ObservationOutput::from(updated).preview();
         observation.caveats = caveats.into_iter().map(Into::into).collect();
         Ok(Json(ObservationResultOutput {
             observation,
@@ -627,6 +639,13 @@ impl LeteoMcpServer {
             .map_err(store_error)?;
 
         let language = settings.language_directive();
+        // A caller's own ceiling only ever shrinks the answer below the size
+        // setting, never raises it: the setting is the budget a person chose for
+        // this store, and one call is not the place to overrule it.
+        let byte_budget = match params.byte_limit {
+            Some(asked) => asked.min(settings.context_size().bytes()),
+            None => settings.context_size().bytes(),
+        };
         let named: Vec<String> = observations
             .iter()
             .map(|observation| observation.sync_id.clone())
@@ -657,7 +676,11 @@ impl LeteoMcpServer {
                 },
                 &caveats,
             )
-            .within(settings.context_size().bytes()),
+            // The ceiling above is the setting's own bytes or a caller's
+            // smaller one. The schema publishes the deep ceiling, the largest
+            // any answer reaches once the setting is deep, as the field's
+            // maximum; the setting is what a call is capped by here.
+            .within(byte_budget),
         ))
     }
 

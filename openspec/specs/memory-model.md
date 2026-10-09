@@ -213,6 +213,14 @@ changes.
     ([`mcp-tools.md`](mcp-tools.md) §20); the live memory is unchanged in every
     other way.
 
+    **A `mem_update` may write the whole body or edit one span of it.** With
+    `find` and `replace` the body is read and edited inside the same transaction
+    as the write, so the span is counted against what the row holds and the
+    previous text is snapshotted exactly as a whole-body write snapshots it.
+    The edit is refused unless it names one span ([`mcp-tools.md`](mcp-tools.md)
+    §22); the title is never touched by it, because a title is written rather
+    than edited.
+
     **Only a change to the title or the body counts.** A write that moves the
     project, the type, the scope or the topic key replaces no text and keeps no
     version, nor does a re-save of the same words under one key or a
