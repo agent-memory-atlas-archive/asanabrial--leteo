@@ -80,7 +80,18 @@ async fn serve(listener: TcpListener, server: LeteoMcpServer) -> anyhow::Result<
         .collect();
     let api = Arc::new(Api { server, tools });
     loop {
-        let (stream, _peer) = listener.accept().await?;
+        let (stream, _peer) = match listener.accept().await {
+            Ok(accepted) => accepted,
+            // A connection that reset between `connect` and `accept` is that
+            // client's, not the listener's; ending the process over it would
+            // let one aborted connection take down a socket every other caller
+            // shares.
+            Err(error) if accept_error_is_transient(&error) => {
+                eprintln!("leteo serve: {error}");
+                continue;
+            }
+            Err(error) => return Err(error.into()),
+        };
         let api = Arc::clone(&api);
         tokio::spawn(async move {
             if let Err(error) = handle(stream, api).await {
@@ -99,6 +110,20 @@ struct Api {
     /// the set is fixed for the process's lifetime and the endpoint set is the
     /// same list `tools/list` publishes.
     tools: std::collections::BTreeSet<String>,
+}
+
+/// Whether a failed `accept` belongs to the one connection that failed rather
+/// than to the listener.
+///
+/// `ECONNABORTED` is the ordinary case — a client that connected and went away
+/// before the kernel handed the socket over — and `EINTR` is a signal that
+/// interrupted the wait. Both leave the listener healthy, so the loop goes on.
+/// Anything else is the listener's own failure and is propagated.
+fn accept_error_is_transient(error: &std::io::Error) -> bool {
+    matches!(
+        error.kind(),
+        std::io::ErrorKind::ConnectionAborted | std::io::ErrorKind::Interrupted
+    )
 }
 
 struct Request {
@@ -183,6 +208,13 @@ async fn read_request(stream: &mut TcpStream) -> std::io::Result<Option<Request>
     };
     let head = std::str::from_utf8(&buffer[..headers_end])
         .map_err(|_| invalid("the request headers are not UTF-8"))?;
+    // The loop above refuses an unterminated block that grows past the bound.
+    // This refuses a *terminated* one: a blank line that arrives in the same
+    // read that carries the block past the bound would otherwise be accepted,
+    // because the loop looks for the blank line before it weighs the buffer.
+    if headers_end > MAX_HEADER_BYTES {
+        return Err(invalid("the request headers are too large"));
+    }
     let mut lines = head.split("\r\n");
     let request_line = lines.next().ok_or_else(|| invalid("no request line"))?;
     let mut parts = request_line.split(' ');
@@ -194,13 +226,26 @@ async fn read_request(stream: &mut TcpStream) -> std::io::Result<Option<Request>
 
     let mut content_length = 0_usize;
     for line in lines {
-        if let Some((name, value)) = line.split_once(':')
-            && name.trim().eq_ignore_ascii_case("content-length")
-        {
+        let Some((name, value)) = line.split_once(':') else {
+            continue;
+        };
+        let name = name.trim();
+        if name.eq_ignore_ascii_case("content-length") {
             content_length = value
                 .trim()
                 .parse()
                 .map_err(|_| invalid("the Content-Length is not a number"))?;
+        } else if name.eq_ignore_ascii_case("transfer-encoding") {
+            // A body that arrives chunked is refused rather than dropped. The
+            // parser reads by `Content-Length` alone, so a chunked body would
+            // be answered as if none had been sent: a tool with required
+            // arguments fails with a confusing missing-field refusal, and one
+            // whose arguments are all optional runs with defaults and reports
+            // success, with nothing telling the caller its body was lost.
+            return Err(invalid(
+                "the request body must carry Content-Length; chunked transfer encoding is not \
+                 supported",
+            ));
         }
     }
     if content_length > MAX_BODY_BYTES {
@@ -420,6 +465,22 @@ mod tests {
         (address, temp)
     }
 
+    /// One hand-written request over a fresh connection, answering the whole
+    /// response as text. `reqwest` fills in `Content-Length` itself, so the
+    /// malformed, chunked and oversized cases have to be driven at the socket.
+    async fn raw_request(address: SocketAddr, request: &str) -> String {
+        let mut stream = TcpStream::connect(address).await.unwrap();
+        stream.write_all(request.as_bytes()).await.unwrap();
+        // Closing the write half is what makes an incomplete request finish:
+        // the server reads to EOF instead of waiting for a blank line that
+        // will never come, so a bound that fails to fire is a wrong answer
+        // rather than a hung test.
+        stream.shutdown().await.unwrap();
+        let mut response = Vec::new();
+        stream.read_to_end(&mut response).await.unwrap();
+        String::from_utf8_lossy(&response).into_owned()
+    }
+
     #[tokio::test]
     async fn a_save_over_http_is_reachable_by_a_search() {
         let (address, _temp) = spawn_api("http-test").await;
@@ -520,6 +581,168 @@ mod tests {
         assert!(
             exposed.contains("not the loopback"),
             "a bind anybody can reach has to say so: {exposed}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_chunked_body_is_refused_rather_than_dropped() {
+        let (address, _temp) = spawn_api("http-test").await;
+        let response = raw_request(
+            address,
+            "POST /tools/mem_save HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n\
+             5\r\nhello\r\n0\r\n\r\n",
+        )
+        .await;
+        assert!(
+            response.starts_with("HTTP/1.1 400"),
+            "a chunked body has to be refused, not read as empty: {response}"
+        );
+        assert!(
+            response.contains("chunked transfer encoding"),
+            "the refusal names the chunked body rather than a missing field: {response}"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_header_and_body_bounds_are_refused() {
+        let (address, _temp) = spawn_api("http-test").await;
+
+        // Headers past the bound, with no blank line: refused before the
+        // buffer grows without end.
+        let filler = "x".repeat(MAX_HEADER_BYTES + 1);
+        let response = raw_request(
+            address,
+            &format!("GET /health HTTP/1.1\r\nHost: localhost\r\nX-Filler: {filler}\r\n"),
+        )
+        .await;
+        assert!(
+            response.starts_with("HTTP/1.1 400"),
+            "oversized headers: {response}"
+        );
+        assert!(
+            response.contains("headers are too large"),
+            "the header bound, not a truncated read: {response}"
+        );
+
+        // And the same block *terminated*: the blank line arrives in the read
+        // that carries the block past the bound, which the loop's own check
+        // cannot see because it looks for the blank line first.
+        let response = raw_request(
+            address,
+            &format!("GET /health HTTP/1.1\r\nHost: localhost\r\nX-Filler: {filler}\r\n\r\n"),
+        )
+        .await;
+        assert!(
+            response.starts_with("HTTP/1.1 400"),
+            "a terminated block past the bound: {response}"
+        );
+        assert!(
+            response.contains("headers are too large"),
+            "the terminated header bound: {response}"
+        );
+
+        // A `Content-Length` past the bound: refused before the body is read,
+        // so a claim of a gigabyte costs nothing.
+        let response = raw_request(
+            address,
+            &format!(
+                "POST /tools/mem_save HTTP/1.1\r\nHost: localhost\r\nContent-Length: {}\r\n\r\n",
+                MAX_BODY_BYTES + 1
+            ),
+        )
+        .await;
+        assert!(
+            response.starts_with("HTTP/1.1 400"),
+            "oversized body: {response}"
+        );
+        assert!(
+            response.contains("body is too large"),
+            "the body bound, not a body that ended early: {response}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_non_json_body_and_a_bad_method_are_refused() {
+        let (address, _temp) = spawn_api("http-test").await;
+
+        let response = raw_request(
+            address,
+            "POST /tools/mem_save HTTP/1.1\r\nHost: localhost\r\nContent-Length: 4\r\n\r\nnope",
+        )
+        .await;
+        assert!(
+            response.starts_with("HTTP/1.1 400"),
+            "a body that is not JSON: {response}"
+        );
+        assert!(
+            response.contains("not JSON"),
+            "the refusal names the body rather than a missing field: {response}"
+        );
+
+        let response = raw_request(
+            address,
+            "DELETE /health HTTP/1.1\r\nHost: localhost\r\n\r\n",
+        )
+        .await;
+        assert!(
+            response.starts_with("HTTP/1.1 405"),
+            "a method that is neither GET nor POST: {response}"
+        );
+        assert!(
+            response.contains("method_not_allowed"),
+            "the refusal names the method: {response}"
+        );
+    }
+
+    #[tokio::test]
+    async fn every_tool_the_list_advertises_can_be_called() {
+        let (address, _temp) = spawn_api("http-test").await;
+        let client = reqwest::Client::new();
+
+        let listed: serde_json::Value = client
+            .get(format!("http://{address}/tools"))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let tools = listed["tools"].as_array().expect("the list is an array");
+        assert!(!tools.is_empty(), "the list is empty: {listed}");
+
+        // The advertised set and the dispatchable set are one list: a tool the
+        // router exposes but the dispatch `match` omits would be named here and
+        // answer 404.
+        for tool in tools {
+            let name = tool.as_str().unwrap();
+            let status = client
+                .post(format!("http://{address}/tools/{name}"))
+                .json(&serde_json::json!({}))
+                .send()
+                .await
+                .unwrap()
+                .status();
+            assert_ne!(
+                status.as_u16(),
+                404,
+                "{name} is advertised by /tools but not dispatched"
+            );
+        }
+    }
+
+    #[test]
+    fn a_transient_accept_error_is_told_from_a_listener_failure() {
+        use std::io::{Error, ErrorKind};
+
+        assert!(accept_error_is_transient(&Error::from(
+            ErrorKind::ConnectionAborted
+        )));
+        assert!(accept_error_is_transient(&Error::from(
+            ErrorKind::Interrupted
+        )));
+        assert!(
+            !accept_error_is_transient(&Error::from(ErrorKind::Other)),
+            "a listener failure is not a connection's"
         );
     }
 }

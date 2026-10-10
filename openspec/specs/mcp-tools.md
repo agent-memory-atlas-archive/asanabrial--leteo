@@ -996,9 +996,10 @@ useful part out of a context window has failed even if every field is right.
     handler is the MCP handler itself, so a write over HTTP normalises,
     indexes, redacts and enqueues for replication exactly as the stdio path
     does ([`replication.md`](replication.md) §2), and `deny_unknown_fields`
-    refuses an argument the tool does not take on either surface. The bind is
-    the loopback unless `--bind` says otherwise
-    ([`cli.md`](cli.md) §21).
+    refuses an argument the tool does not take on either surface. A request body
+    carries `Content-Length`, and a body sent chunked is refused rather than
+    read as empty; the header and the body are both bounded. The bind is the
+    loopback unless `--bind` says otherwise ([`cli.md`](cli.md) §21).
 
 ## Invariants
 
@@ -1019,6 +1020,11 @@ useful part out of a context window has failed even if every field is right.
 - `src/mcp/serve.rs` — §24's local HTTP surface, held by
   `a_save_over_http_is_reachable_by_a_search`,
   `a_refusal_is_a_bad_request_and_an_unknown_tool_is_not_found`,
+  `a_chunked_body_is_refused_rather_than_dropped`,
+  `the_header_and_body_bounds_are_refused`,
+  `a_non_json_body_and_a_bad_method_are_refused`,
+  `every_tool_the_list_advertises_can_be_called`,
+  `a_transient_accept_error_is_told_from_a_listener_failure`,
   `the_default_bind_is_the_loopback` and
   `a_bind_that_is_not_the_loopback_says_so`
 - `src/mcp/tests.rs` — §5's drift refusal is held by
