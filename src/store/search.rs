@@ -283,6 +283,23 @@ pub(super) struct Candidate {
     pub(super) semantic: bool,
 }
 
+/// The semantic list as it enters the fusion, capped only beside a `nearest`
+/// answer.
+///
+/// `nearest` is the weakest lexical claim there is, and the semantic list beside
+/// it is what pads the page: on a question the store cannot answer, one shared
+/// word reaches `nearest` and the stage then fills the slots with unrelated
+/// memories. The lexical answer stands and the meaning is merged in only as far
+/// as it can stand beside it; on any stronger answer, and on an empty one, the
+/// list is returned as the stage found it. `semantic_candidates` answers
+/// best-first, so the cap keeps the best. See `semantic::MERGE_CAP`.
+fn cap_for_merge(mut semantic: Vec<Candidate>, nearest_answered: bool) -> Vec<Candidate> {
+    if nearest_answered {
+        semantic.truncate(crate::semantic::MERGE_CAP);
+    }
+    semantic
+}
+
 /// What one search decided: the page, and any terms it had to correct to get
 /// it.
 ///
@@ -630,7 +647,7 @@ impl Store {
     /// logged at `warn`, not at `debug` as the unreadable second index is,
     /// because unlike that index this has no reason to fail on a healthy build,
     /// and a test holds that it does not.
-    fn with_semantic_stage(
+    pub(super) fn with_semantic_stage(
         &self,
         query: &str,
         options: &SearchOptions,
@@ -640,17 +657,14 @@ impl Store {
     ) -> Vec<Candidate> {
         let floor = (!nearest_answered).then_some(crate::semantic::FLOOR);
         match self.semantic_candidates(query, options, limit, floor) {
-            // A `nearest` answer is the weakest lexical claim, and the semantic
-            // list beside it is what pads the page: on a question the store
-            // cannot answer, one shared word reaches `nearest` and the stage
-            // then fills the slots with unrelated memories. The lexical answer
-            // stands; the meaning is merged in only as far as it can stand
-            // beside it. See `semantic::MERGE_CAP`.
-            Ok(mut found) if nearest_answered => {
-                found.truncate(crate::semantic::MERGE_CAP);
-                super::semantic_stage::fuse(lexical, found, limit)
+            Ok(found) => {
+                let semantic = cap_for_merge(found, nearest_answered);
+                if nearest_answered {
+                    super::semantic_stage::fuse(lexical, semantic, limit)
+                } else {
+                    semantic
+                }
             }
-            Ok(found) => found,
             // No usable model is a state `doctor` reports and `leteo model install`
             // mends, and the stage is simply off; it is not a fault of this search.
             Err(error) if error.is::<crate::semantic::Unavailable>() => {
@@ -1740,5 +1754,56 @@ mod hydrate_tests {
 
         store.delete_observation(ids[0], None, true).unwrap();
         assert_eq!(store.hydrate(candidatos(&ids)).unwrap().len(), 1);
+    }
+}
+
+/// The cap on the semantic list beside a `nearest` answer.
+///
+/// Driven straight at `cap_for_merge` rather than through a store, because the
+/// store-driven test needs `assets/model` and returns early without it — a cap
+/// whose only test can skip is a cap with no test, and this one has to fail in
+/// any tree. The number is asserted against the five `search.md` §15 publishes,
+/// so a change to `MERGE_CAP` has to come with the spec edit that says why.
+#[cfg(test)]
+mod cap_tests {
+    use super::*;
+
+    fn candidates(count: usize) -> Vec<Candidate> {
+        (1..=count as i64)
+            .map(|id| Candidate {
+                id,
+                kind: "discovery".to_owned(),
+                rank: -(id as f64),
+                partial: false,
+                semantic: true,
+            })
+            .collect()
+    }
+
+    fn ids(semantic: &[Candidate]) -> Vec<i64> {
+        semantic.iter().map(|candidate| candidate.id).collect()
+    }
+
+    #[test]
+    fn the_merge_cap_holds_beside_a_nearest_answer_and_nowhere_else() {
+        assert_eq!(
+            crate::semantic::MERGE_CAP,
+            5,
+            "search.md §15 publishes five"
+        );
+        let cap = crate::semantic::MERGE_CAP;
+
+        // More than the cap beside a `nearest` answer keeps the best, which is
+        // the order the stage answered in.
+        let capped = cap_for_merge(candidates(cap + 1), true);
+        assert_eq!(ids(&capped), ids(&candidates(cap + 1))[..cap].to_vec());
+
+        // Exactly the cap, and fewer, are returned whole.
+        assert_eq!(cap_for_merge(candidates(cap), true).len(), cap);
+        assert_eq!(cap_for_merge(candidates(cap - 1), true).len(), cap - 1);
+
+        // The empty-answer path is not capped at all: the list is what the floor
+        // left, however long.
+        assert_eq!(cap_for_merge(candidates(cap + 1), false).len(), cap + 1);
     }
 }

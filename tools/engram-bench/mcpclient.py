@@ -63,3 +63,30 @@ class MCP:
         return text, dt, r
     def close(self):
         self.p.stdin.close(); self.p.wait(timeout=5)
+
+
+class UnusableReply(RuntimeError):
+    """A reply that is not an answer.
+
+    A JSON-RPC error, a result carrying `isError`, or text that will not parse is
+    not an empty answer. A measurement that folded one into the empty count would
+    improve its no-answer figures on an engine fault — the exact direction those
+    figures exist to check.
+    """
+
+
+def call_json(m, tool, args):
+    """One tool call, or `UnusableReply`.
+
+    The single place a reply is judged usable, so `ratchet.py` and
+    `bench_search.py` cannot come to different conclusions about what an answer
+    is. A `RuntimeError` subclass, so a caller that already catches that keeps
+    working.
+    """
+    text, dt, raw = m.call(tool, args)
+    if "error" in raw or (raw.get("result") or {}).get("isError"):
+        raise UnusableReply(f"{tool} failed: {text[:300] or raw}")
+    try:
+        return json.loads(text), text, dt
+    except ValueError:
+        raise UnusableReply(f"{tool} answered something that is not JSON: {text[:300]}")

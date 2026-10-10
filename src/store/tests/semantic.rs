@@ -284,6 +284,87 @@ fn a_nearest_answer_is_merged_with_the_semantic_list_and_only_what_it_adds_is_ma
     );
 }
 
+/// The same cap through a store: which branch a list came from is
+/// `with_semantic_stage`'s decision, and the pure test in `store::search` cannot
+/// see that wiring.
+///
+/// Driven at `with_semantic_stage` with no lexical list, so what comes back is
+/// the semantic list the cap produced rather than a fused and limited page whose
+/// row count would be a property of the fixture. This one needs `assets/model`
+/// and returns early without it; the branch, the value and the boundary are
+/// proved without a model in `store::search`'s `cap_tests`.
+#[test]
+fn a_store_caps_the_semantic_list_beside_a_nearest_answer() {
+    let Some((_temp, mut store)) = model_store() else {
+        return;
+    };
+    store.create_session("s1", "leteo", "C:/repo").unwrap();
+    // More memories than the cap, each as near the question as the key-rotation
+    // memory these fixtures use (0.38 against a floor of 0.30), so the list is
+    // longer than the cap whether or not the floor is applied.
+    let roomy = crate::semantic::MERGE_CAP + 3;
+    for index in 0..roomy {
+        store
+            .add_observation(observation(
+                "s1",
+                &format!("Rotate JWT signing keys every 30 days, runbook {index}"),
+                JWT_BODY,
+            ))
+            .unwrap();
+    }
+
+    let uncapped = store.with_semantic_stage(ASKED_IN_SPANISH, &on(), roomy, Vec::new(), false);
+    assert!(
+        uncapped.len() > crate::semantic::MERGE_CAP,
+        "the empty-answer path returned {} and not more than the cap, so the cap \
+         could not be told from the fixture",
+        uncapped.len()
+    );
+
+    let capped = store.with_semantic_stage(ASKED_IN_SPANISH, &on(), roomy, Vec::new(), true);
+    assert_eq!(
+        capped.len(),
+        crate::semantic::MERGE_CAP,
+        "the nearest path is capped: {capped:?}"
+    );
+    // And the cap keeps the best, which is the order the stage answered in.
+    let best: Vec<i64> = uncapped
+        .iter()
+        .take(crate::semantic::MERGE_CAP)
+        .map(|candidate| candidate.id)
+        .collect();
+    assert_eq!(
+        capped
+            .iter()
+            .map(|candidate| candidate.id)
+            .collect::<Vec<i64>>(),
+        best,
+        "the cap dropped the best rather than the rest"
+    );
+
+    // Fewer than the cap is untouched: there is nothing to drop, and nothing is
+    // dropped.
+    let Some((_small_temp, mut small)) = model_store() else {
+        return;
+    };
+    small.create_session("s1", "leteo", "C:/repo").unwrap();
+    for index in 0..crate::semantic::MERGE_CAP - 2 {
+        small
+            .add_observation(observation(
+                "s1",
+                &format!("Rotate JWT signing keys every 30 days, runbook {index}"),
+                JWT_BODY,
+            ))
+            .unwrap();
+    }
+    let under = small.with_semantic_stage(ASKED_IN_SPANISH, &on(), roomy, Vec::new(), true);
+    assert_eq!(
+        under.len(),
+        crate::semantic::MERGE_CAP - 2,
+        "a list shorter than the cap is returned whole: {under:?}"
+    );
+}
+
 /// A topic key is an exact lookup, answered first and complete. The stage has
 /// nothing to add to it and does not run.
 #[test]
