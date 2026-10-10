@@ -17,6 +17,7 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    /// Open a memory session.
     SessionStart {
         id: String,
         #[arg(long)]
@@ -24,11 +25,13 @@ pub enum Command {
         #[arg(long)]
         directory: PathBuf,
     },
+    /// Close a session and record its summary.
     SessionEnd {
         id: String,
         #[arg(long)]
         summary: Option<String>,
     },
+    /// Save a memory.
     Save {
         title: String,
         content: String,
@@ -63,6 +66,7 @@ pub enum Command {
         #[arg(long)]
         topic_key: Option<String>,
     },
+    /// Search memories by text.
     Search {
         query: String,
         #[arg(long)]
@@ -79,6 +83,7 @@ pub enum Command {
         #[arg(long, value_enum, default_value_t = MatchMode::All)]
         match_mode: MatchMode,
     },
+    /// Record a user prompt.
     Prompt {
         content: String,
         #[arg(long)]
@@ -86,6 +91,7 @@ pub enum Command {
         #[arg(long)]
         project: Option<String>,
     },
+    /// List the most recent memories.
     Recent {
         #[arg(long)]
         project: Option<String>,
@@ -98,14 +104,17 @@ pub enum Command {
         #[arg(long)]
         summaries: bool,
     },
+    /// Remove a memory, a session, a prompt or a whole project.
     Delete {
         #[command(subcommand)]
         command: DeleteCommand,
     },
+    /// Inspect and maintain the projects the store holds.
     Projects {
         #[command(subcommand)]
         command: ProjectsCommand,
     },
+    /// Show the memories around one observation in time.
     Timeline {
         id: i64,
         #[arg(long)]
@@ -113,6 +122,7 @@ pub enum Command {
         #[arg(long)]
         after: Option<usize>,
     },
+    /// Print the context a session opens with.
     Context {
         /// Project to build the context for. `--project` is accepted too.
         ///
@@ -132,6 +142,7 @@ pub enum Command {
         #[arg(long)]
         limit: Option<usize>,
     },
+    /// Check the store and report what is wrong with it.
     Doctor {
         /// Report only this diagnostic, by its stable code.
         #[arg(long)]
@@ -147,16 +158,19 @@ pub enum Command {
         #[arg(long)]
         repair: bool,
     },
+    /// Find and judge conflicting memories.
     Conflicts {
         #[command(subcommand)]
         command: ConflictsCommand,
     },
+    /// Export memories as JSON.
     Export {
         #[arg(long)]
         project: Option<String>,
         #[arg(long)]
         output: Option<PathBuf>,
     },
+    /// Import memories from a JSON export or from an Engram install.
     Import {
         /// JSON export to read. `--input` is accepted too. Omit when using
         /// --from-engram.
@@ -187,6 +201,7 @@ pub enum Command {
         #[arg(long, value_enum, default_value_t = GraphConfigArgument::Preserve)]
         graph_config: GraphConfigArgument,
     },
+    /// Report store counts.
     Stats,
     /// Replicate to the cloud in the background until interrupted.
     ///
@@ -196,6 +211,7 @@ pub enum Command {
     /// replication meant opening a port for nobody. The name stays; the port
     /// is gone.
     Serve,
+    /// Serve the MCP tools an agent calls.
     Mcp {
         /// Comma-separated tool profiles or names: agent, admin, all, or
         /// individual tools such as mem_save.
@@ -206,6 +222,7 @@ pub enum Command {
         #[arg(long, env = "LETEO_PROJECT")]
         project: Option<String>,
     },
+    /// Open the interactive terminal interface.
     Tui,
     /// Handle an agent lifecycle event. Reads the agent's JSON payload from
     /// standard input and prints the hook response on standard output.
@@ -215,6 +232,7 @@ pub enum Command {
         #[arg(long)]
         verbose: bool,
     },
+    /// Configure Leteo in an agent.
     Setup {
         agent: Option<String>,
         /// Walk through setup even when the output is not a terminal.
@@ -282,10 +300,12 @@ pub enum Command {
         #[arg(long)]
         keep_data: bool,
     },
+    /// Replicate memories to a cloud server.
     Cloud {
         #[command(subcommand)]
         command: CloudCommand,
     },
+    /// Print the project this directory belongs to.
     CurrentProject,
     /// The model semantic search reads, which ships beside the binary.
     Model {
@@ -321,17 +341,17 @@ pub enum ModelCommand {
 
 #[derive(Debug, Subcommand)]
 pub enum DeleteCommand {
+    /// Delete one memory.
     Observation {
         id: i64,
         #[arg(long)]
         hard: bool,
     },
-    Session {
-        id: String,
-    },
-    Prompt {
-        id: i64,
-    },
+    /// Delete a session and the memories it recorded.
+    Session { id: String },
+    /// Delete one prompt.
+    Prompt { id: i64 },
+    /// Delete every memory in a project.
     Project {
         name: String,
         #[arg(long)]
@@ -341,7 +361,9 @@ pub enum DeleteCommand {
 
 #[derive(Debug, Subcommand)]
 pub enum ProjectsCommand {
+    /// List the projects the store holds.
     List,
+    /// Merge duplicate projects into one.
     Consolidate {
         #[arg(long, conflicts_with = "all")]
         project: Option<String>,
@@ -350,6 +372,7 @@ pub enum ProjectsCommand {
         #[arg(long)]
         apply: bool,
     },
+    /// Remove projects that hold no memories.
     Prune {
         #[arg(long)]
         apply: bool,
@@ -358,6 +381,7 @@ pub enum ProjectsCommand {
 
 #[derive(Debug, Subcommand)]
 pub enum ConflictsCommand {
+    /// List the conflicts found for a project.
     List {
         #[arg(long)]
         project: Option<String>,
@@ -370,13 +394,14 @@ pub enum ConflictsCommand {
         #[arg(long, default_value_t = 0)]
         offset: usize,
     },
-    Show {
-        id: i64,
-    },
+    /// Show one conflict and the memories it relates.
+    Show { id: i64 },
+    /// Report conflict counts.
     Stats {
         #[arg(long)]
         project: Option<String>,
     },
+    /// Look for conflicts the store does not know about yet.
     Scan {
         #[arg(long)]
         project: Option<String>,
@@ -402,6 +427,7 @@ pub enum ConflictsCommand {
         #[arg(long)]
         yes: bool,
     },
+    /// List the sync mutations that could not be applied, or retry them.
     Deferred {
         #[arg(long)]
         status: Option<String>,
@@ -416,14 +442,17 @@ pub enum ConflictsCommand {
 
 #[derive(Debug, Subcommand)]
 pub enum CloudCommand {
+    /// Run the cloud server.
     #[cfg(feature = "cloud-server")]
     Serve,
+    /// Check whether the configured cloud server answers.
     Health {
         #[arg(long, env = "LETEO_CLOUD_SERVER")]
         server: Option<String>,
         #[arg(long, env = "LETEO_CLOUD_TOKEN")]
         token: Option<String>,
     },
+    /// Replicate this machine's memories to the cloud once.
     Sync {
         #[arg(long, env = "LETEO_CLOUD_SERVER")]
         server: Option<String>,
@@ -505,6 +534,7 @@ pub enum CloudAdminCommand {
 pub enum CloudConfigCommand {
     /// Print the effective configuration with the token redacted.
     Show,
+    /// Change the persisted client configuration.
     Set {
         #[arg(long)]
         server: Option<String>,
@@ -632,6 +662,40 @@ mod tests {
         // debug-time panics rather than compile errors.
         use clap::CommandFactory;
         Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn every_subcommand_says_what_it_does() {
+        // `about` is the line `--help` prints beside a command, and clap leaves
+        // it empty when the variant carries no doc comment: the command is then
+        // listed with nothing to say for itself. That blank is invisible in a
+        // diff and obvious here, which is the whole point of walking the tree
+        // rather than trusting a reader to notice one missing `///`.
+        use clap::CommandFactory;
+
+        fn collect(command: &clap::Command, path: &str, blank: &mut Vec<String>) {
+            for subcommand in command.get_subcommands() {
+                let here = if path.is_empty() {
+                    subcommand.get_name().to_owned()
+                } else {
+                    format!("{path} {}", subcommand.get_name())
+                };
+                if subcommand
+                    .get_about()
+                    .is_none_or(|about| about.to_string().trim().is_empty())
+                {
+                    blank.push(here.clone());
+                }
+                collect(subcommand, &here, blank);
+            }
+        }
+
+        let mut blank = Vec::new();
+        collect(&Cli::command(), "", &mut blank);
+        assert!(
+            blank.is_empty(),
+            "these subcommands have no `about`, so `--help` shows them bare: {blank:?}"
+        );
     }
 
     #[test]
