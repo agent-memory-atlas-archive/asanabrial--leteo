@@ -203,14 +203,22 @@ pub enum Command {
     },
     /// Report store counts.
     Stats,
-    /// Replicate to the cloud in the background until interrupted.
+    /// Serve the store over a local HTTP API, and keep replicating in the
+    /// background while it runs.
     ///
-    /// This used to also open a local HTTP API on a port, which is why it was
-    /// called `serve`. Nothing used that API — the hooks, the MCP server, the
-    /// CLI and the TUI all reach SQLite directly — so wanting continuous
-    /// replication meant opening a port for nobody. The name stays; the port
-    /// is gone.
-    Serve,
+    /// This is the port the command was named for. It was removed when nothing
+    /// used it — the hooks, the MCP server, the CLI and the TUI all reach
+    /// SQLite directly — and is back for the callers that already speak HTTP:
+    /// a script reaches `POST /tools/<name>` with the arguments the MCP tool of
+    /// that name takes, so there is one name and one argument shape per
+    /// operation. The loopback is the default; `--bind` takes another address,
+    /// and one that is not the loopback is an explicit opt-in the log says out
+    /// loud.
+    Serve {
+        /// Address to listen on, as `host:port`.
+        #[arg(long, default_value = crate::mcp::DEFAULT_BIND)]
+        bind: String,
+    },
     /// Serve the MCP tools an agent calls.
     Mcp {
         /// Comma-separated tool profiles or names: agent, admin, all, or
@@ -599,7 +607,7 @@ impl Cli {
     pub fn wants_worker_threads(&self) -> bool {
         matches!(
             self.command,
-            Command::Serve | Command::Mcp { .. } | Command::Tui | Command::Cloud { .. }
+            Command::Serve { .. } | Command::Mcp { .. } | Command::Tui | Command::Cloud { .. }
         )
     }
 }

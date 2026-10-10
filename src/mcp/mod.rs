@@ -923,6 +923,21 @@ pub async fn run_stdio_with_options(
     Ok(())
 }
 
+/// Answer the same tools over a local HTTP socket until the process ends.
+///
+/// The endpoints are the tool list this process exposes, so the HTTP surface
+/// and `tools/list` can never disagree about what exists.
+pub async fn run_http_with_options(
+    store: Arc<Mutex<Store>>,
+    options: McpOptions,
+    bind: &str,
+) -> anyhow::Result<()> {
+    if let Some(specification) = options.tools.as_deref() {
+        resolve_tools(specification).map_err(|why| anyhow::anyhow!("{why}"))?;
+    }
+    serve::run(LeteoMcpServer::with_options(store, options), bind).await
+}
+
 const fn default_capture_prompt() -> bool {
     true
 }
@@ -1145,7 +1160,10 @@ fn project_detection_error(detection: &ProjectDetection) -> CallToolResult {
 
 mod output;
 mod params;
+mod serve;
 mod tools;
+
+pub use serve::DEFAULT_BIND;
 
 use output::*;
 pub(crate) use output::{

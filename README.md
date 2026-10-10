@@ -339,6 +339,30 @@ publishes. The line is written out rather than hidden in a comment because that
 is what the registry reads to believe this repository owns the crate, and
 crates.io strips HTML comments when it renders this file.
 
+## HTTP
+
+For a script or a plugin that already speaks HTTP, `leteo serve` opens the same
+tools on the loopback — no MCP client, and no process per call:
+
+```powershell
+leteo serve
+```
+
+`GET /tools` names the endpoints, `GET /health` says it is up, and
+`POST /tools/<name>` takes that tool's arguments as its JSON body — the same
+name and the same arguments the MCP tool takes, so there is one vocabulary to
+learn:
+
+```powershell
+curl -s http://127.0.0.1:7437/tools/mem_save -d '{"title":"A decision","content":"what and why","type":"decision"}'
+```
+
+It is the same store and the same rules as the MCP and CLI paths, because it is
+the same handler: a save over HTTP is indexed, normalised and queued for
+replication exactly as one from an agent. It binds the loopback by default;
+`--bind 0.0.0.0:7437` exposes it to the network and the log says so, because the
+store holds everything the agent has remembered.
+
 ## What you type
 
 Rarely anything: the saving and the recalling happen without you. This is the
@@ -526,7 +550,7 @@ flag, so it is safe to paste.
 `status` contacts nothing at all: it reports this machine's own view — what is
 enrolled, how many changes are waiting and since when, and whether the last
 attempt failed and with what. `sync` runs one cycle now, and `leteo serve` keeps
-running them in the background until interrupted:
+running them in the background — beside the HTTP API — until interrupted:
 
 ```powershell
 leteo cloud health

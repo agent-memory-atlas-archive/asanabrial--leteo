@@ -987,6 +987,19 @@ useful part out of a context window has failed even if every field is right.
     `doctor`: when a store is refused, the first question is which binary
     refused it, and between releases the version alone does not answer.
 
+24. **The same tools answer over a local HTTP socket.** `leteo serve` exposes
+    the tool list on `127.0.0.1:7437` by default: `GET /tools` names the
+    endpoints, `GET /health` says the process is up, and `POST /tools/<name>`
+    takes that tool's arguments as its JSON body and answers with that tool's
+    own reply — the success shape, or the `error.code` shape a refusal carries,
+    with a tool-level refusal answered `400` and an unknown tool `404`. The
+    handler is the MCP handler itself, so a write over HTTP normalises,
+    indexes, redacts and enqueues for replication exactly as the stdio path
+    does ([`replication.md`](replication.md) §2), and `deny_unknown_fields`
+    refuses an argument the tool does not take on either surface. The bind is
+    the loopback unless `--bind` says otherwise
+    ([`cli.md`](cli.md) §21).
+
 ## Invariants
 
 - Titles printed into anything an agent reads are folded to a single line and
@@ -1003,6 +1016,11 @@ useful part out of a context window has failed even if every field is right.
 - `src/mcp/tools.rs` — the tool router and every handler
 - `src/mcp/output.rs` — the typed replies, the previews, the hints
 - `src/mcp/params.rs` — parameter parsing and the project gate
+- `src/mcp/serve.rs` — §24's local HTTP surface, held by
+  `a_save_over_http_is_reachable_by_a_search`,
+  `a_refusal_is_a_bad_request_and_an_unknown_tool_is_not_found`,
+  `the_default_bind_is_the_loopback` and
+  `a_bind_that_is_not_the_loopback_says_so`
 - `src/mcp/tests.rs` — §5's drift refusal is held by
   `a_remote_that_changed_makes_the_write_ask_which_project`, its session door by
   `a_remote_that_changed_makes_the_session_door_ask_too`, its agreeing half by
