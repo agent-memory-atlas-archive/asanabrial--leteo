@@ -227,3 +227,136 @@ fn truncate(text: &str, max_tokens: usize, median_length: usize) -> &str {
         .nth(max_tokens.saturating_mul(median_length))
         .map_or(text, |(byte, _)| &text[..byte])
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::semantic::MAX_TOKENS;
+
+    /// The three files built from a tokenizer and a table this test owns.
+    ///
+    /// The equivalence test in the parent module needs the real model and returns
+    /// early in a tree that has none — the packaged crate — so without this the
+    /// reader's arithmetic and its refusals would be proved only where
+    /// `assets/model/` happens to be checked out. This is what makes them proved
+    /// everywhere, on bytes whose every value the test chose.
+    const TOKENIZER: &str = r#"{
+        "version": "1.0",
+        "truncation": null,
+        "padding": null,
+        "added_tokens": [],
+        "normalizer": null,
+        "pre_tokenizer": {"type": "Whitespace"},
+        "post_processor": null,
+        "decoder": null,
+        "model": {
+            "type": "WordPiece",
+            "unk_token": "[UNK]",
+            "continuing_subword_prefix": "%%",
+            "max_input_chars_per_word": 100,
+            "vocab": {"[UNK]": 0, "hello": 1, "world": 2}
+        }
+    }"#;
+
+    /// Three rows: `[UNK]` is row 0, `hello` row 1, `world` row 2. Row 1 is
+    /// `[3, -5, 0, ...]` and row 2 is `[7, 9, 0, ...]`, so the mean of the two
+    /// before normalising is `[5, 2, 0, ...]` — small enough to be exact in
+    /// `f32`, which is the arithmetic the change rests on.
+    fn table() -> Vec<i8> {
+        let mut table = vec![0i8; 3 * DIMENSIONS];
+        table[DIMENSIONS] = 3;
+        table[DIMENSIONS + 1] = -5;
+        table[2 * DIMENSIONS] = 7;
+        table[2 * DIMENSIONS + 1] = 9;
+        table
+    }
+
+    fn weights_of(dtype: Dtype, shape: Vec<usize>, bytes: &[u8]) -> Vec<u8> {
+        let view = safetensors::tensor::TensorView::new(dtype, shape, bytes).unwrap();
+        safetensors::serialize(
+            [(EMBEDDINGS, view)],
+            &None::<std::collections::HashMap<String, String>>,
+        )
+        .unwrap()
+    }
+
+    fn int8_weights(table: &[i8]) -> Vec<u8> {
+        let bytes: Vec<u8> = table.iter().map(|value| *value as u8).collect();
+        weights_of(
+            Dtype::I8,
+            vec![table.len() / DIMENSIONS, DIMENSIONS],
+            &bytes,
+        )
+    }
+
+    fn built(table: &[i8]) -> Result<SemanticModel, String> {
+        SemanticModel::from_parts(
+            b"{\"normalize\": true}",
+            &int8_weights(table),
+            TOKENIZER.as_bytes(),
+        )
+    }
+
+    /// The arithmetic the whole change rests on: the mean of the int8 rows the
+    /// ids name, normalised, is the mean of the same rows expanded to `f32`.
+    #[test]
+    fn pooling_over_the_stored_bytes_is_the_mean_of_the_expanded_rows() {
+        let model = built(&table()).unwrap();
+        let vectors = model
+            .encode_with_args(&["hello world".to_owned()], Some(MAX_TOKENS), 1024)
+            .unwrap();
+        assert_eq!(vectors[0].len(), DIMENSIONS);
+        let norm = (5.0f32 * 5.0 + 2.0 * 2.0).sqrt();
+        assert_eq!(vectors[0][0], 5.0 / norm);
+        assert_eq!(vectors[0][1], 2.0 / norm);
+        assert_eq!(vectors[0][2], 0.0);
+    }
+
+    /// The unknown token is dropped before the mean, so a text that tokenizes to
+    /// a known word plus an unknown one pools exactly as the known word alone.
+    #[test]
+    fn an_unknown_token_is_dropped_before_the_mean() {
+        let model = built(&table()).unwrap();
+        let with_unknown = model
+            .encode_with_args(&["hello zzz".to_owned()], Some(MAX_TOKENS), 1024)
+            .unwrap();
+        let alone = model
+            .encode_with_args(&["hello".to_owned()], Some(MAX_TOKENS), 1024)
+            .unwrap();
+        assert_eq!(with_unknown[0], alone[0]);
+    }
+
+    /// The cut before tokenizing is by characters, not bytes, so it never lands
+    /// inside a multi-byte character.
+    #[test]
+    fn the_cut_is_by_characters_and_not_bytes() {
+        assert_eq!(truncate("abcdef", 2, 2), "abcd");
+        assert_eq!(truncate("aéb", 1, 2), "aé");
+        assert_eq!(truncate("abc", 10, 10), "abc");
+    }
+
+    /// Every way a file can be wrong is refused rather than loaded, so a swapped
+    /// or truncated table cannot reach the stage.
+    #[test]
+    fn a_table_the_build_does_not_accept_is_refused() {
+        let config = b"{\"normalize\": true}";
+        assert!(built(&table()).is_ok());
+
+        // A dtype that is not int8: the same shape, four bytes a value.
+        let wide = vec![0u8; 3 * DIMENSIONS * 4];
+        let not_int8 = weights_of(Dtype::F32, vec![3, DIMENSIONS], &wide);
+        assert!(SemanticModel::from_parts(config, &not_int8, TOKENIZER.as_bytes()).is_err());
+
+        // A table narrower than the vectors the stage scores against.
+        let narrow = weights_of(Dtype::I8, vec![3, 4], &[0u8; 12]);
+        assert!(SemanticModel::from_parts(config, &narrow, TOKENIZER.as_bytes()).is_err());
+
+        // No safetensors at all, and a tokenizer that is not one.
+        assert!(
+            SemanticModel::from_parts(config, b"not safetensors", TOKENIZER.as_bytes()).is_err()
+        );
+        assert!(
+            SemanticModel::from_parts(config, &int8_weights(&table()), b"not a tokenizer").is_err()
+        );
+    }
+}

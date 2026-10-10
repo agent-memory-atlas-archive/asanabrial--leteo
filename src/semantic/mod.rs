@@ -610,6 +610,12 @@ pub(crate) mod tests {
                 right.len(),
                 "text {index} has a different width"
             );
+            // `f32: PartialEq` calls `-0.0` and `0.0` equal; the claim is bit
+            // equality, so the bits are what is compared.
+            let (left, right): (Vec<u32>, Vec<u32>) = (
+                left.iter().map(|value| value.to_bits()).collect(),
+                right.iter().map(|value| value.to_bits()).collect(),
+            );
             assert_eq!(left, right, "text {index} is not bit-identical");
         }
     }
