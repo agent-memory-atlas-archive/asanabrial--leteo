@@ -13,12 +13,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
 
-use crate::sync::{ChunkData, canonicalize_for_project, decode_chunk};
+use crate::sync::{ChunkData, MutationEntry, canonicalize_for_project, decode_chunk};
 
 use super::{
     MAX_MUTATION_BATCH_SIZE,
     auth::{AuthError, AuthService, Principal, PrincipalRole, PrincipalSource},
-    cloudstore::{AuditEntry, CloudStore, CloudStoreError, MutationEntry},
+    cloudstore::{AuditEntry, CloudStore, CloudStoreError},
     config::CloudConfig,
 };
 

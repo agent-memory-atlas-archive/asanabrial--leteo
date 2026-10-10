@@ -136,7 +136,11 @@ this describes what happens when it does not have to.
 
 - `src/store/wire.rs` — the replicated write paths
 - `src/store/replication.rs` — the queue, the leases, the deferred mutations
-- `src/sync/`, `src/cloud/` — the transport, the auth, the server half
+- `src/sync/`, `src/cloud/` — the transport, the auth, the server half. The
+  server half — `cloud::auth`, `cloud::cloudserver`, `cloud::cloudstore` and
+  the `serve`/`admin` commands — is compiled only under the off-by-default
+  `cloud-server` cargo feature; the client, the journal and `sync/` are in
+  every build.
 - `src/sync/tests.rs`
 
 ## Related
