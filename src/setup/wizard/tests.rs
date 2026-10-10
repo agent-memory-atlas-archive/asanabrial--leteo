@@ -418,7 +418,7 @@ fn the_options_page_shows_the_three_settings_side_by_side_and_opens_the_one_chos
         "{painted}"
     );
     assert!(
-        row_with(&wizard, "Sardi's voice").contains("all"),
+        row_with(&wizard, "Sardi's voice").contains("reminders"),
         "{painted}"
     );
     assert!(!painted.contains("say out loud"), "{painted}");
@@ -428,7 +428,7 @@ fn the_options_page_shows_the_three_settings_side_by_side_and_opens_the_one_chos
     let painted = screen(&wizard);
     assert!(painted.contains("say out loud"), "{painted}");
     assert!(
-        painted.contains("▸ (●) all"),
+        painted.contains("▸ (●) reminders"),
         "it opens on the answer in force: {painted}"
     );
     for voice in Voice::ALL {
@@ -442,7 +442,7 @@ fn the_options_page_shows_the_three_settings_side_by_side_and_opens_the_one_chos
     wizard.advance();
     assert_eq!(wizard.step(), Step::Options);
     let row = row_with(&wizard, "Sardi's voice");
-    assert!(row.contains("reminders"), "{row}");
+    assert!(row.contains("quiet"), "{row}");
     assert!(
         row.starts_with('\u{25b8}'),
         "the cursor stays on the row just changed: {row}"
@@ -452,12 +452,49 @@ fn the_options_page_shows_the_three_settings_side_by_side_and_opens_the_one_chos
     assert_eq!(wizard.step(), Step::Ready);
     let mut report = Vec::new();
     let outcome = wizard.apply(&mut report).unwrap();
-    assert_eq!(outcome.voice, Voice::Reminders);
-    assert_eq!(settings::load(temp.path()).voice, Voice::Reminders);
+    assert_eq!(outcome.voice, Voice::Quiet);
+    assert_eq!(settings::load(temp.path()).voice, Voice::Quiet);
     assert!(
         String::from_utf8_lossy(&report).contains("Preferences saved"),
         "a page that saves in silence cannot be told from one that failed: \
          {report:?}"
+    );
+}
+
+#[test]
+fn the_language_menus_mark_romanian_as_a_machine_translation() {
+    // Romanian was added machine-translated and the menu said nothing, which
+    // reads as a native translation. The mark is on the two menus that choose
+    // what Leteo itself says; the memory-language menu is not one of them,
+    // because that setting is handed to a model rather than spoken by Leteo.
+    let temp = TempDir::new().unwrap();
+    let mut wizard = Wizard::preferences(offer_in(temp.path()));
+    open_option(&mut wizard, Step::InterfaceLanguage);
+    let painted = screen(&wizard);
+    assert!(
+        painted.contains("română (machine translation)"),
+        "the interface menu marks the machine translation: {painted}"
+    );
+    assert_eq!(
+        painted.matches("machine translation").count(),
+        1,
+        "only the machine-translated language carries the mark: {painted}"
+    );
+
+    let mut wizard = Wizard::preferences(offer_in(temp.path()));
+    open_option(&mut wizard, Step::SardiLanguage);
+    let painted = screen(&wizard);
+    assert!(
+        painted.contains("română (machine translation)"),
+        "Sardi's language menu marks it too: {painted}"
+    );
+
+    let mut wizard = Wizard::preferences(offer_in(temp.path()));
+    open_option(&mut wizard, Step::MemoryLanguage);
+    let painted = screen(&wizard);
+    assert!(
+        !painted.contains("machine translation"),
+        "a language handed to a model is not a translation Leteo ships: {painted}"
     );
 }
 
@@ -540,7 +577,7 @@ fn a_voice_that_follows_is_written_as_following_rather_than_pinned() {
     wizard.apply(&mut Vec::new()).unwrap();
 
     let saved = settings::load(temp.path());
-    assert_eq!(saved.voice, Voice::Reminders, "the change asked for");
+    assert_eq!(saved.voice, Voice::Quiet, "the change asked for");
     assert_eq!(
         saved.voice_language, None,
         "and the voice was pinned to a language nobody chose"
@@ -746,7 +783,7 @@ fn the_level_is_written_even_when_it_was_never_touched() {
     let temp = TempDir::new().unwrap();
     let mut wizard = Wizard::preferences(offer_in(temp.path()));
     open_option(&mut wizard, Step::SardiVoice);
-    wizard.down();
+    // One step off the level in force, which is the default `reminders`.
     wizard.down();
     wizard.toggle();
     wizard.advance();

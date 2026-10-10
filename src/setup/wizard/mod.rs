@@ -506,7 +506,7 @@ impl Wizard {
                     lines.push(radio(
                         self.cursor == index,
                         self.interface == *language,
-                        language.as_str(),
+                        &language_label(*language, say),
                     ));
                 }
                 lines.push(Row::blank());
@@ -542,7 +542,7 @@ impl Wizard {
                                 say.voice_language_same, say.voice_language_same_detail
                             )
                         }
-                        Some(language) => language.as_str().to_owned(),
+                        Some(language) => language_label(*language, say),
                     };
                     lines.push(radio(
                         self.cursor == index,
@@ -760,6 +760,21 @@ impl Wizard {
             writeln!(report, "{}", say.restart_them)?;
         }
         Ok(outcome)
+    }
+}
+
+/// A language as a menu shows it: its own name, and the machine-translation mark
+/// when it is one.
+///
+/// The mark is on the two menus that choose what Leteo itself says — its own
+/// screens and Sardi's lines. The memory-language menu is not marked: that
+/// setting is handed to a model, so nothing Leteo ships is being translated
+/// there.
+fn language_label(language: crate::settings::Interface, say: &crate::i18n::Screens) -> String {
+    if language.machine_translated() {
+        format!("{} ({})", language.as_str(), say.machine_translation)
+    } else {
+        language.as_str().to_owned()
     }
 }
 

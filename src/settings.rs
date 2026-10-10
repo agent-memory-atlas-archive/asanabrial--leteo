@@ -16,14 +16,21 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
+/// How much of its own work Sardi says out loud.
+///
+/// The default is [`Voice::Reminders`]. It used to be [`Voice::All`], which put
+/// a line in front of the person on every prompt — a report nobody asked for, in
+/// every session, for everybody who kept the default. The reminder is the one
+/// line that does work, and it stays. A settings file that names a voice keeps
+/// it, so nobody who chose `all` loses it.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Voice {
     /// Everything: what the project holds, what might fit, what was captured,
     /// what survived a compaction, and the save reminder.
-    #[default]
     All,
     /// The save reminder alone.
+    #[default]
     Reminders,
     /// Nothing at all.
     Quiet,
@@ -184,6 +191,17 @@ impl Interface {
             Self::Polish => "polski",
             Self::Swedish => "svenska",
         }
+    }
+
+    /// Whether this language is a machine translation rather than one written
+    /// by somebody who speaks it.
+    ///
+    /// Romanian was added machine-translated and the screen that offers it said
+    /// nothing, which reads as a native translation. Named here rather than at
+    /// the one place that renders it, so the menus and any later surface that
+    /// lists languages agree about which.
+    pub fn machine_translated(self) -> bool {
+        matches!(self, Self::Romanian)
     }
 
     /// Every spelling of this language a settings file might hold.
@@ -890,10 +908,12 @@ mod tests {
     }
 
     #[test]
-    fn an_unset_preference_is_the_loudest_one() {
-        // Installing Leteo and hearing nothing would read as a broken install.
-        assert_eq!(Voice::default(), Voice::All);
-        assert_eq!(Settings::default().voice, Voice::All);
+    fn an_unset_voice_is_the_reminder_alone() {
+        // It used to default to `all`, which is a line on every prompt for
+        // everybody who never opened the settings. The reminder is the one line
+        // that does work, so it is the default; `all` is still there to choose.
+        assert_eq!(Voice::default(), Voice::Reminders);
+        assert_eq!(Settings::default().voice, Voice::Reminders);
     }
 
     #[test]
@@ -966,7 +986,11 @@ mod tests {
         );
 
         let kept = written(r#"{"voice":7,"language":"español","interface":"español"}"#);
-        assert_eq!(kept.voice, Voice::All, "an unreadable level is no level");
+        assert_eq!(
+            kept.voice,
+            Voice::Reminders,
+            "an unreadable level is the default level"
+        );
         assert_eq!(kept.language.as_deref(), Some("español"));
         assert_eq!(kept.interface, Some(Interface::Spanish));
 
@@ -1061,7 +1085,7 @@ mod tests {
         let other = TempDir::new().unwrap();
         assert_eq!(
             load_beside(&other.path().join("leteo.db")).voice,
-            Voice::All
+            Voice::Reminders
         );
     }
 }

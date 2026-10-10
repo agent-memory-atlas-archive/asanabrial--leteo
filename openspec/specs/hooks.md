@@ -457,6 +457,16 @@ deadline, so every promise here is a promise about time as much as content.
    as `hook_spool` ([`store-and-schema.md`](store-and-schema.md) §4), and
    `doctor --repair` drains it.
 
+23. **The voice is the reminder alone until somebody asks for more.** A report
+   line in front of the person on every prompt is noise nobody asked for, in
+   every session, for everybody who kept the default — so `voice` defaults to
+   `reminders`, not `all`. An unset voice still says the save reminder (§8) and
+   writes no report line: the opening greeting, the nudge's hint and the capture
+   report all wait for `all`, which a settings file that names it still gets. The
+   default is one value in one place, read by the behaviour and the settings
+   test, and named here so the line an unset store writes is the line it
+   promises.
+
 ## Invariants
 
 - Every event finishes inside its agent's patience even when the wait overruns.

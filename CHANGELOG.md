@@ -6,6 +6,13 @@ All notable changes to Leteo are documented in this file.
 
 ### Added
 
+- **The language menu says which translation a machine made.** Romanian was
+  added machine-translated rather than written by somebody who speaks it, and the
+  menu that offered it said nothing, which reads as a native translation. It now
+  carries the mark beside its name, in Leteo's own language menu and in Sardi's;
+  the memory language is left unmarked, because that setting is handed to a model
+  rather than spoken by Leteo (#212).
+
 - **`leteo --version` names the build, not only the release.** It prints the
   commit it was built from and the schema it supports — `leteo 0.3.0 (f712df8,
   schema 22)` — embedded by `build.rs` at compile time and degrading to the
@@ -35,6 +42,12 @@ All notable changes to Leteo are documented in this file.
   `-wal` and `-shm` by hand. The newest three copies are kept. (#199)
 
 ### Changed
+
+- **Sardi says the save reminder and nothing else by default.** Its voice was
+  `all`, so a report line went into the conversation on every prompt, in every
+  session, for everybody who never opened the settings. The default is now
+  `reminders`: the line that does work still comes, and the reports wait for a
+  file that asks for `all`. A settings file that names a voice keeps it (#212).
 
 - **`doctor` weighs a finding by what it costs.** Each check carries an
   `error`, `warning` or `info` severity and `healthy` means no `error`, so a
