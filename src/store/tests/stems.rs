@@ -445,8 +445,8 @@ fn doctor_names_a_store_whose_stems_went_missing_and_the_repair_puts_them_back()
 }
 
 /// The one language the setting offers that still has no second stemmer is
-/// Galician, and `search.md` §16 says why. A second gaining an arm, or Galician
-/// gaining one, is a reason to edit that paragraph.
+/// Galician. A second gaining an arm, or Galician gaining one, is a reason to
+/// revisit this.
 #[test]
 fn the_language_without_a_stemmer_is_the_one_the_spec_names() {
     let without: Vec<Interface> = Interface::ALL

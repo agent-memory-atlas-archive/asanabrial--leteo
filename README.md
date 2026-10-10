@@ -7,8 +7,7 @@
   <a href="#install">Install</a> &bull;
   <a href="#what-it-feels-like">How it works</a> &bull;
   <a href="#what-you-type">Commands</a> &bull;
-  <a href="#languages">Languages</a> &bull;
-  <a href="openspec/">Specs</a>
+  <a href="#languages">Languages</a>
 </p>
 
 <p align="center">
@@ -515,7 +514,7 @@ matters more than the budget. `semantic_search` is whether a search the words
 cannot answer goes on to look by meaning, in all thirteen languages, with a model
 that ships beside the binary and never touches a network when you search; results
 found that way are marked `semantic`. Turn it off if the memory it holds while it
-runs (stated in [`search.md`](openspec/specs/search.md) §15) is too much, or if you
+runs is too much, or if you
 want only answers that contain your words.
 
 Two of the six are flags as well, because changing them should not mean
@@ -560,9 +559,7 @@ leteo serve
 ```
 
 Not to be confused with `leteo cloud serve`, which is the other end — the server
-itself, which you only run if you are hosting one. That side, with its Compose
-stack, managed tokens and project grants, is in
-[`openspec/specs/replication.md`](openspec/specs/replication.md).
+itself, which you only run if you are hosting one.
 
 ## Coming From Engram
 
@@ -615,20 +612,6 @@ they create and drop their own schema, and are not written to share one.
 Contributors — human or agent — should read [`AGENTS.md`](AGENTS.md) first.
 
 ## Documentation
-
-This file is the user-facing guide. What the system *guarantees*, and why, is in
-[`openspec/`](openspec/) — one document per capability, cross-linked:
-
-| Document | Covers |
-| -------- | ------ |
-| [`project.md`](openspec/project.md) | what Leteo is, the crate layout, the system-wide invariants |
-| [`specs/memory-model.md`](openspec/specs/memory-model.md) | what a memory is, its types, review windows, normalisation |
-| [`specs/search.md`](openspec/specs/search.md) | matching, ranking, the three stages, the narrowings |
-| [`specs/store-and-schema.md`](openspec/specs/store-and-schema.md) | the database, migrations, `doctor` and its repairs |
-| [`specs/mcp-tools.md`](openspec/specs/mcp-tools.md) | the MCP surface and the shape of its replies |
-| [`specs/hooks.md`](openspec/specs/hooks.md) | the five lifecycle events and their time budgets |
-| [`specs/cli.md`](openspec/specs/cli.md) | the command line and what its answers explain |
-| [`specs/replication.md`](openspec/specs/replication.md) | the optional PostgreSQL peer |
 
 Longer write-ups of individual measurements live in [`docs/`](docs/). The first
 is [*there was nothing worth tuning*](docs/nothing-worth-tuning.md): the third

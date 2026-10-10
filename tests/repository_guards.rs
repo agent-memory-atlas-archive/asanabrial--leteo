@@ -247,8 +247,8 @@ fn a_tests_directory_is_a_path_component_not_a_substring() {
 ///
 /// The list is the point rather than an exemption: a dead column missing from
 /// it fails here, and so does one of the named ones coming to life, because
-/// then the sentence in `store-and-schema.md` §10 has stopped being true and
-/// somebody has to say what it does now. How many there are belongs to the
+/// then the claim that it is unwritten has stopped being true and somebody
+/// has to say what it does now. How many there are belongs to the
 /// list.
 #[test]
 fn every_column_has_a_writer_or_is_named_as_having_none() {
@@ -321,8 +321,7 @@ fn every_column_has_a_writer_or_is_named_as_having_none() {
         .collect();
     assert!(
         unexpected.is_empty(),
-        "these columns are written by nothing and `store-and-schema.md` §10 does \
-         not say so: {unexpected:?}"
+        "these columns are written by nothing and are not named as such:  {unexpected:?}"
     );
     let revived: Vec<&(&str, String)> = named
         .iter()
@@ -331,7 +330,7 @@ fn every_column_has_a_writer_or_is_named_as_having_none() {
     assert!(
         revived.is_empty(),
         "these are named as written by nothing and something now writes them, so \
-         `store-and-schema.md` §10 has to say what they do: {revived:?}"
+         they have to be taken off the list: {revived:?}"
     );
 }
 

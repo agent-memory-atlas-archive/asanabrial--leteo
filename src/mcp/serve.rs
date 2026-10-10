@@ -6,7 +6,7 @@
 //! arguments — so there is one name and one argument shape per operation
 //! rather than a second REST vocabulary to keep in step, and every write takes
 //! the same path the MCP and CLI callers take because it calls the same
-//! handlers (replication.md §2).
+//! handlers.
 //!
 //! The transport is HTTP/1.1 written here rather than pulled in. `axum` is in
 //! the tree only behind the off-by-default `cloud-server` feature, and the

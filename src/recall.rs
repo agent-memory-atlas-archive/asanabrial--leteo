@@ -1157,7 +1157,7 @@ And the tests could not see it, because a small store scores near zero."
     }
     #[test]
     fn the_two_sections_that_carry_a_preview_cut_their_title_like_every_other_line() {
-        // `hooks.md` §5 promises that every line of the block is cut at a bound
+        // The block promises that every line of the block is cut at a bound
         // somebody measured, and names the title bound first. Of the four places
         // in this file that print a title, two kept that promise — the `Also
         // remembered` index and the title of the second memory named beside a

@@ -31,16 +31,15 @@ use crate::{
 /// How many entries the spool holds before the oldest are dropped.
 ///
 /// Without a bound a store busy for a long time fills the directory, and each
-/// entry is the whole text of a subagent's turn. Published in `hooks.md` §22
-/// and read by the tests beside this, so the number that is applied is the
-/// number that is named.
+/// entry is the whole text of a subagent's turn. Read by the tests beside
+/// this, so the number that is applied is the number that is named.
 pub const SPOOL_CAP: usize = 1_000;
 
 /// Days after which an entry is dropped without being replayed.
 ///
 /// Past this the capture is not worth keeping: a subagent's learnings belong to
 /// the conversation that produced them, and replaying one a week later files it
-/// into a store that has moved on. Published with the cap in `hooks.md` §22.
+/// into a store that has moved on.
 pub const SPOOL_RETENTION_DAYS: i64 = 7;
 
 const RETENTION_MILLIS: i64 = SPOOL_RETENTION_DAYS * 24 * 60 * 60 * 1_000;
@@ -246,7 +245,7 @@ pub(crate) fn pending(dir: &Path) -> Pending {
 
 /// An age in the largest unit that still reads as one.
 ///
-/// The same shape `hooks.md` §8 gives the save reminder, and for the same
+/// The same shape the save reminder gives an age, and for the same
 /// reason: "259200 seconds" is a number nobody converts, and the doctor line is
 /// read by a person deciding whether to run the repair.
 pub(crate) fn describe_age(age: Duration) -> String {

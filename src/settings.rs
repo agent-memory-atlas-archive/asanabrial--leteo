@@ -433,7 +433,7 @@ impl ContextSize {
     /// long titles and long sessions grows the block without a ceiling, and the
     /// block is paid on every session and after every compaction. These are the
     /// measured sizes of the three blocks — 14.8, 31.4 and 48.0 KB on a real
-    /// store, recorded in `openspec/specs/mcp-tools.md` §3 — rounded up to the
+    /// store — rounded up to the
     /// next thousand, so the ceiling sits just above where the three sizes
     /// already are and only a store that outgrows them is cut. Derived from this
     /// project's own measurements rather than copied from Engram's single 16 KiB
@@ -544,8 +544,7 @@ pub struct Settings {
     /// A boolean where `voice` is three levels, because there is no middle: the
     /// stage either runs or it does not, and when it does not the search is the
     /// lexical one byte for byte. The reason to turn it off is a machine where the
-    /// memory a process holds while the model is loaded (`search.md` §15 states
-    /// it) is too much, or a person who wants only answers that contain their
+    /// memory a process holds while the model is loaded is too much, or a person who wants only answers that contain their
     /// words.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub semantic_search: Option<bool>,

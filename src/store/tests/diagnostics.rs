@@ -831,7 +831,7 @@ fn the_checks_that_are_only_ever_seen_passing_can_still_go_red() {
 
 /// Two memories under one key is a state the store can reach, and now says so.
 ///
-/// `memory-model.md` §10 states the invariant — one live memory per key, per
+/// The invariant is one live memory per key, per
 /// project, per scope, because the revision lookup finds it by exactly that
 /// triple — and names the one operation that can break it. Merging two projects
 /// can, since each may have had its own memory under one key, and the merge

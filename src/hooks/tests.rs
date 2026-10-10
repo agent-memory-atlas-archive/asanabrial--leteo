@@ -1084,35 +1084,6 @@ fn the_pairs_handed_over_are_the_ones_that_have_waited_longest() {
     );
 }
 
-/// The spec says how many pairs an opening hands over, and the code hands over
-/// that many.
-///
-/// Shaped after `the_skill_promises_the_preview_length_the_code_cuts_at`, for
-/// the same reason and against a different document. `hooks.md` §13 is where
-/// somebody reads what an opening block contains before touching this code, and
-/// a number changed here without the sentence leaves them planning against a
-/// size the code stopped using.
-#[test]
-fn the_spec_publishes_the_number_of_pairs_the_opening_hands_over() {
-    let spelled = match crate::hooks::context::VERDICT_HANDOVER {
-        2 => "two oldest",
-        3 => "three oldest",
-        4 => "four oldest",
-        5 => "five oldest",
-        other => panic!(
-            "an opening now hands over {other} pairs; spell it out here and in \
-             openspec/specs/hooks.md §13"
-        ),
-    };
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("openspec/specs/hooks.md");
-    let text = std::fs::read_to_string(&path)
-        .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
-    assert!(
-        text.contains(spelled),
-        "hooks.md has to say the opening carries the {spelled} pairs"
-    );
-}
-
 #[test]
 fn a_memory_deleted_since_still_leaves_a_pair_worth_closing() {
     // The claim this replaces was false, and the test that asserted it made
@@ -3032,7 +3003,7 @@ fn the_capture_ceiling_fits_inside_the_deadline_the_agent_allows() {
 /// A conversation as long as the longest one measured is never handed the same
 /// memory twice.
 ///
-/// The per-prompt hint promises exactly this — `hooks.md` §9 — and what makes
+/// The per-prompt hint promises exactly this — and what makes
 /// it true is a list of what this conversation has already been shown, written
 /// to disk on every prompt. That list is capped, as it must be, and the cap was
 /// 128: sized against sessions of 45 prompts, which was the longest this store

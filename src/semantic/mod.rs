@@ -11,7 +11,7 @@
 //! installs that arrive without it.
 //!
 //! Which model, why, and where the bytes come from are in
-//! `tools/semantic/README.md` and `openspec/specs/search.md` §15. What this
+//! `tools/semantic/README.md`. What this
 //! module owns is what belongs to the model rather than to the search: where it
 //! is looked for, the hashes it must have, its name, its width, how much of a
 //! memory it reads, and the cosine below which two texts are not saying the same
@@ -342,8 +342,7 @@ fn stamp(directory: &Path) -> Stamp {
 /// Every file is read, hashed and compared before a byte of it is used, and the
 /// bytes that were hashed are the bytes that are loaded, so a file swapped in
 /// between cannot be loaded unverified. Loading then costs 13 to 15 ms and, with
-/// the int8 table kept as the bytes it is stored as, the memory `search.md` §15
-/// states once. A process that never reaches the semantic stage never pays
+/// the int8 table kept as the bytes it is stored as, the memory that costs. A process that never reaches the semantic stage never pays
 /// either: that is every hook and almost every search.
 ///
 /// Re-checked when the files change (size or modification time), and not on every

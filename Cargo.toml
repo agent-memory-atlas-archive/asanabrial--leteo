@@ -31,7 +31,6 @@ include = [
     "/build.rs",
     "/src/**",
     "/migrations/**",
-    "/openspec/**",
     "/plugin/**",
     "/tests/**",
     # Not source, but read by the tests that ship: the two plugin marketplaces, the
@@ -127,7 +126,6 @@ hmac = { version = "0.13.0", optional = true }
 #
 # `model2vec-rs`, which this reader replaced, is a dev-dependency now: it is the
 # reference the equivalence test reads and nothing the release binary links.
-# `openspec/specs/search.md` §15 has the account.
 safetensors = "0.5.3"
 tokenizers = { version = "0.21.4", default-features = false, features = ["fancy-regex", "progressbar", "esaxx_fast"] }
 rand = "0.10.2"

@@ -494,8 +494,8 @@ impl Store {
     ///
     /// `names` is the list to answer for, already in the order the reply sends
     /// them: `mem_stats` reads it from [`Store::stats`], which resolves each
-    /// project by seek rather than by grouping the whole table — the shape
-    /// `store-and-schema.md` §13 fixes. Each name in the head is then one query,
+    /// project by seek rather than by grouping the whole table — the seek
+    /// rather than the grouping. Each name in the head is then one query,
     /// so the work is proportional to the ceiling and not to the store, and the
     /// names past the ceiling are counted rather than answered.
     ///

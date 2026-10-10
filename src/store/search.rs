@@ -121,8 +121,8 @@ pub(crate) const DEFAULT_SEARCH_LIMIT: usize = 10;
 ///
 /// `pub` because the command line's integration test is a separate crate and
 /// has to refuse at the same number the store applies rather than a copy of it,
-/// the way the store's own test reads the constant. The schema description and
-/// `search.md` still state the number literally, because neither can read it.
+/// the way the store's own test reads the constant. The schema description still states the number literally, because it cannot
+/// read it.
 pub const MAX_QUERY_BYTES: usize = 8192;
 
 /// The statement [`Store::matching_observations`] runs, built in one place.
@@ -179,7 +179,7 @@ pub(super) fn visible_observations(kind: usize, project: usize, scope: usize) ->
 ///
 /// A summary is long and touches everything, so it is the best partial match for
 /// almost any question and the right answer to almost none; that is the rule for
-/// a query that did not ask for them, measured in `search.md` §6. A query that
+/// a query that did not ask for them, as measured. A query that
 /// named the type asked for exactly this, and `visible_observations` already
 /// narrows to it — excluding it after that returned nothing at all, which is the
 /// contradiction `is_searchable_kind` promised a caller would not hit.
@@ -608,8 +608,7 @@ impl Store {
         // And when the words found nothing, or only the weakest of what they
         // can find, the meaning.
         //
-        // See `search.md` §15 for what this costs and what it was measured to
-        // buy. The shape, in short: on an empty answer it speaks only above a
+        // The shape: on an empty answer it speaks only above a
         // cosine floor, because without one it answers every question, including
         // the ones this store cannot; on a `nearest` answer, which was given
         // anyway and is the weakest lexical claim there is, it is merged in by
@@ -1160,8 +1159,7 @@ impl Store {
     /// to ask the same thing, and it was built and measured before this was
     /// written: `tokenize = 'trigram'` over title and content added 18.5 MB to a
     /// 9.3 MB corpus, twice the text, for a stage that runs only once every
-    /// indexed stage has already found nothing. See `search.md` for the
-    /// measurement.
+    /// indexed stage has already found nothing.
     ///
     /// Every term has to be inside the title, never any of them. A disjunction
     /// here would answer a question the widened retry is about to answer
@@ -1461,7 +1459,7 @@ impl Store {
         //
         // The note that stood here said such a memory was "simply not here",
         // which is true of a hard deletion and of nothing else. Deleted
-        // memories are never returned — see `memory-model.md` §8 — so the
+        // memories are never returned — so the
         // filter travels with the fetch rather than being assumed from the
         // company it keeps.
         Ok(candidates
@@ -1762,8 +1760,7 @@ mod hydrate_tests {
 /// Driven straight at `cap_for_merge` rather than through a store, because the
 /// store-driven test needs `assets/model` and returns early without it — a cap
 /// whose only test can skip is a cap with no test, and this one has to fail in
-/// any tree. The number is asserted against the five `search.md` §15 publishes,
-/// so a change to `MERGE_CAP` has to come with the spec edit that says why.
+/// any tree. The number is asserted so that a change to `MERGE_CAP` is a deliberate one.
 #[cfg(test)]
 mod cap_tests {
     use super::*;
@@ -1786,11 +1783,7 @@ mod cap_tests {
 
     #[test]
     fn the_merge_cap_holds_beside_a_nearest_answer_and_nowhere_else() {
-        assert_eq!(
-            crate::semantic::MERGE_CAP,
-            5,
-            "search.md §15 publishes five"
-        );
+        assert_eq!(crate::semantic::MERGE_CAP, 5, "the merge cap is five");
         let cap = crate::semantic::MERGE_CAP;
 
         // More than the cap beside a `nearest` answer keeps the best, which is
