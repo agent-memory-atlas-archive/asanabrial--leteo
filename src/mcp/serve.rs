@@ -72,25 +72,51 @@ fn listening_message(address: SocketAddr) -> String {
 }
 
 async fn serve(listener: TcpListener, server: LeteoMcpServer) -> anyhow::Result<()> {
+    accept_forever(|| listener.accept(), api(server)).await
+}
+
+/// The shared state one server answers from: the handlers and the tool list
+/// this process exposes.
+fn api(server: LeteoMcpServer) -> Arc<Api> {
     let tools = server
         .router
         .list_all()
         .into_iter()
         .map(|tool| tool.name.to_string())
         .collect();
-    let api = Arc::new(Api { server, tools });
+    Arc::new(Api { server, tools })
+}
+
+/// How long the accept loop waits before retrying a failed `accept`.
+///
+/// The retry is paced rather than immediate so a descriptor table that stays
+/// full does not spin a core while answering nothing.
+const ACCEPT_RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(20);
+
+/// Accept and answer connections forever, retrying a failed `accept` rather
+/// than ending.
+///
+/// A failed `accept` on a listener this process created and never closes is
+/// environmental: a client that went away before the kernel handed the socket
+/// over, a descriptor table with no room left, a transient buffer shortage.
+/// None of those is the listener's own failure, and ending `leteo serve` over
+/// one takes down a socket every other caller shares. So the loop logs and
+/// retries, and the delay above bounds the cost of a failure that persists.
+/// `TooManyOpenFiles` is named in prose rather than matched on: its
+/// `ErrorKind` is still unstable, and retrying everything covers it.
+async fn accept_forever<F, Fut>(mut accept: F, api: Arc<Api>) -> anyhow::Result<()>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = std::io::Result<(TcpStream, SocketAddr)>>,
+{
     loop {
-        let (stream, _peer) = match listener.accept().await {
+        let (stream, _peer) = match accept().await {
             Ok(accepted) => accepted,
-            // A connection that reset between `connect` and `accept` is that
-            // client's, not the listener's; ending the process over it would
-            // let one aborted connection take down a socket every other caller
-            // shares.
-            Err(error) if accept_error_is_transient(&error) => {
+            Err(error) => {
                 eprintln!("leteo serve: {error}");
+                tokio::time::sleep(ACCEPT_RETRY_DELAY).await;
                 continue;
             }
-            Err(error) => return Err(error.into()),
         };
         let api = Arc::clone(&api);
         tokio::spawn(async move {
@@ -110,20 +136,6 @@ struct Api {
     /// the set is fixed for the process's lifetime and the endpoint set is the
     /// same list `tools/list` publishes.
     tools: std::collections::BTreeSet<String>,
-}
-
-/// Whether a failed `accept` belongs to the one connection that failed rather
-/// than to the listener.
-///
-/// `ECONNABORTED` is the ordinary case — a client that connected and went away
-/// before the kernel handed the socket over — and `EINTR` is a signal that
-/// interrupted the wait. Both leave the listener healthy, so the loop goes on.
-/// Anything else is the listener's own failure and is propagated.
-fn accept_error_is_transient(error: &std::io::Error) -> bool {
-    matches!(
-        error.kind(),
-        std::io::ErrorKind::ConnectionAborted | std::io::ErrorKind::Interrupted
-    )
 }
 
 struct Request {
@@ -450,6 +462,14 @@ mod tests {
     /// `TempDir` is handed back so it outlives the server task the caller
     /// leaves running.
     async fn spawn_api(project: &str) -> (SocketAddr, tempfile::TempDir) {
+        let (server, temp) = test_server(project);
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(serve(listener, server));
+        (address, temp)
+    }
+
+    fn test_server(project: &str) -> (LeteoMcpServer, tempfile::TempDir) {
         let temp = tempfile::tempdir().unwrap();
         let store = Store::open(StoreConfig::new(temp.path().join("http.db"))).unwrap();
         let server = LeteoMcpServer::with_options(
@@ -459,10 +479,7 @@ mod tests {
                 tools: None,
             },
         );
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
-        tokio::spawn(serve(listener, server));
-        (address, temp)
+        (server, temp)
     }
 
     /// One hand-written request over a fresh connection, answering the whole
@@ -659,6 +676,23 @@ mod tests {
             response.contains("body is too large"),
             "the body bound, not a body that ended early: {response}"
         );
+
+        // A body that ends before the length it declared: the client sends
+        // four bytes and shuts down, so the read reaches EOF short of the ten
+        // it promised.
+        let response = raw_request(
+            address,
+            "POST /tools/mem_save HTTP/1.1\r\nHost: localhost\r\nContent-Length: 10\r\n\r\nnope",
+        )
+        .await;
+        assert!(
+            response.starts_with("HTTP/1.1 400"),
+            "a body that ends early: {response}"
+        );
+        assert!(
+            response.contains("ended before Content-Length"),
+            "the short-body refusal: {response}"
+        );
     }
 
     #[tokio::test]
@@ -730,19 +764,43 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_transient_accept_error_is_told_from_a_listener_failure() {
-        use std::io::{Error, ErrorKind};
+    #[tokio::test]
+    async fn the_loop_keeps_accepting_after_a_failed_accept() {
+        let (server, _temp) = test_server("http-test");
+        let bound = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = bound.local_addr().unwrap();
+        // The test holds no handle on the listener: it moves into the loop, so
+        // a loop that returned would close the socket and the request below
+        // would fail fast instead of hanging.
+        let accepted_from = Arc::new(bound);
+        // The first `accept` fails, as one does when a client goes away before
+        // the kernel hands the socket over; every later one is real.
+        let mut inject = true;
+        tokio::spawn(accept_forever(
+            move || {
+                let fail = std::mem::replace(&mut inject, false);
+                let listener = Arc::clone(&accepted_from);
+                async move {
+                    if fail {
+                        Err(std::io::Error::from(std::io::ErrorKind::ConnectionAborted))
+                    } else {
+                        listener.accept().await
+                    }
+                }
+            },
+            api(server),
+        ));
 
-        assert!(accept_error_is_transient(&Error::from(
-            ErrorKind::ConnectionAborted
-        )));
-        assert!(accept_error_is_transient(&Error::from(
-            ErrorKind::Interrupted
-        )));
-        assert!(
-            !accept_error_is_transient(&Error::from(ErrorKind::Other)),
-            "a listener failure is not a connection's"
-        );
+        // A request answered after the injected failure means the loop went on
+        // rather than returning.
+        let health: serde_json::Value = reqwest::Client::new()
+            .get(format!("http://{address}/health"))
+            .send()
+            .await
+            .expect("the server answers after a failed accept")
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(health["status"], "ok");
     }
 }

@@ -998,8 +998,13 @@ useful part out of a context window has failed even if every field is right.
     does ([`replication.md`](replication.md) §2), and `deny_unknown_fields`
     refuses an argument the tool does not take on either surface. A request body
     carries `Content-Length`, and a body sent chunked is refused rather than
-    read as empty; the header and the body are both bounded. The bind is the
-    loopback unless `--bind` says otherwise ([`cli.md`](cli.md) §21).
+    read as empty; a body that ends before the length it declared is refused
+    too, and the header and the body are both bounded. A failed `accept` is
+    retried after a short delay rather than ending the process, since the
+    listener is one this process owns and never closes, so its errors are the
+    environment's — an aborted connection, a full descriptor table, a transient
+    buffer shortage — and not the listener's own. The bind is the loopback
+    unless `--bind` says otherwise ([`cli.md`](cli.md) §21).
 
 ## Invariants
 
@@ -1024,7 +1029,7 @@ useful part out of a context window has failed even if every field is right.
   `the_header_and_body_bounds_are_refused`,
   `a_non_json_body_and_a_bad_method_are_refused`,
   `every_tool_the_list_advertises_can_be_called`,
-  `a_transient_accept_error_is_told_from_a_listener_failure`,
+  `the_loop_keeps_accepting_after_a_failed_accept`,
   `the_default_bind_is_the_loopback` and
   `a_bind_that_is_not_the_loopback_says_so`
 - `src/mcp/tests.rs` — §5's drift refusal is held by
