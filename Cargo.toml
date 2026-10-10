@@ -118,16 +118,18 @@ hmac = { version = "0.13.0", optional = true }
 # and an average, so this is the whole of "in-process inference" — no ONNX, no
 # native runtime, no network, no shell-out.
 #
-# `default-features = false` is the point. The defaults pull `hf-hub` and
-# `ureq`, a second HTTP client for downloading from Hugging Face, which is not
-# where the model comes from (`leteo model install` fetches it with the `reqwest`
-# already here), and `onig`, a C regex library for a tokenizer that
-# `fancy-regex` serves in pure Rust. `local-only` is the feature that says so.
-# Measured: the linker keeps this dependency and its tokenizer only where something
-# loads the model, so the release binary is 15,680,176 bytes without it and
-# 15,730,544 with the install path alone; the model is a file beside the binary and
-# adds nothing to it. `openspec/specs/search.md` §15 has the account.
-model2vec-rs = { version = "0.3.0", default-features = false, features = ["fancy-regex", "local-only"] }
+# `safetensors` reads the int8 table without copying it out of the form it is
+# stored in; `tokenizers` turns a text into the ids that index it. `tokenizers`
+# is deliberately not at its defaults: they pull `onig`, a C regex library, where
+# `fancy-regex` serves the same thing in pure Rust, and the three features named
+# are the ones the previous reader selected, kept so the compiled tokenizer is
+# the one the floors were measured on.
+#
+# `model2vec-rs`, which this reader replaced, is a dev-dependency now: it is the
+# reference the equivalence test reads and nothing the release binary links.
+# `openspec/specs/search.md` §15 has the account.
+safetensors = "0.5.3"
+tokenizers = { version = "0.21.4", default-features = false, features = ["fancy-regex", "progressbar", "esaxx_fast"] }
 rand = "0.10.2"
 ratatui = "0.30.2"
 regex = "1.12.2"
@@ -162,6 +164,11 @@ tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
 
 [dev-dependencies]
 assert_cmd = "2.1.1"
+# The reader the semantic stage replaced, kept as the reference its equivalence
+# test reads: the same texts embedded by both readers must agree bit for bit.
+# It is not a dependency of the release binary, so the f32 table it expands is
+# not compiled into the product — only into the test that proves the two agree.
+model2vec-rs = { version = "0.3.0", default-features = false, features = ["fancy-regex", "local-only"] }
 # The client's own tests stand up a mock server to exercise the bounded read and
 # the paging loop (`src/cloud/remote.rs`, `src/cloud/autosync.rs`), and the
 # server's integration tests drive the router in-process. The feature gates the

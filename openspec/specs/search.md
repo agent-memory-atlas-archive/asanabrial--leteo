@@ -346,8 +346,9 @@ before any of it.
     its WordPiece vocabulary pruned to the 49,203 pieces the thirteen interface
     languages use. It is 12.9 MB in three files — `model.safetensors`,
     `config.json`, and the tokenizer stored as 321 KB of deterministic gzip and
-    decompressed when the model loads — run by `model2vec-rs` (pure Rust,
-    `fancy-regex`, no `onig`). `tools/semantic/` rebuilds the files from the
+    decompressed when the model loads — read and pooled by this crate itself,
+    over the int8 table as it is stored (`safetensors` and `tokenizers`, pure
+    Rust, `fancy-regex`, no `onig`). `tools/semantic/` rebuilds the files from the
     original and `checksums.json` records what each hashes to, stored and
     decompressed; the attribution is in `NOTICE`. A memory is embedded from its first 128 tokens, title first: that
     beat 64 and 256, and at 512 the semantic MRR of bodies fell from .57 to .35.
@@ -524,14 +525,18 @@ before any of it.
       on the model's size, so a larger model can never again make it unpublishable.
       The model is 12.9 MB beside it.
     - **Memory** -- the one place it is stated. 15.7 MB resident for a search that
-      does not reach the stage; about 103 MB for a process that has loaded the
-      model, because the int8 table is expanded to f32; 121 MB at the peak of the
-      first firing on a 4,000-memory store. What bounds that peak is the chunk:
-      memories are embedded and kept 256 at a time, so the text and vectors held at
-      once do not grow with the store (the ids of what is stale do, at about a
-      hundred bytes each). A store that cannot be written is the exception: its
-      vectors are held until the question is answered, a kilobyte per memory in
-      scope.
+      does not reach the stage; about 70 MB for a process that has loaded the
+      model, the int8 table kept as the 12.6 MB it is stored as rather than
+      expanded to the 50 MB of f32 it used to be; 74 MB at the peak of the first
+      firing on a 4,000-memory store. Those are 120 questions through
+      `mem_search` on an Apple M-series machine, against the same store and the
+      same questions for the build that expanded the table: that one peaked at
+      112 MB, so keeping the table int8 is 38 MB of the peak. What bounds that
+      peak is the chunk: memories are embedded and kept 256 at a time, so the text
+      and vectors held at once do not grow with the store (the ids of what is
+      stale do, at about a hundred bytes each). A store that cannot be written is
+      the exception: its vectors are held until the question is answered, a
+      kilobyte per memory in scope.
     - **Time.** An ordinary search is unchanged: a strict answer on a
       4,150-memory real store took 6.2 ms before and 5.6 ms after. An empty question there goes
       from 48.7 ms (the lexical stages, which are most of it) to 78.5 ms, p90

@@ -5,7 +5,7 @@
         -> quantised to int8 with model2vec's own routine
         -> its WordPiece vocabulary pruned to the pieces Leteo's languages use
 
-and writes the three files `model2vec-rs` needs to <out-dir>:
+and writes the three files the binary reads to <out-dir>:
 config.json, model.safetensors, tokenizer.json.gz.
 
 The tokenizer is 843 KB of one-line JSON that nobody reviews, so it is stored as

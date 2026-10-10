@@ -23,10 +23,12 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
-use model2vec_rs::model::StaticModel;
 use sha2::{Digest, Sha256};
 
 pub mod install;
+mod model;
+
+pub use model::SemanticModel;
 
 /// What computed a stored vector, and the model this binary accepts.
 ///
@@ -340,14 +342,14 @@ fn stamp(directory: &Path) -> Stamp {
 /// Every file is read, hashed and compared before a byte of it is used, and the
 /// bytes that were hashed are the bytes that are loaded, so a file swapped in
 /// between cannot be loaded unverified. Loading then costs 13 to 15 ms and, with
-/// the int8 table expanded to f32, the memory `search.md` §15 states once. A
-/// process that never reaches the semantic stage never pays either: that is every
-/// hook and almost every search.
+/// the int8 table kept as the bytes it is stored as, the memory `search.md` §15
+/// states once. A process that never reaches the semantic stage never pays
+/// either: that is every hook and almost every search.
 ///
 /// Re-checked when the files change (size or modification time), and not on every
 /// call; the lookup on the way is a few `stat`s.
-pub fn load(data_dir: &Path, explicit: Option<&Path>) -> Result<Arc<StaticModel>, Unavailable> {
-    type Loaded = HashMap<PathBuf, (Stamp, Arc<StaticModel>)>;
+pub fn load(data_dir: &Path, explicit: Option<&Path>) -> Result<Arc<SemanticModel>, Unavailable> {
+    type Loaded = HashMap<PathBuf, (Stamp, Arc<SemanticModel>)>;
     static LOADED: Mutex<Option<Loaded>> = Mutex::new(None);
     let places = locations(data_dir, explicit);
     let mut cache = LOADED
@@ -364,7 +366,15 @@ pub fn load(data_dir: &Path, explicit: Option<&Path>) -> Result<Arc<StaticModel>
         }
         match inspect(place) {
             Directory::Verified([config, weights, tokenizer]) => {
-                match build(&config, &weights, &tokenizer) {
+                let built = build(&config, &weights, &tokenizer);
+                // The three files are 13 MB and none of them is the model: the
+                // table is copied out as the int8 it already is and the buffers
+                // go before the model is cached. Freeing them here is the second
+                // half of what this reader saves -- the first is not expanding
+                // the table to f32 -- and keeps the two from coexisting past the
+                // build that needs both.
+                drop((config, weights, tokenizer));
+                match built {
                     Ok(model) => {
                         let model = Arc::new(model);
                         cache.insert(place.clone(), (stamped, Arc::clone(&model)));
@@ -390,13 +400,12 @@ pub fn load(data_dir: &Path, explicit: Option<&Path>) -> Result<Arc<StaticModel>
     Err(Unavailable(wrong.unwrap_or(Status::Missing(places))))
 }
 
-fn build(config: &[u8], weights: &[u8], tokenizer_gz: &[u8]) -> Result<StaticModel, String> {
+fn build(config: &[u8], weights: &[u8], tokenizer_gz: &[u8]) -> Result<SemanticModel, String> {
     let mut tokenizer = Vec::new();
     flate2::read::GzDecoder::new(tokenizer_gz)
         .read_to_end(&mut tokenizer)
         .map_err(|error| format!("tokenizer.json.gz did not decompress: {error}"))?;
-    StaticModel::from_bytes(&tokenizer, weights, config, Some(true))
-        .map_err(|error| format!("the model did not load: {error}"))
+    SemanticModel::from_parts(config, weights, &tokenizer)
 }
 
 /// The text a memory is embedded from.
@@ -418,11 +427,11 @@ pub fn document_text(title: &str, content: &str) -> String {
 /// (`encode_batch_fast(..).expect(..)` in the crate). A panic inside a search
 /// would take the MCP server down for a question that has an answer without
 /// this stage, so it is turned into the error it is.
-pub fn embed(model: &StaticModel, texts: &[String]) -> Result<Vec<Vec<f32>>, EmbedError> {
+pub fn embed(model: &SemanticModel, texts: &[String]) -> Result<Vec<Vec<f32>>, EmbedError> {
     let vectors = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         model.encode_with_args(texts, Some(MAX_TOKENS), 1024)
     }))
-    .map_err(|_| EmbedError("the tokenizer failed on this text".to_owned()))?;
+    .map_err(|_| EmbedError("the tokenizer failed on this text".to_owned()))??;
     Ok(vectors.into_iter().map(normalised).collect())
 }
 
@@ -492,7 +501,7 @@ pub(crate) mod tests {
         items.iter().map(|item| (*item).to_owned()).collect()
     }
 
-    fn loaded() -> Option<Arc<StaticModel>> {
+    fn loaded() -> Option<Arc<SemanticModel>> {
         let directory = needs_model!()?;
         let scratch = std::env::temp_dir().join("leteo-no-such-data-dir");
         Some(
@@ -548,6 +557,61 @@ pub(crate) mod tests {
         assert_eq!(vectors[0].len(), DIMENSIONS);
         let norm: f32 = vectors[0].iter().map(|x| x * x).sum::<f32>().sqrt();
         assert!((norm - 1.0).abs() < 1e-4, "not unit length: {norm}");
+    }
+
+    /// The reader this crate now pools with and the one it replaced give the
+    /// same vector for the same text -- equal, not close.
+    ///
+    /// The equality is the point: the arithmetic is exact (`model::pool`), so
+    /// there is no tolerance to set and no cosine under which a real difference
+    /// could hide. The sample covers the shapes that exercise what was
+    /// reproduced from the crate: a short text, a multi-line one, one in another
+    /// language, one with no known token, one with characters outside ASCII, and
+    /// one long enough to be cut before it is tokenized.
+    #[test]
+    fn the_int8_reader_agrees_with_the_crate_it_replaced() {
+        let Some(directory) = needs_model!() else {
+            return;
+        };
+        let config = std::fs::read(directory.join("config.json")).unwrap();
+        let weights = std::fs::read(directory.join("model.safetensors")).unwrap();
+        let compressed = std::fs::read(directory.join("tokenizer.json.gz")).unwrap();
+        let mut tokenizer = Vec::new();
+        flate2::read::GzDecoder::new(&compressed[..])
+            .read_to_end(&mut tokenizer)
+            .unwrap();
+
+        let ours = SemanticModel::from_parts(&config, &weights, &tokenizer).unwrap();
+        let reference =
+            model2vec_rs::model::StaticModel::from_bytes(&tokenizer, &weights, &config, Some(true))
+                .unwrap();
+
+        let mut sample = texts(&[
+            "database connection pool exhaustion",
+            "Rotate JWT signing keys every 30 days with kid header\nSigning keys live in \
+             KMS and tokens carry a kid header.",
+            "thundering herd when the cache expires",
+            "rotación de las claves de firma",
+            "How to bake sourdough bread\nMix flour and water, let the starter ferment \
+             overnight, bake in a hot oven.",
+            "\u{200b}\u{200b}",
+            "Ünïcödé, punctuation — and an em dash.",
+        ]);
+        sample.push("word ".repeat(2_000));
+
+        let ours = ours
+            .encode_with_args(&sample, Some(MAX_TOKENS), 1024)
+            .unwrap();
+        let reference = reference.encode_with_args(&sample, Some(MAX_TOKENS), 1024);
+        assert_eq!(ours.len(), reference.len());
+        for (index, (left, right)) in ours.iter().zip(&reference).enumerate() {
+            assert_eq!(
+                left.len(),
+                right.len(),
+                "text {index} has a different width"
+            );
+            assert_eq!(left, right, "text {index} is not bit-identical");
+        }
     }
 
     /// Meaning rather than words: a question that shares no word with its

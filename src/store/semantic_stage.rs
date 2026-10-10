@@ -11,8 +11,7 @@ use std::time::Duration;
 
 use super::search::{Candidate, FUSION_CONSTANT, visible_observations};
 use super::*;
-use crate::semantic;
-use model2vec_rs::model::StaticModel;
+use crate::semantic::{self, SemanticModel};
 
 /// What a vector was computed from, written as SQL over `observations o`.
 ///
@@ -155,7 +154,7 @@ impl Store {
     /// bytes, so the question that caused the work is still answered from them.
     fn refresh_vectors(
         &self,
-        model: &StaticModel,
+        model: &SemanticModel,
         options: &SearchOptions,
     ) -> Result<BTreeMap<i64, (String, Vec<u8>)>, StageError> {
         let stale = self.stale_vectors(options)?;
