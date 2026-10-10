@@ -800,8 +800,7 @@ pub struct Stats {
     ///
     /// `mem_stats` answers these same projects, in this same order, with their
     /// counts and last activity, bounded by the list ceiling; it reads them from
-    /// here rather than grouping the whole table, which is the seek
-    /// `store-and-schema.md` §13 fixes.
+    /// here rather than grouping the whole table.
     pub projects: Vec<String>,
 }
 
@@ -848,9 +847,8 @@ pub struct ExportData {
     pub relations: Vec<Relation>,
     /// The version history, which used to be left behind.
     ///
-    /// `leteo export` is this store written down ([`cli.md`](../../openspec/specs/cli.md)
-    /// §6), and a table added to the store and left out of the export is the
-    /// same lossy backup pinning once was: history replicates but would not
+    /// `leteo export` is this store written down, and a table added to the store
+    /// and left out of the export is the same lossy backup pinning once was: history replicates but would not
     /// survive a backup and restore. The field is `default`, so an Engram or
     /// older-Leteo export without it reads back with no versions.
     #[serde(default, deserialize_with = "nullable_sequence")]

@@ -694,8 +694,7 @@ impl Store {
             // One live memory per key, per project, per scope — and the one
             // operation that can break it says so once and then nothing does.
             //
-            // `memory-model.md` §10 states the invariant and names its
-            // exception: merging two projects can leave two memories under one
+            // Merging two projects can leave two memories under one
             // key, because each may have had its own, and the merge reports how
             // many rather than choosing which to keep. That report is a number
             // in one reply. After it, the store carries an ambiguity nothing

@@ -114,6 +114,9 @@ def technical_text() -> list[str]:
             return False
         return (
             (path.startswith("src/") and path.endswith(".rs"))
+            # openspec/ is gone from the working tree but present at TECH_COMMIT,
+            # and the shipped model was trained with it; dropping this clause
+            # would make a rebuild train on a different corpus.
             or (path.startswith("openspec/") and path.endswith(".md"))
             or (path.startswith("docs/") and path.endswith(".md"))
             or (path.startswith("tools/") and path.endswith((".py", ".rs")))

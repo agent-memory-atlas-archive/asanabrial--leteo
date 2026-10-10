@@ -454,7 +454,7 @@ jobs:
   # `tools/engram-bench/floors.json`.
   #
   # Linux only, like `cloud-tests`: ranking transfers between SQLite builds and
-  # timing does not (`openspec/specs/search.md`), so nothing here gates on time.
+  # timing does not, so nothing here gates on time.
   # It is printed and left alone. Stock `python3` is all it needs, and the store
   # is created in a temporary directory the script owns.
   #

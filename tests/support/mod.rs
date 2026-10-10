@@ -44,6 +44,10 @@ pub fn spelled(count: usize) -> &'static str {
 }
 
 /// Every `.rs` file under a directory, as (path, text).
+///
+/// `dead_code` is allowed for the reason `spelled` gives: only
+/// `repository_guards.rs` calls this.
+#[allow(dead_code)]
 pub fn source_under(directory: &str) -> Vec<(String, String)> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join(directory);
     let mut found = Vec::new();

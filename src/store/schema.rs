@@ -103,7 +103,7 @@ pub(super) const OBSERVATION_VERSIONS: &str =
 /// Migration 20: the table the semantic search stage keeps its vectors in.
 ///
 /// A table of its own rather than the reserved `embedding*` columns, for reasons
-/// the file gives and `store-and-schema.md` §16 repeats.
+/// the migration file gives.
 pub(super) const OBSERVATION_VECTORS: &str =
     include_str!("../../migrations/0020_observation_vectors.sql");
 

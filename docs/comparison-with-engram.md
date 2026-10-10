@@ -182,6 +182,4 @@ directory instead of a fresh temporary one.
 
 - [`tools/README.md`](../tools/README.md) — the harness, and the quality ratchet
   that keeps Leteo from regressing on the same corpus.
-- [`openspec/specs/search.md`](../openspec/specs/search.md) — what Leteo's search
-  stages promise, and the measurement behind them.
 - [`NOTICE`](../NOTICE) — the Engram attribution, unchanged by this page.

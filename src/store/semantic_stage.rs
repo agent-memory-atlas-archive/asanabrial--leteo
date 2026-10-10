@@ -4,7 +4,7 @@
 //! lives here is how the store keeps a vector for each memory, how it decides
 //! one is out of date, and how the stage reads them back under exactly the
 //! visibility every other stage keeps. When it runs, and what it does with the
-//! answer, is `search_limited`'s business and `search.md` §15's.
+//! answer, is `search_limited`'s business.
 
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -53,7 +53,7 @@ pub(super) type StageError = Box<dyn std::error::Error + Send + Sync>;
 /// held at once are this many memories whatever the store holds: at most
 /// 256 titles and 4,096-character bodies, about a megabyte, plus the vectors of
 /// the same 256 (a kilobyte each). The model's own memory is separate and is
-/// stated once in `search.md` §15. A store that cannot be written is the
+/// not counted here. A store that cannot be written is the
 /// exception, because the vectors made for the question are held until it is
 /// answered: a kilobyte per memory in scope, which is what the rows would have
 /// cost on disk.

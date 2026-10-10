@@ -467,7 +467,7 @@ fn the_skill_teaches_the_kinds_the_tool_schema_asks_for() {
 
         // Scope is the same shape one line below, and it was the one that had
         // drifted: the skill offered `project` and `personal` while the door
-        // took a third and `memory-model.md` §11 named three. An agent is
+        // took a third and three were named. An agent is
         // taught what to write from this line and from nowhere else.
         let taught_scope = kind_declaration(&skill, "- **scope**:");
         for scope in leteo::memory::normalize::SCOPES {

@@ -123,8 +123,7 @@ believable.
 
 `--rerank` prints the shipped ordering beside the same statement with the Engram
 pin/recency/stability factor as its sort key, over the same draws. The factor is
-not adopted; the measurement that rejected it is in
-[`openspec/specs/search.md`](../openspec/specs/search.md) §2.
+not adopted.
 
 ### The trap, which has now caught two attempts
 
