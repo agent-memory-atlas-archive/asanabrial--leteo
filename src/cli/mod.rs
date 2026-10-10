@@ -888,17 +888,30 @@ pub async fn run(cli: Cli) -> Result<()> {
             )?)?;
         }
         Command::Stats => print_json(&store.stats()?)?,
-        Command::Serve => {
+        Command::Serve { bind } => {
             let autosync = start_background_autosync(&config, &cloud_config_path)?;
+            // The API answers whether or not replication is configured; the
+            // loop beside it runs only when it is. The note is what the old
+            // hard error carried — somebody running `serve` for replication
+            // should not get an API and no replication in silence.
             if !autosync.is_running() {
-                anyhow::bail!(
-                    "cloud replication is not configured; run `leteo cloud config set` first"
+                eprintln!(
+                    "leteo serve: cloud replication is not configured, so only the HTTP API is \
+                     running; run `leteo cloud config set` to replicate as well"
                 );
             }
-            // Nothing else to do on this thread: replication runs on its own,
-            // and Ctrl-C is how it ends.
-            tokio::signal::ctrl_c().await?;
+            // Ctrl-C is how either one ends.
+            let served = crate::mcp::run_http_with_options(
+                Arc::new(Mutex::new(store)),
+                crate::mcp::McpOptions::default(),
+                &bind,
+            );
+            let outcome = tokio::select! {
+                result = served => result,
+                _ = tokio::signal::ctrl_c() => Ok(()),
+            };
             autosync.shutdown().await;
+            outcome?;
         }
         Command::Mcp { tools, project } => {
             let autosync = start_background_autosync(&config, &cloud_config_path)?;

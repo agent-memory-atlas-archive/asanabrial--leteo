@@ -31,6 +31,9 @@ this describes what happens when it does not have to.
    `store/observations.rs`, `sessions.rs`, `prompts.rs`, and `relations.rs`, and
    a guard test feeds the same dirty input to both and requires the same row —
    four replicated paths once shared a hole that had been fixed on one of them.
+   The local HTTP API (`leteo serve`, [`cli.md`](cli.md) §21) is a third caller
+   of the same write functions the MCP and CLI paths call, so an HTTP write
+   takes this path too rather than a second one beside it.
 
 3. **Pinning does not travel, and nothing else stays behind.** See
    [`memory-model.md`](memory-model.md) §9. Guarded by comparing the thing

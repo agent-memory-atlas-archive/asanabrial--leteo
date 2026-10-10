@@ -398,13 +398,27 @@ duties about what an answer explains.
 
 20. **The cloud client is in every build; the server half is behind a feature.**
     `leteo cloud health`, `sync`, `config`, `status` and `enroll` are part of
-    the default binary, and `leteo serve` — the background replication loop —
-    stays a top-level command. The two that host rather than talk to a peer —
-    `leteo cloud serve` and `leteo cloud admin` — are compiled only under the
-    off-by-default `cloud-server` cargo feature, which is what keeps PostgreSQL
-    and the HTTP framework out of an ordinary installation. The container image
-    in `docker/Dockerfile` is the build that turns it on. See
-    [`replication.md`](replication.md).
+    the default binary, and `leteo serve` stays a top-level command (§21). The
+    two that host rather than talk to a peer — `leteo cloud serve` and
+    `leteo cloud admin` — are compiled only under the off-by-default
+    `cloud-server` cargo feature, which is what keeps PostgreSQL and `axum` out
+    of an ordinary installation. `serve`'s own HTTP surface is not that
+    framework: it is written over `tokio`'s socket, so the default build links
+    no server crate for it. The container image in `docker/Dockerfile` is the
+    build that turns the feature on. See [`replication.md`](replication.md).
+
+21. **`leteo serve` answers the store over a local HTTP socket.** It binds
+    `127.0.0.1:7437` by default, and `--bind <host:port>` takes another
+    address; a bind that is not the loopback is an explicit opt-in that the log
+    says out loud, because the store holds everything the agent has remembered.
+    The endpoints mirror the MCP tools — `POST /tools/<name>` with that tool's
+    arguments, `GET /tools` for the list, `GET /health` for a liveness answer —
+    so there is one name and one argument shape per operation rather than a
+    second REST vocabulary to keep in step. The handler is the MCP handler, so
+    a write over HTTP normalises, indexes, redacts and enqueues for replication
+    exactly as the stdio path does. Cloud replication runs beside it when it is
+    configured and is not required to start. See
+    [`mcp-tools.md`](mcp-tools.md) §24.
 
 ## Invariants
 

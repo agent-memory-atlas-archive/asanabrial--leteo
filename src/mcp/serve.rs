@@ -1,0 +1,525 @@
+//! The local HTTP API: the same tools, over a loopback socket.
+//!
+//! A script or a plugin that already speaks HTTP reaches the store without
+//! becoming an MCP client or forking a `leteo` process per call. The endpoint
+//! set is the MCP tool surface — `POST /tools/<name>` with that tool's own
+//! arguments — so there is one name and one argument shape per operation
+//! rather than a second REST vocabulary to keep in step, and every write takes
+//! the same path the MCP and CLI callers take because it calls the same
+//! handlers (replication.md §2).
+//!
+//! The transport is HTTP/1.1 written here rather than pulled in. `axum` is in
+//! the tree only behind the off-by-default `cloud-server` feature, and the
+//! release profile's account of startup cost is an account of *not* linking a
+//! framework into a binary that mostly runs one-shot hooks; a loopback socket
+//! that answers a request line, a `Content-Length` and a JSON body does not
+//! need one. What it does need is to be closed: the header and body are both
+//! bounded, and anything past the bound is refused rather than buffered.
+
+use std::net::SocketAddr;
+
+use anyhow::Context;
+
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::{TcpListener, TcpStream};
+
+use super::*;
+
+/// Where `leteo serve` listens unless `--bind` says otherwise.
+///
+/// The loopback, because the store holds everything the agent has remembered
+/// and the process is otherwise reachable by anything on the network. The port
+/// is the one Engram's `engram serve` uses, so a script written against one
+/// reaches the other.
+pub const DEFAULT_BIND: &str = "127.0.0.1:7437";
+
+/// The most request headers this will read before refusing the request, in
+/// bytes. A well-formed request is a few hundred; the bound is what keeps a
+/// client that never sends the blank line from growing the buffer without end.
+const MAX_HEADER_BYTES: usize = 16 * 1024;
+
+/// The largest request body this will read, in bytes.
+///
+/// A memory is text, and the store's own bound on one is far below this; the
+/// number is here so a body claiming a gigabyte is refused before it is read
+/// rather than after.
+const MAX_BODY_BYTES: usize = 8 * 1024 * 1024;
+
+pub async fn run(server: LeteoMcpServer, bind: &str) -> anyhow::Result<()> {
+    let listener = TcpListener::bind(bind)
+        .await
+        .with_context(|| format!("bind {bind}"))?;
+    let address = listener.local_addr()?;
+    announce(address);
+    serve(listener, server).await
+}
+
+/// Say which address the socket actually took, and say plainly when it is one
+/// anybody on the network can reach.
+fn announce(address: SocketAddr) {
+    eprintln!("{}", listening_message(address));
+}
+
+fn listening_message(address: SocketAddr) -> String {
+    if address.ip().is_loopback() {
+        format!("leteo serve: listening on http://{address}")
+    } else {
+        format!(
+            "leteo serve: listening on http://{address} — this is not the loopback, so any \
+             process that can reach this address can read and write every memory"
+        )
+    }
+}
+
+async fn serve(listener: TcpListener, server: LeteoMcpServer) -> anyhow::Result<()> {
+    let tools = server
+        .router
+        .list_all()
+        .into_iter()
+        .map(|tool| tool.name.to_string())
+        .collect();
+    let api = Arc::new(Api { server, tools });
+    loop {
+        let (stream, _peer) = listener.accept().await?;
+        let api = Arc::clone(&api);
+        tokio::spawn(async move {
+            if let Err(error) = handle(stream, api).await {
+                // A connection that failed mid-request is the client's, not
+                // the server's: the socket is already gone, and the process
+                // keeps answering the next one.
+                eprintln!("leteo serve: {error}");
+            }
+        });
+    }
+}
+
+struct Api {
+    server: LeteoMcpServer,
+    /// The tool names this process exposes. `--tools` is a startup flag, so
+    /// the set is fixed for the process's lifetime and the endpoint set is the
+    /// same list `tools/list` publishes.
+    tools: std::collections::BTreeSet<String>,
+}
+
+struct Request {
+    method: String,
+    target: String,
+    body: Vec<u8>,
+}
+
+struct Reply {
+    status: u16,
+    body: serde_json::Value,
+}
+
+impl Reply {
+    fn ok(body: serde_json::Value) -> Self {
+        Self { status: 200, body }
+    }
+
+    fn bad_request(message: impl Into<String>) -> Self {
+        Self {
+            status: 400,
+            body: serde_json::json!({
+                "error": { "code": "invalid_request", "message": message.into() },
+            }),
+        }
+    }
+
+    fn not_found(target: &str) -> Self {
+        Self {
+            status: 404,
+            body: serde_json::json!({
+                "error": {
+                    "code": "not_found",
+                    "message": format!("no endpoint or tool is named {target:?}"),
+                },
+            }),
+        }
+    }
+
+    fn method_not_allowed() -> Self {
+        Self {
+            status: 405,
+            body: serde_json::json!({
+                "error": {
+                    "code": "method_not_allowed",
+                    "message": "the endpoints are GET /health, GET /tools and POST /tools/<name>",
+                },
+            }),
+        }
+    }
+}
+
+async fn handle(mut stream: TcpStream, api: Arc<Api>) -> std::io::Result<()> {
+    let reply = match read_request(&mut stream).await {
+        Ok(Some(request)) => route(&api, &request),
+        // A connection that closed before sending a request line is a probe,
+        // not an error.
+        Ok(None) => return Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::InvalidData => {
+            Reply::bad_request(error.to_string())
+        }
+        Err(error) => return Err(error),
+    };
+    write_response(&mut stream, reply).await
+}
+
+async fn read_request(stream: &mut TcpStream) -> std::io::Result<Option<Request>> {
+    let mut buffer = Vec::with_capacity(1024);
+    let headers_end = loop {
+        if let Some(index) = header_end(&buffer) {
+            break index;
+        }
+        if buffer.len() > MAX_HEADER_BYTES {
+            return Err(invalid("the request headers are too large"));
+        }
+        let mut chunk = [0_u8; 4096];
+        let read = stream.read(&mut chunk).await?;
+        if read == 0 {
+            return Ok(None);
+        }
+        buffer.extend_from_slice(&chunk[..read]);
+    };
+    let head = std::str::from_utf8(&buffer[..headers_end])
+        .map_err(|_| invalid("the request headers are not UTF-8"))?;
+    let mut lines = head.split("\r\n");
+    let request_line = lines.next().ok_or_else(|| invalid("no request line"))?;
+    let mut parts = request_line.split(' ');
+    let method = parts.next().unwrap_or_default().to_owned();
+    let target = parts.next().unwrap_or_default().to_owned();
+    if method.is_empty() || target.is_empty() {
+        return Err(invalid("the request line is malformed"));
+    }
+
+    let mut content_length = 0_usize;
+    for line in lines {
+        if let Some((name, value)) = line.split_once(':')
+            && name.trim().eq_ignore_ascii_case("content-length")
+        {
+            content_length = value
+                .trim()
+                .parse()
+                .map_err(|_| invalid("the Content-Length is not a number"))?;
+        }
+    }
+    if content_length > MAX_BODY_BYTES {
+        return Err(invalid("the request body is too large"));
+    }
+
+    // The body begins right after the blank line, and may already have arrived
+    // in the same read as the headers.
+    let mut body = buffer[headers_end + 4..].to_vec();
+    while body.len() < content_length {
+        let mut chunk = [0_u8; 4096];
+        let read = stream.read(&mut chunk).await?;
+        if read == 0 {
+            return Err(invalid(
+                "the request body ended before Content-Length bytes",
+            ));
+        }
+        body.extend_from_slice(&chunk[..read]);
+    }
+    body.truncate(content_length);
+    Ok(Some(Request {
+        method,
+        target,
+        body,
+    }))
+}
+
+/// Where the header block ends: the offset of the `\r` that opens the blank
+/// line, or `None` while the blank line has not arrived yet.
+fn header_end(buffer: &[u8]) -> Option<usize> {
+    buffer.windows(4).position(|window| window == b"\r\n\r\n")
+}
+
+fn invalid(message: impl Into<String>) -> std::io::Error {
+    std::io::Error::new(std::io::ErrorKind::InvalidData, message.into())
+}
+
+fn route(api: &Api, request: &Request) -> Reply {
+    let path = request
+        .target
+        .split_once('?')
+        .map_or(request.target.as_str(), |(path, _)| path);
+    match (request.method.as_str(), path) {
+        ("GET", "/health") => Reply::ok(serde_json::json!({
+            "status": "ok",
+            "version": crate::build_info::version(),
+        })),
+        ("GET", "/tools") => Reply::ok(serde_json::json!({
+            "tools": api.tools.iter().cloned().collect::<Vec<_>>(),
+        })),
+        ("POST", path) if path.starts_with("/tools/") => {
+            let name = &path["/tools/".len()..];
+            if !api.tools.contains(name) {
+                return Reply::not_found(name);
+            }
+            call_tool(&api.server, name, &request.body)
+        }
+        ("GET" | "POST", _) => Reply::not_found(path),
+        _ => Reply::method_not_allowed(),
+    }
+}
+
+/// One tool call, over the same handler the MCP server routes to.
+///
+/// The body is that tool's arguments object, exactly as MCP's `arguments`
+/// carries it, so `deny_unknown_fields` and every other refusal reach an HTTP
+/// caller unchanged. A tool-level error keeps the MCP shape — `error.code`,
+/// `error.message`, `available_projects`, `recovery_token` — and is answered
+/// `400`, because the request was understood and refused rather than
+/// mis-addressed.
+fn call_tool(server: &LeteoMcpServer, name: &str, body: &[u8]) -> Reply {
+    let arguments = if body.is_empty() {
+        serde_json::Value::Object(serde_json::Map::new())
+    } else {
+        match serde_json::from_slice::<serde_json::Value>(body) {
+            Ok(value @ serde_json::Value::Object(_)) => value,
+            Ok(_) => return Reply::bad_request("the request body must be a JSON object"),
+            Err(error) => {
+                return Reply::bad_request(format!("the request body is not JSON: {error}"));
+            }
+        }
+    };
+    match name {
+        "mem_save" => invoke(arguments, |params| server.mem_save(Parameters(params))),
+        "mem_update" => invoke(arguments, |params| server.mem_update(Parameters(params))),
+        "mem_review" => invoke(arguments, |params| server.mem_review(Parameters(params))),
+        "mem_suggest_topic_key" => invoke(arguments, |params| {
+            server.mem_suggest_topic_key(Parameters(params))
+        }),
+        "mem_delete" => invoke(arguments, |params| server.mem_delete(Parameters(params))),
+        "mem_consolidate" => invoke(arguments, |params| {
+            server.mem_consolidate(Parameters(params))
+        }),
+        "mem_search" => invoke(arguments, |params| server.mem_search(Parameters(params))),
+        "mem_get_observation" => invoke(arguments, |params| {
+            server.mem_get_observation(Parameters(params))
+        }),
+        "mem_context" => invoke(arguments, |params| server.mem_context(Parameters(params))),
+        "mem_save_prompt" => invoke(arguments, |params| {
+            server.mem_save_prompt(Parameters(params))
+        }),
+        "mem_session_start" => invoke(arguments, |params| {
+            server.mem_session_start(Parameters(params))
+        }),
+        "mem_session_end" => invoke(arguments, |params| {
+            server.mem_session_end(Parameters(params))
+        }),
+        "mem_pin" => invoke(arguments, |params| server.mem_pin(Parameters(params))),
+        "mem_unpin" => invoke(arguments, |params| server.mem_unpin(Parameters(params))),
+        "mem_timeline" => invoke(arguments, |params| server.mem_timeline(Parameters(params))),
+        "mem_session_summary" => invoke(arguments, |params| {
+            server.mem_session_summary(Parameters(params))
+        }),
+        "mem_capture_passive" => invoke(arguments, |params| {
+            server.mem_capture_passive(Parameters(params))
+        }),
+        "mem_merge_projects" => invoke(arguments, |params| {
+            server.mem_merge_projects(Parameters(params))
+        }),
+        "mem_current_project" => invoke(arguments, |params| {
+            server.mem_current_project(Parameters(params))
+        }),
+        "mem_doctor" => invoke(arguments, |params| server.mem_doctor(Parameters(params))),
+        "mem_stats" => invoke(arguments, |params| server.mem_stats(Parameters(params))),
+        "mem_judge" => invoke(arguments, |params| server.mem_judge(Parameters(params))),
+        "mem_compare" => invoke(arguments, |params| server.mem_compare(Parameters(params))),
+        _ => Reply::not_found(name),
+    }
+}
+
+fn invoke<P, T>(
+    arguments: serde_json::Value,
+    call: impl FnOnce(P) -> Result<Json<T>, CallToolResult>,
+) -> Reply
+where
+    P: serde::de::DeserializeOwned,
+    T: Serialize,
+{
+    match serde_json::from_value::<P>(arguments) {
+        Ok(params) => match call(params) {
+            Ok(Json(value)) => {
+                Reply::ok(serde_json::to_value(value).unwrap_or(serde_json::Value::Null))
+            }
+            Err(error) => tool_reply(&error),
+        },
+        Err(error) => Reply::bad_request(format!("the arguments are not valid: {error}")),
+    }
+}
+
+fn tool_reply(result: &CallToolResult) -> Reply {
+    Reply {
+        status: if result.is_error == Some(true) {
+            400
+        } else {
+            200
+        },
+        body: result_body(result),
+    }
+}
+
+fn result_body(result: &CallToolResult) -> serde_json::Value {
+    if let Some(value) = &result.structured_content {
+        return value.clone();
+    }
+    if let Some(text) = result.content.first().and_then(|block| block.as_text())
+        && let Ok(value) = serde_json::from_str::<serde_json::Value>(&text.text)
+    {
+        return value;
+    }
+    serde_json::json!({})
+}
+
+async fn write_response(stream: &mut TcpStream, reply: Reply) -> std::io::Result<()> {
+    let body = serde_json::to_vec(&reply.body).unwrap_or_else(|_| b"{}".to_vec());
+    let head = format!(
+        "HTTP/1.1 {} {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        reply.status,
+        reason(reply.status),
+        body.len(),
+    );
+    stream.write_all(head.as_bytes()).await?;
+    stream.write_all(&body).await?;
+    stream.flush().await
+}
+
+fn reason(status: u16) -> &'static str {
+    match status {
+        200 => "OK",
+        400 => "Bad Request",
+        404 => "Not Found",
+        405 => "Method Not Allowed",
+        _ => "OK",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::store::StoreConfig;
+
+    /// A real socket on an ephemeral port, with the store beside it. The
+    /// `TempDir` is handed back so it outlives the server task the caller
+    /// leaves running.
+    async fn spawn_api(project: &str) -> (SocketAddr, tempfile::TempDir) {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::open(StoreConfig::new(temp.path().join("http.db"))).unwrap();
+        let server = LeteoMcpServer::with_options(
+            Arc::new(Mutex::new(store)),
+            McpOptions {
+                default_project: Some(project.to_owned()),
+                tools: None,
+            },
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(serve(listener, server));
+        (address, temp)
+    }
+
+    #[tokio::test]
+    async fn a_save_over_http_is_reachable_by_a_search() {
+        let (address, _temp) = spawn_api("http-test").await;
+        let client = reqwest::Client::new();
+
+        let saved: serde_json::Value = client
+            .post(format!("http://{address}/tools/mem_save"))
+            .json(&serde_json::json!({
+                "title": "Written over HTTP",
+                "content": "a body that reached the store through the local API",
+                "type": "decision",
+            }))
+            .send()
+            .await
+            .expect("the save is answered")
+            .json()
+            .await
+            .expect("the save answers JSON");
+        assert_eq!(saved["status"], "inserted", "save answered: {saved}");
+        assert!(
+            saved["observation"]["id"].is_i64(),
+            "the save names the memory it wrote: {saved}"
+        );
+
+        let found: serde_json::Value = client
+            .post(format!("http://{address}/tools/mem_search"))
+            .json(&serde_json::json!({
+                "query": "reached the store",
+                "all_projects": true,
+            }))
+            .send()
+            .await
+            .expect("the search is answered")
+            .json()
+            .await
+            .expect("the search answers JSON");
+        assert_eq!(found["count"], 1, "search answered: {found}");
+        assert_eq!(found["results"][0]["title"], "Written over HTTP");
+    }
+
+    #[tokio::test]
+    async fn a_refusal_is_a_bad_request_and_an_unknown_tool_is_not_found() {
+        let (address, _temp) = spawn_api("http-test").await;
+        let client = reqwest::Client::new();
+
+        // `mem_save` with no content is a tool-level refusal, and the caller
+        // gets the same error code MCP returns.
+        let refused = client
+            .post(format!("http://{address}/tools/mem_save"))
+            .json(&serde_json::json!({ "title": "no content" }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(refused.status(), 400);
+        let body: serde_json::Value = refused.json().await.unwrap();
+        assert_eq!(body["error"]["code"], "invalid_params", "refused: {body}");
+
+        let missing = client
+            .post(format!("http://{address}/tools/mem_nothing"))
+            .json(&serde_json::json!({}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(missing.status(), 404);
+
+        let health: serde_json::Value = client
+            .get(format!("http://{address}/health"))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(health["status"], "ok");
+    }
+
+    #[test]
+    fn the_default_bind_is_the_loopback() {
+        let address: SocketAddr = DEFAULT_BIND.parse().expect("the default bind parses");
+        assert_eq!(address.port(), 7437);
+        assert!(
+            address.ip().is_loopback(),
+            "the default bind must not be reachable from the network: {DEFAULT_BIND}"
+        );
+    }
+
+    #[test]
+    fn a_bind_that_is_not_the_loopback_says_so() {
+        let loopback = listening_message("127.0.0.1:7437".parse().unwrap());
+        assert!(loopback.contains("127.0.0.1:7437"));
+        assert!(
+            !loopback.contains("not the loopback"),
+            "the loopback needs no warning: {loopback}"
+        );
+
+        let exposed = listening_message("0.0.0.0:7437".parse().unwrap());
+        assert!(exposed.contains("0.0.0.0:7437"));
+        assert!(
+            exposed.contains("not the loopback"),
+            "a bind anybody can reach has to say so: {exposed}"
+        );
+    }
+}
