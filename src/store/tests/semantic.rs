@@ -346,6 +346,20 @@ fn the_merge_cap_holds_beside_a_nearest_answer_and_nowhere_else() {
         "the cap dropped the best rather than the rest"
     );
 
+    // Exactly the cap: the list is the cap, and the truncate drops nothing.
+    let exact = store.with_semantic_stage(
+        ASKED_IN_SPANISH,
+        &on(),
+        crate::semantic::MERGE_CAP,
+        Vec::new(),
+        true,
+    );
+    assert_eq!(
+        exact.len(),
+        crate::semantic::MERGE_CAP,
+        "a list of exactly the cap is returned whole: {exact:?}"
+    );
+
     // Fewer than the cap is untouched: there is nothing to drop, and nothing is
     // dropped.
     let Some((_small_temp, mut small)) = model_store() else {
