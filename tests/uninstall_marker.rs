@@ -117,10 +117,10 @@ fn the_binary_prints_the_marker_when_it_removes_and_not_when_it_previews() {
         if yes {
             command.arg("--yes");
         }
-        // The home is temporary as well, and the three variables that can point
-        // the agent paths elsewhere are taken out: the removal walks every
-        // agent's configuration, and a test must not edit the ones this machine
-        // is using.
+        // The home is temporary as well, and the variables that can point the
+        // agent paths or the model somewhere else are taken out: the removal
+        // walks every agent's configuration and judges the model files, and a
+        // test must not edit the ones this machine is using.
         command.env("HOME", &home);
         command.env("LETEO_DATA_DIR", &data);
         command.env_remove("LETEO_MODEL_DIR");
@@ -131,6 +131,16 @@ fn the_binary_prints_the_marker_when_it_removes_and_not_when_it_previews() {
     };
 
     let preview = run(false);
+    // The positive control comes before the negative one: the preview prints no
+    // marker, and a run that failed before printing anything would satisfy that
+    // on its own. Its report is what says the run reached the end.
+    let report: serde_json::Value =
+        serde_json::from_slice(&preview.stdout).expect("the preview prints its report");
+    assert_eq!(
+        report["dry_run"],
+        serde_json::json!(true),
+        "the preview did not report a dry run: {report}"
+    );
     let stderr = String::from_utf8_lossy(&preview.stderr);
     assert!(
         !stderr.contains(leteo::setup::UNINSTALL_STARTED),
