@@ -284,21 +284,17 @@ fn a_nearest_answer_is_merged_with_the_semantic_list_and_only_what_it_adds_is_ma
     );
 }
 
-/// The cap on the semantic list beside a `nearest` answer: the meaning is merged
-/// in only as far as it can stand beside the words, and nowhere else.
+/// The same cap through a store: which branch a list came from is
+/// `with_semantic_stage`'s decision, and the pure test in `store::search` cannot
+/// see that wiring.
 ///
 /// Driven at `with_semantic_stage` with no lexical list, so what comes back is
 /// the semantic list the cap produced rather than a fused and limited page whose
-/// row count would be a property of the fixture. The constant is asserted
-/// against the number `search.md` §15 publishes, so a change to it has to come
-/// with the spec edit that says why.
+/// row count would be a property of the fixture. This one needs `assets/model`
+/// and returns early without it; the branch, the value and the boundary are
+/// proved without a model in `store::search`'s `cap_tests`.
 #[test]
-fn the_merge_cap_holds_beside_a_nearest_answer_and_nowhere_else() {
-    assert_eq!(
-        crate::semantic::MERGE_CAP,
-        5,
-        "search.md §15 publishes five"
-    );
+fn a_store_caps_the_semantic_list_beside_a_nearest_answer() {
     let Some((_temp, mut store)) = model_store() else {
         return;
     };
@@ -344,20 +340,6 @@ fn the_merge_cap_holds_beside_a_nearest_answer_and_nowhere_else() {
             .collect::<Vec<i64>>(),
         best,
         "the cap dropped the best rather than the rest"
-    );
-
-    // Exactly the cap: the list is the cap, and the truncate drops nothing.
-    let exact = store.with_semantic_stage(
-        ASKED_IN_SPANISH,
-        &on(),
-        crate::semantic::MERGE_CAP,
-        Vec::new(),
-        true,
-    );
-    assert_eq!(
-        exact.len(),
-        crate::semantic::MERGE_CAP,
-        "a list of exactly the cap is returned whole: {exact:?}"
     );
 
     // Fewer than the cap is untouched: there is nothing to drop, and nothing is
