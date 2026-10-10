@@ -66,6 +66,9 @@ pub struct Screens {
     pub voice_reminders: &'static str,
     pub voice_quiet: &'static str,
     pub interface_question: &'static str,
+    /// Marks a language offered by the menu that is a machine translation
+    /// rather than one written by somebody who speaks it.
+    pub machine_translation: &'static str,
     pub interface_hint_first: &'static str,
     /// `{name}` — the character's name, which is never translated.
     pub interface_hint_second: &'static str,
@@ -406,6 +409,7 @@ mod tests {
             voice_reminders,
             voice_quiet,
             interface_question,
+            machine_translation,
             interface_hint_first,
             interface_hint_second,
             voice_language_question,
@@ -578,6 +582,7 @@ mod tests {
             ("voice_reminders", voice_reminders),
             ("voice_quiet", voice_quiet),
             ("interface_question", interface_question),
+            ("machine_translation", machine_translation),
             ("interface_hint_first", interface_hint_first),
             ("interface_hint_second", interface_hint_second),
             ("voice_language_question", voice_language_question),

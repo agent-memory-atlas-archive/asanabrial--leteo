@@ -446,7 +446,8 @@ languages — English, español, português, français, Deutsch, italiano, româ
 català, galego, euskara, Nederlands, polski, svenska — deliberately the same
 thirteen offered for memories, from the same table. Left unset it follows the
 machine's locale, so a Spanish computer gets a Spanish dashboard without being
-asked.
+asked. Romanian was translated by a machine rather than written by somebody who
+speaks it, and the menu that offers it says so; the other twelve were not.
 
 **`voice_language`** is what Sardi speaks, and it is separate because those
 lines are written *into your agent's conversation* rather than onto Leteo's
@@ -472,7 +473,7 @@ setting being read past.
 | `interface` | one of the thirteen above | follow the machine's locale |
 | `voice_language` | one of the thirteen above | follow `interface` |
 | `language` | free text | the language of each conversation |
-| `voice` | `all`, `reminders`, `quiet` | `all` |
+| `voice` | `all`, `reminders`, `quiet` | `reminders` |
 | `context_size` | `slim`, `full`, `deep` | `full` |
 | `semantic_search` | `true`, `false` | `true` |
 
@@ -481,8 +482,11 @@ and read back forgivingly, because this is a file people type into: the English
 name, the ISO code and the spelling without the accent all work.
 
 `voice` is how much of its own work Sardi says out loud — everything, the save
-reminder alone, or nothing. `context_size` is how many memories a session opens
-with: twenty, fifty or eighty, for a small context window or for a store that
+reminder alone, or nothing. It is `reminders` unless you say otherwise: a report
+line on every prompt is noise nobody asked for, and the reminder is the line that
+does the work, so `all` is what brings the reports back. `context_size` is how
+many memories a session opens with: twenty, fifty or eighty, for a small context
+window or for a store that
 matters more than the budget. `semantic_search` is whether a search the words
 cannot answer goes on to look by meaning, in all thirteen languages, with a model
 that ships beside the binary and never touches a network when you search; results

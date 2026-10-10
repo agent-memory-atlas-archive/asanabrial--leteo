@@ -21,6 +21,12 @@ fn store() -> (TempDir, Store) {
         &crate::settings::Settings {
             interface: Some(crate::settings::Interface::English),
             voice_language: None,
+            // Most of what the hooks are asked about here is a line Sardi says,
+            // and the default voice no longer says those — an unset voice is the
+            // reminder alone. The fixture is the loud Sardi so a test about a
+            // greeting gets one; a test about what the default does writes its
+            // own settings over this.
+            voice: crate::settings::Voice::All,
             ..crate::settings::Settings::default()
         },
     )
@@ -117,6 +123,82 @@ fn the_voice_setting_decides_which_lines_a_hook_shows() {
             "reminder at {voice:?}"
         );
     }
+}
+
+#[test]
+fn a_store_with_no_voice_setting_keeps_the_reminder_and_says_nothing_else() {
+    // The default used to be `all`, which put a report line in front of the
+    // person on every prompt — for everybody who never opened the settings. The
+    // reminder is the one line that does work, so an unset voice keeps it and
+    // drops the rest. The fixture pins `all` for the other tests here, so this
+    // one builds its own store.
+    use crate::settings::{self, Settings, Voice};
+
+    let temp = TempDir::new().unwrap();
+    let mut store = Store::open(StoreConfig::new(temp.path().join("default-voice.db"))).unwrap();
+    // A file with no `voice` at all, which is what an older Leteo wrote and what
+    // somebody hand-editing leaves behind. The field falls back to its default.
+    std::fs::write(settings::path_in(temp.path()), r#"{"interface":"english"}"#).unwrap();
+
+    run(&mut store, HookEvent::SessionStart, &input(temp.path())).unwrap();
+    store
+        .add_observation(memory("Something worth a greeting", "body"))
+        .unwrap();
+
+    // A session opening is a report, and the default voice does not report.
+    let opened = run(&mut store, HookEvent::SessionStart, &input(temp.path())).unwrap();
+    assert!(
+        opened.system_message.is_none(),
+        "an unset voice says nothing at a session opening: {:?}",
+        opened.system_message
+    );
+
+    // Nor does a prompt that names a memory: the hint is a report too.
+    let mut asking = input(temp.path());
+    asking.prompt = "Something worth a greeting".to_owned();
+    let plain = run(&mut store, HookEvent::UserPromptSubmit, &asking).unwrap();
+    assert!(
+        plain.system_message.is_none(),
+        "an unset voice says nothing on a plain prompt: {:?}",
+        plain.system_message
+    );
+
+    // The reminder is not a report and still arrives once the project has gone
+    // quiet.
+    let aged = rusqlite::Connection::open(store.database_path()).unwrap();
+    aged.execute(
+        "UPDATE sessions SET started_at = datetime('now', '-200 minutes')",
+        [],
+    )
+    .unwrap();
+    aged.execute(
+        "UPDATE observations SET created_at = datetime('now', '-200 minutes')",
+        [],
+    )
+    .unwrap();
+    let _ = std::fs::remove_file(nudge_state_path(&store, "agent-session").unwrap());
+    let prompted = run(&mut store, HookEvent::UserPromptSubmit, &input(temp.path())).unwrap();
+    assert!(
+        prompted.system_message.is_some(),
+        "the reminder survives an unset voice"
+    );
+    assert_eq!(settings::load(temp.path()).voice, Voice::Reminders);
+
+    // A file that names `all` keeps the reports, which is what a settings file
+    // written before this change says.
+    settings::save(
+        temp.path(),
+        &Settings {
+            voice: Voice::All,
+            ..Settings::default()
+        },
+    )
+    .unwrap();
+    let loud = run(&mut store, HookEvent::SessionStart, &input(temp.path())).unwrap();
+    assert!(
+        loud.system_message.is_some(),
+        "a file that names `all` still gets the reports"
+    );
 }
 
 #[test]
@@ -1179,6 +1261,9 @@ fn the_hook_speaks_in_the_voices_language_rather_than_the_screens() {
             &crate::settings::Settings {
                 interface: Some(crate::settings::Interface::Spanish),
                 voice_language,
+                // The greeting this test reads is a report line, so the voice
+                // has to be the loud one rather than the new default.
+                voice: crate::settings::Voice::All,
                 ..crate::settings::Settings::default()
             },
         )
@@ -2217,6 +2302,9 @@ fn a_capture_the_store_refuses_says_what_happened_and_what_to_do() {
         temp.path(),
         &crate::settings::Settings {
             interface: Some(crate::settings::Interface::English),
+            // The line this test reads is a capture report, which the new
+            // default voice does not say.
+            voice: crate::settings::Voice::All,
             ..crate::settings::Settings::default()
         },
     )

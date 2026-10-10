@@ -21,6 +21,7 @@ pub const SCREENS: Screens = Screens {
     voice_reminders: "tylko przypomnienie o zapisaniu",
     voice_quiet: "nic, nawet przypomnienia o zapisaniu",
     interface_question: "W jakim języku Leteo ma do ciebie mówić?",
+    machine_translation: "tłumaczenie maszynowe",
     interface_hint_first: "  Własne ekrany Leteo: panele, menu, pomoc i ta strona.",
     interface_hint_second: "  To, co mówi {name}, i język wspomnień wybiera się osobno.",
     voice_language_question: "W jakim języku ma mówić {name}?",

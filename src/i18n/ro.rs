@@ -21,6 +21,7 @@ pub const SCREENS: Screens = Screens {
     voice_reminders: "doar mementoul de salvare",
     voice_quiet: "nimic, nici măcar mementoul de salvare",
     interface_question: "În ce limbă ar trebui să-ți vorbească Leteo?",
+    machine_translation: "traducere automată",
     interface_hint_first: "  Ecranele Leteo: panourile, meniurile, ajutorul și pagina aceasta.",
     interface_hint_second: "  Ce spune {name} și în ce limbă sunt memoriile se aleg separat.",
     voice_language_question: "În ce limbă ar trebui să vorbească {name}?",

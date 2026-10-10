@@ -21,6 +21,7 @@ pub const SCREENS: Screens = Screens {
     voice_reminders: "gordetzeko oroigarria bakarrik",
     voice_quiet: "ezer ez, ezta gordetzeko oroigarria ere",
     interface_question: "Zein hizkuntzatan hitz egin behar dizu Leteok?",
+    machine_translation: "itzulpen automatikoa",
     interface_hint_first: "  Leteoren pantailak: panelak, menuak, laguntza eta orri hau.",
     interface_hint_second: "  {name}k dioena eta oroitzapenen hizkuntza aparte hautatzen dira.",
     voice_language_question: "Zein hizkuntzatan hitz egin behar du {name}k?",
