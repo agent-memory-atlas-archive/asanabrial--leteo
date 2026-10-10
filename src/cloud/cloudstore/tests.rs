@@ -14,9 +14,30 @@ fn mutation_validation_enforces_real_batch_limit() {
     assert!(validate_mutation_batch(&vec![entry; 101]).is_err());
 }
 
-#[test]
-fn migrations_cover_required_cloud_entities() {
-    let sql = MIGRATIONS.join("\n");
+/// The migrations, applied, create the tables the cloud entities need.
+///
+/// This used to assert the names appeared as substrings of the migration SQL,
+/// which a comment naming a table would satisfy while the table itself was
+/// never created. Against a real database the question is the one that matters:
+/// after `migrate`, does the catalog hold the table.
+#[tokio::test]
+#[ignore = "requires TEST_DATABASE_URL pointing to an isolated PostgreSQL database"]
+async fn migrations_create_the_tables_the_cloud_entities_need() {
+    let database_url = std::env::var("TEST_DATABASE_URL").unwrap();
+    let store = CloudStore::connect(&database_url, 2).await.unwrap();
+    store.migrate().await.unwrap();
+
+    let present: Vec<String> = sqlx::query(
+        "SELECT table_name FROM information_schema.tables \
+         WHERE table_schema = current_schema()",
+    )
+    .fetch_all(store.pool())
+    .await
+    .unwrap()
+    .into_iter()
+    .map(|row| row.get("table_name"))
+    .collect();
+
     for table in [
         "cloud_principals",
         "cloud_principal_tokens",
@@ -27,7 +48,10 @@ fn migrations_cover_required_cloud_entities() {
         "cloud_sync_audit_log",
         "cloud_auth_audit_log",
     ] {
-        assert!(sql.contains(table), "missing migration for {table}");
+        assert!(
+            present.iter().any(|name| name == table),
+            "the migrations did not create {table}; the catalog holds {present:?}"
+        );
     }
 }
 
