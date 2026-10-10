@@ -11,17 +11,17 @@
     "typo": 1.0
   },
   "bytes": {
-    "context": 6500,
-    "search_latency": 10600,
-    "search_long_bodies": 12100,
-    "search_service": 10500
+    "context": 6600,
+    "search_latency": 10700,
+    "search_long_bodies": 12200,
+    "search_service": 10600
   },
   "empty": {
     "ALL": 2
   },
   "no_answer": {
     "confident": 0,
-    "bytes": 5500
+    "bytes": 5600
   },
   "inflection": {
     "ca": 1.0,

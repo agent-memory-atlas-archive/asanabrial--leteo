@@ -226,7 +226,10 @@ not gated: it does not transfer between SQLite builds, ranking does.
 
 `floors.json` is the only place the numbers live. Floors are the measured MRR
 rounded down to three decimals; ceilings are the measured bytes rounded up to
-the next hundred, and the one ceiling on empty answers is the measured count,
+the next hundred and then by one more hundred, so a ceiling leaves between one
+and two hundred bytes of room — smaller than any change worth catching, larger
+than a word added to a hint or a field reordered, which are not regressions. The
+one ceiling on empty answers is the measured count,
 which can only fall. Since the semantic stage the kinds it can help — `spanish`,
 `paraphrase`, `multiword` — are measured with it on. When a run prints `RAISE?` a kind is two points or more above
 its floor. To raise floors after an improvement, or to move them on purpose,

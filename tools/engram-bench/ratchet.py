@@ -8,7 +8,7 @@ STATE = tempfile.mkdtemp(prefix="leteo-ratchet-")
 os.environ["BENCH_STATE"] = STATE
 
 from corpus import corpus, no_answer, queries
-from mcpclient import MCP
+from mcpclient import MCP, call_json
 import inflection
 
 # The language the corpus's memories are written in, as the product reads it from
@@ -38,16 +38,6 @@ class CannotRun(Exception):
     pass
 
 
-def call(m, tool, args):
-    text, dt, raw = m.call(tool, args)
-    if "error" in raw or (raw.get("result") or {}).get("isError"):
-        raise CannotRun(f"{tool} failed: {text[:300] or raw}")
-    try:
-        return json.loads(text), text, dt
-    except ValueError:
-        raise CannotRun(f"{tool} answered something that is not JSON: {text[:300]}")
-
-
 def measure():
     members = corpus()
     wanted = queries()
@@ -58,7 +48,7 @@ def measure():
             args = dict(title=mem["title"], content=mem["content"], type=mem["type"])
             if mem["topic"]:
                 args["topic_key"] = mem["topic"]
-            reply, _, _ = call(servers[mem["project"]], "mem_save", args)
+            reply, _, _ = call_json(servers[mem["project"]], "mem_save", args)
             # A save that merged into an earlier memory would leave a target
             # without an id of its own, and every query for it would then be
             # scored against the wrong row.
@@ -75,7 +65,7 @@ def measure():
         empty = defaultdict(int)
         millis = []
         for q in wanted:
-            reply, _, dt = call(servers[q["project"]], "mem_search", {"query": q["q"], "limit": SEARCH_LIMIT})
+            reply, _, dt = call_json(servers[q["project"]], "mem_search", {"query": q["q"], "limit": SEARCH_LIMIT})
             found = [r["id"] for r in reply.get("results") or []]
             target = ids[q["target"]]
             rank = found.index(target) + 1 if target in found else None
@@ -91,13 +81,13 @@ def measure():
         alpha = servers["alpha-api"]
         sizes = {}
         for name, extra in BYTE_QUERIES.items():
-            reply, text, _ = call(alpha, "mem_search", dict(extra, limit=SEARCH_LIMIT))
+            reply, text, _ = call_json(alpha, "mem_search", dict(extra, limit=SEARCH_LIMIT))
             # Fewer than the limit would measure a smaller reply than the
             # ceiling is meant to bound, and pass.
             if len(reply.get("results") or []) != SEARCH_LIMIT:
                 raise CannotRun(f"{name} returned {len(reply.get('results') or [])} results, not {SEARCH_LIMIT}")
             sizes[name] = len(text.encode())
-        _, text, _ = call(alpha, "mem_context", {})
+        _, text, _ = call_json(alpha, "mem_context", {})
         sizes["context"] = len(text.encode())
 
         # The questions the corpus cannot answer. A stage with nothing to give
@@ -109,7 +99,7 @@ def measure():
         asked = no_answer()
         answered, confident, no_answer_bytes = 0, 0, []
         for q in asked:
-            reply, text, _ = call(servers[q["project"]], "mem_search", {"query": q["q"], "limit": SEARCH_LIMIT})
+            reply, text, _ = call_json(servers[q["project"]], "mem_search", {"query": q["q"], "limit": SEARCH_LIMIT})
             if not (reply.get("results") or []):
                 continue
             answered += 1
@@ -139,18 +129,30 @@ def measure():
                 empty={k: empty[k] for k in ranks}, median_ms=statistics.median(millis), no_answer=no_answer_stats)
 
 
+def ceiling(measured):
+    """The next hundred above a measurement, plus one hundred.
+
+    Rounding to the next hundred alone leaves between one and ninety-nine bytes
+    of room, and a ceiling that tight breaches on a change that is not a
+    regression — a word added to the hint, a field reordered in the reply.
+    Between a hundred and two hundred bytes of room is smaller than any change
+    worth catching and larger than any change that is not.
+    """
+    return (measured // 100 + 2) * 100
+
+
 def propose(got):
     return {
         "raise_margin": 0.02,
         "mrr": {k: math.floor(got["mrr"][k] * 1000 + 1e-9) / 1000 for k in sorted(got["mrr"])},
-        "bytes": {k: (v // 100 + 1) * 100 for k, v in sorted(got["bytes"].items())},
+        "bytes": {k: ceiling(v) for k, v in sorted(got["bytes"].items())},
         "empty": {"ALL": got["empty"]["ALL"]},
         "inflection": {k: math.floor(v["mrr"] * 1000 + 1e-9) / 1000 for k, v in sorted(got["inflection"].items())},
         # A ceiling, like `empty` and `bytes`: the count of no-answer questions
         # answered without a caveat, and the size of those replies, can only be
         # allowed to fall.
         "no_answer": {"confident": got["no_answer"]["confident"],
-                      "bytes": (got["no_answer"]["bytes"] // 100 + 1) * 100},
+                      "bytes": ceiling(got["no_answer"]["bytes"])},
     }
 
 

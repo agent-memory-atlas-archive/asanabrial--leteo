@@ -509,7 +509,7 @@ before any of it.
     or carries the sentence above. What the cap moved is the size: the mean
     reply on those questions fell from 10,900 to 5,493 bytes when a `nearest`
     answer stopped merging the whole semantic list and kept only its best five.
-    `floors.json` holds both as ceilings, 0 and 5,500.
+    `floors.json` holds both as ceilings, 0 and 5,600.
 
     **What it costs**, measured on an Apple M-series machine:
 

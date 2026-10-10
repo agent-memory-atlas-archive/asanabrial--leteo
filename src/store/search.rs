@@ -630,7 +630,7 @@ impl Store {
     /// logged at `warn`, not at `debug` as the unreadable second index is,
     /// because unlike that index this has no reason to fail on a healthy build,
     /// and a test holds that it does not.
-    fn with_semantic_stage(
+    pub(super) fn with_semantic_stage(
         &self,
         query: &str,
         options: &SearchOptions,
