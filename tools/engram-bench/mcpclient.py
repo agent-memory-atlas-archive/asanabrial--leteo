@@ -37,8 +37,11 @@ def engine_cmd(engine, project, home=None):
     return [LETEO, "mcp", "--database", os.path.join(home, "leteo.db")], cwd, env
 
 class MCP:
-    def __init__(self, engine, project, home=None):
-        cmd, cwd, env = engine_cmd(engine, project, home)
+    def __init__(self, engine, project, home=None, launch=None):
+        # `launch` is a ready (cmd, cwd, env) for an engine `engine_cmd` does not
+        # know; the adapters build theirs so every isolation variable lives in
+        # one file rather than being split between here and there.
+        cmd, cwd, env = launch or engine_cmd(engine, project, home)
         self.p = subprocess.Popen(cmd, cwd=cwd, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                   stderr=subprocess.DEVNULL, text=True, bufsize=1)
         self.n = 0
@@ -62,7 +65,14 @@ class MCP:
         text = "".join(c.get("text", "") for c in res.get("content", []))
         return text, dt, r
     def close(self):
-        self.p.stdin.close(); self.p.wait(timeout=5)
+        self.p.stdin.close()
+        # `uvx` and `npx` start the server as a child, and a wrapper that has
+        # not exited within the grace period would otherwise leave it running
+        # against the throwaway store for the rest of the machine's uptime.
+        try:
+            self.p.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            self.p.kill(); self.p.wait()
 
 
 class UnusableReply(RuntimeError):

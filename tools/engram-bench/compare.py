@@ -1,25 +1,32 @@
 #!/usr/bin/env python3
 """One command reproduces every number on docs/comparison-with-engram.md.
 
-This is the single entry point for the head-to-head: it loads the corpus into a
-fresh Engram store, adopts a copy into Leteo, runs each engine's own MCP
-`mem_search` over the same queries, and rewrites the generated block in the page
-from the harness output. The versions and the date are measured here too, so a
-re-run on a different Engram or a new Leteo commit regenerates the page with the
+This is the single entry point for the comparison: `bench_engines.py` starts each
+engine of the tier through its adapter, writes the held-out corpus through the
+engine's own write path, asks every engine the same queries at the same limit
+through its own search path, and this script rewrites the generated block in the
+page from that output. The versions and the date are measured here too, so a
+re-run on a different engine or a new Leteo commit regenerates the page with the
 numbers it actually saw rather than the ones somebody typed.
 
 A step that cannot run is skipped and named, never faked: the page must not
-carry a number this script did not produce. `bench_cost.py` is the standing
-example -- its Engram session-start hook is a script in Engram's source tree,
-not its binary, so it needs ENGRAM_SRC and is skipped without one.
+carry a number this script did not produce, and an engine that could not be
+measured is listed with its reason rather than as a row of zeros. `bench_cost.py`
+is the standing example -- its Engram session-start hook is a script in Engram's
+source tree, not its binary, so it needs ENGRAM_SRC and is skipped without one.
 
     LETEO_BIN=target/release/leteo python3 tools/engram-bench/compare.py
+
+`--tier llm` is reserved for the opt-in tier of engines that need a local LLM
+(mem0, claude-mem, Letta, Graphiti on Ollama). It has no adapters yet and exits
+with that said rather than producing a page without them.
 
 Why the page is generated rather than written: the previous comparison lived in
 `tools/README.md` as prose with a date and a commit in it, and drifted from the
 harness the moment either moved. A generated block has one source of truth.
 """
 
+import argparse
 import datetime
 import json
 import os
@@ -54,27 +61,6 @@ def sh(cmd, env, cwd=HERE, capture=True):
     )
 
 
-def which(name, explicit):
-    path = explicit or shutil.which(name)
-    if not path:
-        sys.exit(f"{name} not found: set {name.upper()}_BIN or put it on PATH")
-    return path
-
-
-def engram_version(binary):
-    r = sh([binary, "--version"], dict(os.environ))
-    text = (r.stdout or "") + (r.stderr or "")
-    m = re.search(r"engram\s+v?(\d+\.\d+\.\d+)", text)
-    return m.group(1) if m else "unknown"
-
-
-def leteo_version(binary):
-    r = sh([binary, "--version"], dict(os.environ))
-    text = ((r.stdout or "") + (r.stderr or "")).strip()
-    m = re.search(r"(\d+\.\d+\.\d+)", text)
-    return m.group(1) if m else "unknown"
-
-
 def git_head():
     r = sh(["git", "-C", str(ROOT), "rev-parse", "HEAD"], dict(os.environ))
     head = r.stdout.strip()
@@ -89,13 +75,13 @@ def git_head():
 
 
 def search_limit():
-    """The limit bench_search.py asks at, read from it rather than retyped.
+    """The limit bench_engines.py asks at, read from it rather than retyped.
 
     The page states the limit as method; reading it here is what keeps that
     sentence true when somebody changes the harness's own number.
     """
-    src = (HERE / "bench_search.py").read_text()
-    m = re.search(r'"limit":\s*(\d+)', src)
+    src = (HERE / "bench_engines.py").read_text()
+    m = re.search(r"^LIMIT\s*=\s*(\d+)", src, re.M)
     return m.group(1) if m else "?"
 
 
@@ -107,20 +93,66 @@ def summarise(rows):
     return dict(n=n, hit1=hit1, hit5=hit5, mrr=mrr)
 
 
-def kind_table(results):
-    kinds = sorted({r["kind"] for r in results["engram"]})
+def kinds_of(engines):
+    return sorted({r["kind"] for e in engines for r in e["rows"]})
+
+
+def of_kind(engine, kind):
+    return [r for r in engine["rows"] if kind == "ALL" or r["kind"] == kind]
+
+
+def engines_table(engines):
+    """Every engine of the tier, measured or not, with the reason when not.
+
+    A skipped engine appears here and nowhere below: the tables that carry
+    numbers hold only engines that produced some.
+    """
+    lines = ["| engine | version | run date | status |", "|---|---|---|---|"]
+    for e in engines:
+        if e["status"] == "measured":
+            lines.append(f"| {e['label']} | {e['version']} | {e['date']} | measured |")
+        else:
+            lines.append(f"| {e['label']} | {e['version'] or '—'} | {e['date']} | **not measured:** {e['reason']} |")
+    return "\n".join(lines)
+
+
+def overall_table(measured):
+    """One row per engine on the whole query set.
+
+    `returned nothing` counts answerable queries the engine replied to with no
+    hit at all, and `unmappable` counts returned hits that are none of the corpus
+    memories: both score zero, and they are different faults. `answered` is how
+    many of the unanswerable questions got any hit.
+    """
     lines = [
-        "| query kind | n | Engram h@1 | Engram h@5 | Engram MRR | Leteo h@1 | Leteo h@5 | Leteo MRR |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|",
+        "| engine | version | run date | h@1 | h@5 | MRR | returned nothing | hits returned | unmappable hits | no-answer questions answered |",
+        "|---|---|---|---:|---:|---:|---:|---:|---:|---:|",
     ]
-    for kind in kinds + ["ALL"]:
-        e = summarise([r for r in results["engram"] if kind == "ALL" or r["kind"] == kind])
-        l = summarise([r for r in results["leteo"] if kind == "ALL" or r["kind"] == kind])
-        name = "**overall**" if kind == "ALL" else kind
+    for e in measured:
+        s = summarise(e["rows"])
+        empty = sum(r["n"] == 0 for r in e["rows"])
+        hits = sum(r["n"] for r in e["rows"])
+        unmappable = sum(r["unmappable"] for r in e["rows"])
+        answered = sum(r["n"] > 0 for r in e["no_answer"])
         lines.append(
-            f"| {name} | {e['n']} | {e['hit1']:.2f} | {e['hit5']:.2f} | {e['mrr']:.3f} "
-            f"| {l['hit1']:.2f} | {l['hit5']:.2f} | {l['mrr']:.3f} |"
+            f"| {e['label']} | {e['version']} | {e['date']} | {s['hit1']:.2f} | {s['hit5']:.2f} | {s['mrr']:.3f} "
+            f"| {empty} of {s['n']} | {hits} | {unmappable} | {answered} of {len(e['no_answer'])} |"
         )
+    return "\n".join(lines)
+
+
+def kind_table(measured):
+    lines = [
+        "| query kind | n | " + " | ".join(f"{e['label']} h@1 / h@5 / MRR" for e in measured) + " |",
+        "|---|---:|" + "---:|" * len(measured),
+    ]
+    for kind in kinds_of(measured) + ["ALL"]:
+        name = "**overall**" if kind == "ALL" else kind
+        cells = []
+        for e in measured:
+            s = summarise(of_kind(e, kind))
+            cells.append(f"{s['hit1']:.2f} / {s['hit5']:.2f} / {s['mrr']:.3f}")
+        lines.append(f"| {name} | {len(of_kind(measured[0], kind))} | " + " | ".join(cells) + " |")
     return "\n".join(lines)
 
 
@@ -192,20 +224,19 @@ def no_answer_table(results):
     return "\n".join(lines)
 
 
-def any_table(results, any_stats):
+def any_table(engram, leteo, any_stats):
     """Per-kind rows for Engram's opt-in `match_mode: "any"`, against Leteo.
 
     Leteo is not rerun under the mode — it has no such switch — so its columns
     are its defaults, which the header names.
     """
-    kinds = sorted({r["kind"] for r in results["engram"]})
     lines = [
         "| query kind | n | Engram `any` h@1 | Engram `any` h@5 | Engram `any` MRR | Leteo h@1 | Leteo h@5 | Leteo MRR |",
         "|---|---:|---:|---:|---:|---:|---:|---:|",
     ]
-    for kind in kinds + ["ALL"]:
+    for kind in kinds_of([engram]) + ["ALL"]:
         e = any_stats.get(kind)
-        l = summarise([r for r in results["leteo"] if kind == "ALL" or r["kind"] == kind])
+        l = summarise(of_kind(leteo, kind))
         name = "**overall**" if kind == "ALL" else kind
         if e is None:
             lines.append(f"| {name} | {l['n']} | — | — | — | {l['hit1']:.2f} | {l['hit5']:.2f} | {l['mrr']:.3f} |")
@@ -217,35 +248,35 @@ def any_table(results, any_stats):
     return "\n".join(lines)
 
 
-def leads_table(results, any_stats):
+def leads_table(measured, any_stats):
     """Who has the higher MRR on each kind, computed from the tables above.
 
-    A tie is an exact equality rather than a closeness test. A per-kind lead of
-    one query is noise, and the page says so beside the table.
+    A tie is an exact equality rather than a closeness test, and every engine
+    that shares the top is named. A per-kind lead of one query is noise, and the
+    page says so beside the table. With Engram's `any` run available the last
+    column ranks it in place of Engram's defaults.
     """
-    kinds = sorted({r["kind"] for r in results["engram"]})
-    rows = []
-    for kind in kinds + ["ALL"]:
-        e = summarise([r for r in results["engram"] if kind == "ALL" or r["kind"] == kind])["mrr"]
-        l = summarise([r for r in results["leteo"] if kind == "ALL" or r["kind"] == kind])["mrr"]
-        rows.append((kind, e, any_stats.get(kind, {}).get("mrr"), l))
 
-    def leader(engram, leteo):
-        if engram > leteo:
-            return f"Engram {engram:.3f}"
-        if leteo > engram:
-            return f"Leteo {leteo:.3f}"
-        return f"tie {engram:.3f}"
+    def leader(scores):
+        best = max(v for _, v in scores)
+        names = [n for n, v in scores if v == best]
+        return ("tie " if len(names) > 1 else "") + ", ".join(names) + f" {best:.3f}"
 
     lines = [
-        "| query kind | Engram defaults | Engram `any` | Leteo | leader, defaults | leader, `any` |",
-        "|---|---:|---:|---:|---|---|",
+        "| query kind | " + " | ".join(f"{e['label']} MRR" for e in measured) + " | Engram `any` MRR | leader, defaults | leader, `any` |",
+        "|---|" + "---:|" * (len(measured) + 1) + "---|---|",
     ]
-    for kind, e, a, l in rows:
+    for kind in kinds_of(measured) + ["ALL"]:
+        scores = [(e["label"], summarise(of_kind(e, kind))["mrr"]) for e in measured]
+        a = any_stats.get(kind, {}).get("mrr")
         name = "**overall**" if kind == "ALL" else kind
-        a_cell = f"{a:.3f}" if a is not None else "—"
-        a_lead = leader(a, l) if a is not None else "—"
-        lines.append(f"| {name} | {e:.3f} | {a_cell} | {l:.3f} | {leader(e, l)} | {a_lead} |")
+        a_lead = "—"
+        if a is not None:
+            a_lead = leader([(n, a if n == "Engram" else v) for n, v in scores])
+        lines.append(
+            f"| {name} | " + " | ".join(f"{v:.3f}" for _, v in scores)
+            + f" | {f'{a:.3f}' if a is not None else '—'} | {leader(scores)} | {a_lead} |"
+        )
     return "\n".join(lines)
 
 
@@ -267,44 +298,53 @@ def run_optional(cmd, env, cwd=HERE):
     return True, r.stdout, ""
 
 
-def main():
+def main(argv):
+    ap = argparse.ArgumentParser(description="Regenerate the comparison page from one run.")
+    ap.add_argument("--tier", default="deterministic", choices=("deterministic", "llm"),
+                    help="deterministic is the default; llm is reserved for engines that need a local LLM")
+    args = ap.parse_args(argv)
+    if args.tier == "llm":
+        sys.exit("the llm tier (mem0, claude-mem, Letta, Graphiti on a local Ollama) has no adapters yet; "
+                 "run without --tier for the deterministic tier")
+
     leteo_bin = os.environ.get("LETEO_BIN")
     if not leteo_bin:
         sys.exit("LETEO_BIN is not set; name the binary under test")
     leteo_bin = str(Path(leteo_bin).resolve())
-    engram_bin = which("engram", os.environ.get("ENGRAM_BIN"))
 
     state = os.environ.get("BENCH_STATE") or tempfile.mkdtemp(prefix="leteo-engram-compare-")
     os.makedirs(state, exist_ok=True)
-    env = dict(os.environ, BENCH_STATE=state, ENGRAM_BIN=engram_bin, LETEO_BIN=leteo_bin)
+    env = dict(os.environ, BENCH_STATE=state, LETEO_BIN=leteo_bin)
 
     harness_date = datetime.date.today().isoformat()
-    e_version = engram_version(engram_bin)
-    l_version = leteo_version(leteo_bin)
     head, source_dirty = git_head()
 
     try:
-        # The corpus is saved through Engram's own CLI first: its index is built
-        # by its own write path, not by SQL this harness composed.
-        r = sh([sys.executable, "load_engram.py"], env)
+        r = sh([sys.executable, "bench_engines.py", "--tier", args.tier], env)
+        print(r.stderr, file=sys.stderr)
         if r.returncode:
-            sys.exit(f"load_engram.py failed:\n{r.stderr}")
-        print(r.stdout.strip(), file=sys.stderr)
+            sys.exit(f"bench_engines.py failed ({r.returncode}); the page was not rewritten")
 
-        r = sh(["sh", "load_leteo.sh"], env)
-        if r.returncode:
-            sys.exit(f"load_leteo.sh failed:\n{r.stderr}")
-        print(r.stdout.strip(), file=sys.stderr)
+        with open(os.path.join(state, "results_engines.json")) as f:
+            engines = json.load(f)["engines"]
+        measured = [e for e in engines if e["status"] == "measured"]
+        by_name = {e["name"]: e for e in measured}
+        both = "engram" in by_name and "leteo" in by_name
 
-        r = sh([sys.executable, "bench_search.py"], env)
-        if r.returncode:
-            sys.exit(f"bench_search.py failed:\n{r.stderr}")
-        print(r.stdout, file=sys.stderr)
-
-        with open(os.path.join(state, "results_search.json")) as f:
-            results = json.load(f)
-
-        any_ok, any_out, any_reason = run_optional([sys.executable, "bench_any.py"], env)
+        # The latency, reply-size and no-answer figures come from scripts that
+        # read the Engram and Leteo stores the adapters just loaded, so they run
+        # only when both engines were measured.
+        search_ok, search_reason, results = False, "", {}
+        any_ok, any_out, any_reason = False, "", ""
+        if both:
+            search_ok, search_out, search_reason = run_optional([sys.executable, "bench_search.py"], env)
+            print(search_out, file=sys.stderr)
+            if search_ok:
+                with open(os.path.join(state, "results_search.json")) as f:
+                    results = json.load(f)
+            any_ok, any_out, any_reason = run_optional([sys.executable, "bench_any.py"], env)
+        else:
+            search_reason = any_reason = "Engram and Leteo were not both measured, and this reads their stores"
         any_stats = parse_any(any_out) if any_ok else {}
 
         cost_ok, cost_out, cost_reason = (False, "", "")
@@ -318,6 +358,8 @@ def main():
             hook = Path(engram_src) / "plugin" / "claude-code" / "scripts" / "session-start.sh"
             if not hook.exists():
                 cost_reason = f"`ENGRAM_SRC={engram_src}` does not hold `plugin/claude-code/scripts/session-start.sh`"
+            elif not both:
+                cost_reason = "Engram and Leteo were not both measured, and this reads their stores"
             else:
                 cost_ok, cost_out, cost_reason = run_optional([sys.executable, "bench_cost.py"], env)
 
@@ -333,8 +375,7 @@ def main():
         out.append("")
         out.append("| measured | value |")
         out.append("|---|---|")
-        out.append(f"| Engram version | {e_version} |")
-        out.append(f"| Leteo version | {l_version} |")
+        out.append(f"| tier | {args.tier} |")
         out.append(f"| Leteo commit | `{head}`{' — source tree dirty' if source_dirty else ''} |")
         out.append("| harness | `tools/engram-bench`, run by `compare.py` at this commit |")
         out.append(f"| search limit | {search_limit()} |")
@@ -345,22 +386,31 @@ def main():
             + ") |"
         )
         out.append("")
-        out.append(f"### Head to head, each engine's own MCP `mem_search`, limit {search_limit()}, defaults")
+        out.append("### Engines")
         out.append("")
-        out.append(kind_table(results))
+        out.append(engines_table(engines))
+        out.append("")
+        out.append("The LLM tier (engines that need a local model) is opt-in and not part of this run: "
+                   "its engines have no row here, which is different from a row of zeros.")
+        out.append("")
+        out.append(f"### Head to head, each engine's own search, limit {search_limit()}, defaults")
+        out.append("")
+        out.append(overall_table(measured))
+        out.append("")
+        out.append(kind_table(measured))
         out.append("")
         out.append("### Warm-search latency and reply size")
         out.append("")
-        out.append(timing_block(results))
+        out.append(timing_block(results) if search_ok else f"Skipped: {search_reason}.")
         out.append("")
         out.append("### Questions the corpus cannot answer")
         out.append("")
-        out.append(no_answer_table(results))
+        out.append(no_answer_table(results) if search_ok else f"Skipped: {search_reason}.")
         out.append("")
         out.append("### Engram with its opt-in `match_mode: \"any\"`")
         out.append("")
         if any_ok and any_stats:
-            out.append(any_table(results, any_stats))
+            out.append(any_table(by_name["engram"], by_name["leteo"], any_stats))
         elif any_ok:
             out.append("Skipped: `bench_any.py` ran but printed no per-kind rows to parse.")
         else:
@@ -368,7 +418,7 @@ def main():
         out.append("")
         out.append("### Who leads, per query kind")
         out.append("")
-        out.append(leads_table(results, any_stats))
+        out.append(leads_table(measured, any_stats))
         out.append("")
         out.append("### Reply bytes, session-start hook latency, cold CLI search")
         out.append("")
@@ -389,11 +439,11 @@ def main():
         PAGE.write_text(before + BEGIN + "\n" + block + "\n" + END + after)
 
         print(f"\nwrote {PAGE.relative_to(ROOT)}", file=sys.stderr)
-        print(f"Engram {e_version} vs Leteo {l_version} ({head[:12]}), {len(qs)} queries", file=sys.stderr)
+        print(f"{', '.join(e['label'] + ' ' + e['version'] for e in measured)}; {len(qs)} queries", file=sys.stderr)
     finally:
         if not os.environ.get("BENCH_STATE"):
             shutil.rmtree(state, ignore_errors=True)
 
 
 if __name__ == "__main__":
-    main()
+    main(sys.argv[1:])
