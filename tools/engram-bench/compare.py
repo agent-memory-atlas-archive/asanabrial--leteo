@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""One command reproduces every number on docs/comparison-with-engram.md.
+"""One command reproduces every number on docs/comparison.md.
 
 This is the single entry point for the comparison: `bench_engines.py` starts each
 engine of the tier through its adapter, writes the held-out corpus through the
@@ -40,7 +40,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
-PAGE = ROOT / "docs" / "comparison-with-engram.md"
+PAGE = ROOT / "docs" / "comparison.md"
 BEGIN = "<!-- BEGIN GENERATED: compare.py -->"
 END = "<!-- END GENERATED: compare.py -->"
 
