@@ -7,11 +7,14 @@
 //! therefore writes the package where Pi loads it from, lists it in Pi's
 //! `settings.json`, and takes out the `leteo` entry from `mcp.json`.
 //!
-//! The package files are built into the binary. A binary installed with
-//! `cargo install` has no `plugin/` directory beside it, and Pi has nothing to
-//! fetch Leteo from: there is no npm package. The package is written under the
-//! agent directory and listed there as a local path, which Pi loads without
-//! copying (`packages.md`, "Choose a source").
+//! The package files are built into the binary, because a binary installed with
+//! `cargo install` has no `plugin/` directory beside it. That is the default
+//! route: the files are written under the agent directory and listed there as a
+//! local path, which Pi loads without copying (`packages.md`, "Choose a
+//! source"), and the extension is given the path of the binary that ran setup.
+//! The same package is meant to be published to npm as `@asanabrial/leteo-pi`
+//! (it is not yet); installed that way nothing has recorded a binary, and the
+//! extension falls back to `LETEO_BIN` and then `PATH`.
 
 use super::*;
 

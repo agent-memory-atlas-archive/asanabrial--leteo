@@ -13,16 +13,16 @@ leteo setup pi
 ```
 
 writes this package into Pi's agent directory (`PI_CODING_AGENT_DIR`, or
-`~/.pi/agent`) and lists it under `packages` in Pi's `settings.json`. The files
-are built into the binary, so nothing is fetched and there is no npm package;
-`leteo setup pi` again after an upgrade replaces them. Restart Pi, or run
-`/reload`.
+`~/.pi/agent`) and lists it under `packages` in Pi's `settings.json`. This is the
+default route. The files are built into the binary, so nothing is fetched, and
+setup records the path of the binary that ran it; run `leteo setup pi` again
+after an upgrade to replace them. Restart Pi, or run `/reload`.
 
-`LETEO_BIN` overrides the binary setup recorded, which in turn is preferred to
-`leteo` on `PATH`. The package is also published to npm as
-`@asanabrial/leteo-pi` for `pi install npm:@asanabrial/leteo-pi`; installed that
-way setup has recorded nothing, so `leteo` must be on `PATH` or `LETEO_BIN` set,
-and `leteo setup pi` remains the route that needs neither.
+The package is also meant to be published to npm as `@asanabrial/leteo-pi`, for
+`pi install npm:@asanabrial/leteo-pi`. It is not published yet. Installed that
+way setup has recorded nothing, so the binary is `LETEO_BIN` if set and
+otherwise `leteo` on `PATH`; either route resolves it in the order `LETEO_BIN`,
+the path setup recorded, `PATH`.
 
 ## What it does
 
