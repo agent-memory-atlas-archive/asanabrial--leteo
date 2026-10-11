@@ -567,9 +567,9 @@ Leteo is an independent Rust product derived from the workflow and MIT-licensed
 implementation of Gentleman Programming's Engram. It is not affiliated with or
 endorsed by that project, and promises no drop-in CLI compatibility.
 
-A measured comparison — the same synthetic corpus saved into both engines, the
-same queries asked of each engine's own `mem_search` — is in
-[`docs/comparison-with-engram.md`](docs/comparison-with-engram.md).
+A measured comparison — the same synthetic corpus saved into each engine through
+its own write path, the same queries asked of its own search — is in
+[`docs/comparison.md`](docs/comparison.md).
 
 It reads an Engram database directly, so moving across is a copy. The first
 reports what it would adopt and writes nothing; the second carries it out, and
@@ -627,10 +627,11 @@ still gets it wrong three times out of three, and six of eleven sampled memories
 from the opening block turn out to be recoverable from the repository anyway —
 code, specs, tests and the git history together.
 
-The third is [*Leteo against Engram, measured*](docs/comparison-with-engram.md):
-the same synthetic corpus saved into both engines, the same queries asked of each
-engine's own `mem_search`, and the numbers one run produced — generated from the
-harness so they cannot drift, with the measured Engram version beside them.
+The third is [*Leteo against other memory engines, measured*](docs/comparison.md):
+the same synthetic corpus saved into Engram and two other engines as well as
+Leteo, the same queries asked of each engine's own search, and the numbers one run
+produced — generated from the harness so they cannot drift, with each engine's
+measured version beside it.
 
 ## Environment
 
