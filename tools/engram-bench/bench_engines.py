@@ -5,16 +5,18 @@ Writes `results_engines.json` under BENCH_STATE for `compare.py`. An engine that
 cannot be measured is recorded with the reason and no rows: the page lists it as
 not measured, never as a row of zeros.
 
-    BENCH_STATE=/tmp/state LETEO_BIN=target/release/leteo python3 bench_engines.py [--tier deterministic] [--only engram,leteo]
+    BENCH_STATE=/tmp/state LETEO_BIN=target/release/leteo python3 bench_engines.py [--tier deterministic|llm] [--only engram,leteo] [--passes 3]
 """
 
 import argparse
 import datetime
 import json
 import os
+import shutil
 import sys
+import time
 
-from adapters import TIERS, Skipped
+from adapters import DETERMINISTIC, Skipped
 from comparison_corpus import corpus, no_answer, queries
 from mcpclient import BENCH
 
@@ -55,15 +57,71 @@ def run_one(cls, state, members, date):
     return entry
 
 
+# Passes of the LLM tier. A model that extracts facts or chooses entities does
+# not give the same store twice, so one pass is one draw and the page reports the
+# spread of several.
+DEFAULT_PASSES = 3
+
+# A run that fills the disk takes the machine's other work down with it, which
+# happened once. Below this much free space no further pass is started.
+MIN_FREE_BYTES = 8 * 1024 ** 3
+
+
+def run_llm(cls, state, members, date, passes):
+    """One LLM-tier engine: `passes` independent loads, each from an empty store.
+
+    Every pass has a state directory of its own, so what one pass left behind
+    cannot answer for the next. The first fault ends the engine's run: the passes
+    that completed are kept and the fault is named, because a second attempt at
+    something that just failed would spend the same hours to learn the same thing.
+    """
+    entry = dict(name=cls.name, label=cls.label, date=date, required=False, status="measured", reason="",
+                 version="", rows=[], no_answer=[], passes=[], failed="", models={}, planned=passes)
+    skipped = ""
+    for k in range(1, passes + 1):
+        adapter = cls(os.path.join(state, f"pass-{k}"))
+        try:
+            free = shutil.disk_usage(state).free
+            if free < MIN_FREE_BYTES:
+                raise RuntimeError(f"stopped before pass {k}: {free / 1024 ** 3:.1f} GiB of disk free, "
+                                   f"under the {MIN_FREE_BYTES // 1024 ** 3} GiB this run needs to leave")
+            adapter.check()
+            if not entry["version"]:
+                entry["version"] = adapter.version()
+                entry["models"] = adapter.models()
+                entry["ollama"] = adapter.ollama.get("version", "")
+            started = time.time()
+            adapter.load(members)
+            loaded = time.time() - started
+            rows, na = measure(adapter, members)
+            entry["passes"].append(dict(rows=rows, no_answer=na, load_seconds=round(loaded), notes=adapter.notes))
+        except Skipped as e:
+            entry["failed"], skipped = f"pass {k}: {e}", str(e)
+            break
+        except Exception as e:  # noqa: BLE001 - any engine fault is named, never scored
+            entry["failed"] = f"pass {k}: {type(e).__name__}: {e}"
+            break
+        finally:
+            adapter.close()
+    if not entry["passes"]:
+        entry.update(status="skipped", reason=skipped or f"could not run: {entry['failed']}")
+    return entry
+
+
 def main(argv):
     ap = argparse.ArgumentParser()
-    ap.add_argument("--tier", default="deterministic", choices=sorted(TIERS))
+    ap.add_argument("--tier", default="deterministic", choices=("deterministic", "llm"))
     ap.add_argument("--only", help="comma-separated engine names, for working on one adapter")
+    ap.add_argument("--passes", type=int, default=DEFAULT_PASSES, help="LLM tier only: independent loads per engine")
     args = ap.parse_args(argv)
-    adapters = TIERS[args.tier]
-    if not adapters:
-        print(f"the {args.tier} tier has no adapters yet", file=sys.stderr)
-        return 2
+    if args.passes < 1:
+        ap.error("--passes must be at least 1")
+    if args.tier == "llm":
+        # Imported here: it installs signal handlers that remove containers, which
+        # a run that never starts one has no business doing.
+        from llm_tier import LLM as adapters
+    else:
+        adapters = DETERMINISTIC
     only = set(args.only.split(",")) if args.only else None
     members = corpus()
     date = datetime.date.today().isoformat()
@@ -71,11 +129,18 @@ def main(argv):
     for cls in adapters:
         if only and cls.name not in only:
             continue
-        entry = run_one(cls, BENCH, members, date)
-        print(f"{entry['label']}: {entry['status']}{' - ' + entry['reason'] if entry['reason'] else ''}", file=sys.stderr)
+        entry = run_llm(cls, BENCH, members, date, args.passes) if args.tier == "llm" else run_one(cls, BENCH, members, date)
+        note = entry["reason"] or (f"{len(entry['passes'])} of {entry['planned']} passes; {entry['failed']}" if entry.get("failed") else "")
+        print(f"{entry['label']}: {entry['status']}{' - ' + note if note else ''}", file=sys.stderr)
         out.append(entry)
-    json.dump(dict(tier=args.tier, engines=out), open(os.path.join(BENCH, "results_engines.json"), "w"),
-              ensure_ascii=False, indent=1)
+    path = os.path.join(BENCH, "results_engines.json" if args.tier == "deterministic" else "results_llm.json")
+    if args.tier == "llm" and only and os.path.exists(path):
+        # An engine that takes hours is run on its own. The others keep the rows
+        # and the run date they were measured with; the page prints both, so a
+        # row from an earlier run says so.
+        kept = [e for e in json.load(open(path))["engines"] if e["name"] not in only]
+        out = kept + out
+    json.dump(dict(tier=args.tier, engines=out), open(path, "w"), ensure_ascii=False, indent=1)
     missing = [e["label"] for e in out if e["required"] and e["status"] != "measured"]
     if missing:
         print(f"required engine not measured: {', '.join(missing)}", file=sys.stderr)
