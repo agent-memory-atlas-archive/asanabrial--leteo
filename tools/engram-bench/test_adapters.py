@@ -108,5 +108,20 @@ class Skipping(unittest.TestCase):
         self.assertEqual(entry["rows"], [])
 
 
+
+class LeteoNeedsThisRunsEngram(unittest.TestCase):
+    def test_a_keymap_left_by_an_earlier_run_is_not_an_engram_load(self):
+        with tempfile.TemporaryDirectory() as bench:
+            open(os.path.join(bench, "keymap_engram.json"), "w").write("{}")
+            saved, adapters.BENCH = adapters.BENCH, bench
+            adapters.LOADED_THIS_RUN.clear()
+            try:
+                with self.assertRaises(Skipped) as caught:
+                    adapters.LeteoAdapter(bench).load(MEMBERS)
+            finally:
+                adapters.BENCH = saved
+        self.assertIn("not loaded in this run", str(caught.exception))
+
+
 if __name__ == "__main__":
     unittest.main()

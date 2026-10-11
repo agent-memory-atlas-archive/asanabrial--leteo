@@ -36,6 +36,11 @@ STORE_VARIABLES = (
 MIN_CONTENT_MATCH = 40
 
 
+# Engines whose load returned in this process. Leteo reads it instead of a file
+# because a file outlives the run that wrote it.
+LOADED_THIS_RUN = set()
+
+
 class Skipped(Exception):
     """The engine cannot be measured here, and the message says why.
 
@@ -175,6 +180,7 @@ class EngramAdapter(_SearchTool):
         # are comparable with every earlier run only if it is loaded the same way.
         import load_engram
         self.keymap = {str(i): k for k, i in load_engram.load().items()}
+        LOADED_THIS_RUN.add(self.name)
 
 
 class LeteoAdapter(_SearchTool):
@@ -188,9 +194,11 @@ class LeteoAdapter(_SearchTool):
 
     def load(self, members):
         # Leteo adopts a copy of the Engram store, so ids survive and one answer
-        # key serves both. It cannot be loaded without that store.
-        if not os.path.exists(os.path.join(BENCH, "keymap_engram.json")):
-            raise Skipped("its corpus is adopted from the Engram store, and Engram was not loaded")
+        # key serves both. It cannot be loaded without that store, and a keymap on
+        # disk does not show it: a reused BENCH_STATE keeps the one an earlier run
+        # wrote, so only an Engram load that returned in this process counts.
+        if EngramAdapter.name not in LOADED_THIS_RUN:
+            raise Skipped("its corpus is adopted from the Engram store, and Engram was not loaded in this run")
         env = dict(os.environ, BENCH_STATE=BENCH, LETEO_BIN=self.binary)
         here = os.path.dirname(os.path.abspath(__file__))
         r = subprocess.run(["sh", "load_leteo.sh"], cwd=here, env=env, capture_output=True, text=True)

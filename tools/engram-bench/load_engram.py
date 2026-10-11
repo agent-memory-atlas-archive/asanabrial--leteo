@@ -5,6 +5,10 @@ from mcpclient import BENCH, ENGRAM, ENGRAM_QUIET_ENV
 
 
 def load():
+    # Removed first: the keymap is written last, so one left by an earlier run
+    # would make a failed or partial load here look complete.
+    try: os.remove(os.path.join(BENCH, "keymap_engram.json"))
+    except FileNotFoundError: pass
     ehome = os.path.join(BENCH, "ehome"); shutil.rmtree(ehome, ignore_errors=True); os.makedirs(ehome)
     env = dict(os.environ, HOME=ehome, ENGRAM_DATA_DIR=os.path.join(ehome, "data"), **ENGRAM_QUIET_ENV)
     for p in ("alpha-api", "beta-web"): os.makedirs(os.path.join(BENCH, "work", p), exist_ok=True)
