@@ -289,7 +289,11 @@ rewrites only the LLM section of the page, with every figure as a mean and the
 lowest and highest pass, the models and their digests, and the pass count. It
 needs Ollama with `qwen2.5:7b` and `nomic-embed-text` (or the models named in
 `BENCH_LLM_MODEL` and `BENCH_EMBED_MODEL`), `uv`, `npm`, `node`, `bun` and Docker;
-whatever is missing skips that engine with the reason. Letta is listed and skipped
+whatever is missing skips that engine with the reason. Two engines are too
+heavy for a default run and are listed as not measured, with the reason measured
+on the machine that produced the page, unless opted in: `BENCH_MEM0_INFER=1` for
+mem0 with `infer=True` and `BENCH_GRAPHITI=1` for Graphiti. Each pass first checks
+for 8 GiB of free disk and a run that would leave less stops. Letta is listed and skipped
 with its reason. Graphiti's FalkorDB runs in a throwaway container named
 `leteo-bench-<pid>-…` on a random loopback port, with no volume, removed when the
 run ends. Adding an engine is a class in `llm_tier.py` and an entry in `LLM`; the

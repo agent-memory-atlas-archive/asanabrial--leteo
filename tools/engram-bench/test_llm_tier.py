@@ -235,35 +235,44 @@ class Letta(unittest.TestCase):
         self.assertIn("0.16.8", e["reason"])
 
 
-class GraphitiGate(unittest.TestCase):
-    def run_with(self, value):
-        old = os.environ.pop("BENCH_GRAPHITI", None)
+class OptIn(unittest.TestCase):
+    def run_with(self, cls, var, value):
+        old = os.environ.pop(var, None)
         if value is not None:
-            os.environ["BENCH_GRAPHITI"] = value
+            os.environ[var] = value
         try:
-            return bench_engines.run_llm(llm_tier.GraphitiAdapter, tempfile.gettempdir(), [], "2026-01-01", 3)
+            return bench_engines.run_llm(cls, tempfile.gettempdir(), [], "2026-01-01", 3)
         finally:
-            os.environ.pop("BENCH_GRAPHITI", None)
+            os.environ.pop(var, None)
             if old is not None:
-                os.environ["BENCH_GRAPHITI"] = old
+                os.environ[var] = old
 
-    def test_by_default_it_is_listed_as_not_measured_with_the_measured_reason(self):
-        e = self.run_with(None)
-        self.assertEqual((e["status"], e["passes"]), ("skipped", []))
-        self.assertIn("16 of the first 18 episodes", e["reason"])
-        self.assertIn("BENCH_GRAPHITI=1", e["reason"])
+    CASES = ((llm_tier.GraphitiAdapter, "BENCH_GRAPHITI", "16 of the first 18 episodes"),
+             (llm_tier.Mem0InferAdapter, "BENCH_MEM0_INFER", "filled the disk before three passes"))
+
+    def test_by_default_each_is_not_measured_with_its_measured_reason_and_its_opt_in(self):
+        for cls, var, why in self.CASES:
+            e = self.run_with(cls, var, None)
+            self.assertEqual((e["status"], e["passes"]), ("skipped", []), var)
+            self.assertIn(why, e["reason"])
+            self.assertIn(f"set {var}=1", e["reason"])
 
     def test_any_value_but_one_leaves_it_gated(self):
-        self.assertIn("16 of the first 18", self.run_with("true")["reason"])
+        for cls, var, why in self.CASES:
+            self.assertIn(why, self.run_with(cls, var, "true")["reason"])
 
     def test_opting_in_gets_past_the_gate_to_the_real_prerequisites(self):
         old = os.environ["PATH"]
         os.environ["PATH"] = ""
         try:
-            e = self.run_with("1")
+            for cls, var, why in self.CASES:
+                self.assertNotIn(why, self.run_with(cls, var, "1")["reason"])
         finally:
             os.environ["PATH"] = old
-        self.assertNotIn("16 of the first 18", e["reason"])
+
+    def test_the_gated_engines_and_their_variables_are_one_table(self):
+        self.assertEqual({n: v for n, (v, _) in llm_tier.OPT_IN.items()},
+                         {"mem0-infer": "BENCH_MEM0_INFER", "graphiti": "BENCH_GRAPHITI"})
 
 
 class DiskWatchdog(unittest.TestCase):

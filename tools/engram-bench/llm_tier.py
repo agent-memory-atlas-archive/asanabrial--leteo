@@ -260,6 +260,27 @@ class LineWorker:
 # Adapters
 # ---------------------------------------------------------------------------
 
+# Engines a default run lists as not measured, each with the variable that opts in
+# and what was measured on the machine that produced the page. One table, read by
+# the adapters and by their tests, so the rule and its reason live in one place.
+OPT_IN = {
+    "mem0-infer": ("BENCH_MEM0_INFER",
+                   "a pass on qwen2.5:7b takes about 11 minutes, and on the 24 GB machine that produced this page it "
+                   "pushed swap to about 20 GB and filled the disk before three passes could finish"),
+    "graphiti": ("BENCH_GRAPHITI",
+                 "on qwen2.5:7b in json_object mode Graphiti's own validation rejected 16 of the first 18 episodes "
+                 "(EdgeDuplicate and Organization errors) at about 45 s per episode, so one pass of 91 memories "
+                 "exceeds an hour"),
+}
+
+
+def gate(name):
+    """`Skipped` with the measured reason unless the engine's variable is exactly `1`."""
+    var, why = OPT_IN.get(name, (None, None))
+    if var and os.environ.get(var) != "1":
+        raise Skipped(f"not run by default: {why}; set {var}=1 to run it anyway")
+
+
 class LLMAdapter(Adapter):
     """An engine whose write or search path calls a local model.
 
@@ -373,6 +394,11 @@ class Mem0VerbatimAdapter(Mem0Adapter):
 
 class Mem0InferAdapter(Mem0Adapter):
     name, label, infer = "mem0-infer", "mem0 (infer=True)", True
+
+    def check(self):
+        gate(self.name)
+        super().check()
+
     models_used = ("llm", "embed")
     notes_text = ("the LLM extracts the facts that are stored; only those are searchable",)
 
@@ -563,17 +589,8 @@ class GraphitiAdapter(LLMAdapter):
     notes_text = ("search returns extracted facts, never the saved text; a fact is mapped to the memory "
                   "its source episode is, and a fact drawn from two memories is unmappable",)
 
-    GATE = "BENCH_GRAPHITI"
-
     def check(self):
-        # Measured on this model, not assumed: see the page. A run that takes hours
-        # and stores almost nothing is opt-in, so a default run lists it as not
-        # measured with this reason instead of spending them.
-        if os.environ.get(self.GATE) != "1":
-            raise Skipped(
-                "not run by default: on qwen2.5:7b in json_object mode Graphiti's own validation rejected 16 of the "
-                "first 18 episodes (EdgeDuplicate and Organization errors) at about 45 s per episode, so one pass of "
-                f"91 memories exceeds an hour; set {self.GATE}=1 to run it anyway")
+        gate(self.name)
         super().check()
 
     def check_tools(self):
