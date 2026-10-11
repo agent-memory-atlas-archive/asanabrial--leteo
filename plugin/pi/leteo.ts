@@ -118,21 +118,29 @@ type HookEvent =
   | "session-stop"
 
 /**
- * Runs one hook. Failures are swallowed on purpose: memory is an assistant, not
- * a gate, and a missing binary must never break the user's session.
+ * Runs one hook and says whether it ran. `ok` is false when the binary could not
+ * be started, was killed at the timeout, exited non-zero, or printed something
+ * that is not JSON, and an empty `output` then means "did not run" rather than
+ * "had nothing to add". Callers that act on the difference use this.
+ *
+ * Failures never throw: memory is an assistant, not a gate, and a missing binary
+ * must never break the user's session.
  *
  * Exported for the contract test, which drives it with a binary that stops
  * reading to prove the stdin error handler below holds.
  */
-export function runHook(event: HookEvent, input: HookInput): Promise<HookOutput> {
+export function attemptHook(
+  event: HookEvent,
+  input: HookInput,
+): Promise<{ ok: boolean; output: HookOutput }> {
   return new Promise((resolve) => {
     let settled = false
     let timer: ReturnType<typeof setTimeout> | undefined
-    const finish = (output: HookOutput) => {
+    const finish = (ok: boolean, output: HookOutput = {}) => {
       if (settled) return
       settled = true
       if (timer) clearTimeout(timer)
-      resolve(output)
+      resolve({ ok, output })
     }
 
     let child
@@ -142,7 +150,7 @@ export function runHook(event: HookEvent, input: HookInput): Promise<HookOutput>
         env: { ...process.env, LETEO_HOOK_CLIENT: HOOK_CLIENT },
       })
     } catch {
-      resolve({})
+      finish(false)
       return
     }
 
@@ -151,12 +159,12 @@ export function runHook(event: HookEvent, input: HookInput): Promise<HookOutput>
     child.stdout?.on("data", (chunk: string) => {
       stdout += chunk
     })
-    child.on("error", () => finish({}))
-    child.on("close", () => {
+    child.on("error", () => finish(false))
+    child.on("close", (code: number | null) => {
       try {
-        finish(stdout.trim() ? (JSON.parse(stdout) as HookOutput) : {})
+        finish(code === 0, stdout.trim() ? (JSON.parse(stdout) as HookOutput) : {})
       } catch {
-        finish({})
+        finish(false)
       }
     })
     // A child that stops reading before the payload drains closes its read end,
@@ -174,11 +182,18 @@ export function runHook(event: HookEvent, input: HookInput): Promise<HookOutput>
   })
 }
 
+/** A hook's response, `{}` when it did not run. */
+export async function runHook(event: HookEvent, input: HookInput): Promise<HookOutput> {
+  return (await attemptHook(event, input)).output
+}
+
 /**
- * Runs `leteo` with arguments, for the one write no hook carries. Failures are
- * swallowed for the same reason a hook's are.
+ * Runs `leteo` with arguments, for the one write no hook carries, and says
+ * whether it exited zero. A store that was locked, or a process killed at the
+ * timeout, is a summary that was not saved, and the caller has to be able to
+ * tell.
  */
-function runLeteo(args: string[], cwd: string): Promise<void> {
+function runLeteo(args: string[], cwd: string): Promise<boolean> {
   return new Promise((resolve) => {
     try {
       const child = spawn(leteoBinary(), args, { cwd, stdio: "ignore" })
@@ -187,13 +202,16 @@ function runLeteo(args: string[], cwd: string): Promise<void> {
           child.kill()
         } catch {}
       }, HOOK_TIMEOUT_MS)
-      child.on("error", () => resolve())
-      child.on("close", () => {
+      child.on("error", () => {
         clearTimeout(timer)
-        resolve()
+        resolve(false)
+      })
+      child.on("close", (code: number | null) => {
+        clearTimeout(timer)
+        resolve(code === 0)
       })
     } catch {
-      resolve()
+      resolve(false)
     }
   })
 }
@@ -357,14 +375,33 @@ export default function leteo(pi: ExtensionAPI) {
     // The summary first, so the context the hook hands back already holds it.
     // Through `leteo save` because no tool can be called from here and a hook
     // payload has no field for it; the process runs in the session's directory
-    // so the project is the one the session belongs to.
+    // so the project is the one the session belongs to. Options come first and
+    // `--` ends them, because a summary is model-written text and one that opens
+    // with `-` or `--project=other` would otherwise be read as an option.
+    let saved = true
     if (summary) {
-      await runLeteo(
-        ["save", summaryTitle(summary), summary, "--type", "session_summary", "--session", id],
+      saved = await runLeteo(
+        ["save", "--type", "session_summary", "--session", id, "--", summaryTitle(summary), summary],
         ctx.cwd,
       )
     }
-    const recovered = additionalContext(await runHook("post-compaction", { session_id: id, cwd: ctx.cwd }))
+    const { ok, output } = await attemptHook("post-compaction", { session_id: id, cwd: ctx.cwd })
+
+    // Said to the model as well as the user, because what the recovery text
+    // holds depends on the save: a summary that was not stored is not in it.
+    const notices: string[] = []
+    if (!saved) {
+      notices.push(
+        "Leteo could not store the summary of the compaction that just happened, so the context below does not include it. Call the Leteo session summary tool with what was done so far.",
+      )
+    }
+    if (!ok) notices.push("Leteo could not recover this project's context after the compaction.")
+    if (notices.length > 0) {
+      try {
+        ctx.ui?.notify?.(notices.join(" "), "warning")
+      } catch {}
+    }
+    const recovered = [...notices, additionalContext(output)].filter(Boolean).join("\n\n")
     if (recovered) pendingContext.set(id, recovered)
   })
 

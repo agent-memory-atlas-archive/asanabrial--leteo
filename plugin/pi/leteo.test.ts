@@ -13,7 +13,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 
-import leteo, { leteoBinary, resultText, runHook, summaryTitle } from "./leteo.ts"
+import leteo, { attemptHook, leteoBinary, resultText, runHook, summaryTitle } from "./leteo.ts"
 
 const HERE = fileURLToPath(new URL(".", import.meta.url))
 
@@ -31,9 +31,11 @@ if (command === "hook") {
     log({ kind: "hook", event: rest[0], client: process.env.LETEO_HOOK_CLIENT, payload: JSON.parse(body || "{}") })
     const context = { "session-start": "OPENING CONTEXT", "post-compaction": "RECOVERED CONTEXT" }[rest[0]]
     process.stdout.write(context ? JSON.stringify({ hookSpecificOutput: { additionalContext: context } }) : "{}")
+    if (process.env.LETEO_FAKE_HOOK_EXIT) process.exit(Number(process.env.LETEO_FAKE_HOOK_EXIT))
   })
 } else if (command === "save") {
   log({ kind: "save", args: rest, cwd: process.cwd() })
+  process.exit(Number(process.env.LETEO_FAKE_SAVE_EXIT || 0))
 }
 `
 
@@ -296,9 +298,9 @@ test("tool results are captured except Leteo's own and anything of 50 characters
     end({ toolName: "bash", result: text("x".repeat(50)) }, context())
     end({ toolName: "bash", result: undefined }, context())
     end({ toolName: "subagent", result: text(learnings) }, context())
-    // Capture is not awaited by the handler; shutdown is what waits for it.
-    await pi.handlers.get("session_shutdown")!({ type: "session_shutdown", reason: "reload" }, context())
-    await new Promise((resolve) => setTimeout(resolve, 500))
+    // Capture is not awaited by the handler; shutdown is what waits for it, so
+    // by the time it returns every capture has run.
+    await pi.handlers.get("session_shutdown")!({ type: "session_shutdown", reason: "quit" }, context())
 
     const captured = hooks(h, "subagent-stop")
     assert.equal(captured.length, 1)
@@ -309,6 +311,7 @@ test("tool results are captured except Leteo's own and anything of 50 characters
       source: "subagent",
     })
     assert.equal(captured[0].client, "pi")
+    assert.equal(hooks(h, "session-stop").length, 1, "and the session ends after them")
   } finally {
     h.cleanup()
   }
@@ -361,12 +364,13 @@ test("a compaction saves the summary in the session's directory, recovers contex
     )
     const [saved] = h.log().filter((entry) => entry.kind === "save")
     assert.deepEqual(saved.args, [
-      "Ship the Pi package",
-      "## Goal\nShip the Pi package",
       "--type",
       "session_summary",
       "--session",
       "pi-session-1",
+      "--",
+      "Ship the Pi package",
+      "## Goal\nShip the Pi package",
     ])
     assert.equal(realpathSync(saved.cwd), realpathSync(HERE), "it runs where the session does")
     assert.deepEqual(
@@ -408,14 +412,92 @@ test("shutdown ends the session unless Pi is reloading", async () => {
 })
 
 test("a child that stops reading does not crash the hook path", async () => {
-  const h = harness({ LETEO_BIN: "/usr/bin/true" })
+  // A child that exits without reading closes the pipe under a payload larger
+  // than the pipe buffer, and the write then emits EPIPE on the stdin stream.
+  // Without the listener Node rethrows it as an uncaught exception, which the
+  // test runner reports as this test failing.
+  const directory = mkdtempSync(join(tmpdir(), "leteo-pi-deaf-"))
+  const deaf = join(directory, "leteo")
+  writeFileSync(deaf, `#!${process.execPath}\nprocess.exit(0)\n`)
+  chmodSync(deaf, 0o755)
+  const h = harness({ LETEO_BIN: deaf })
   try {
-    const output = await runHook("subagent-stop", {
+    const { ok, output } = await attemptHook("subagent-stop", {
       session_id: "s1",
       cwd: HERE,
-      stdout: "x".repeat(1 << 20),
+      stdout: "x".repeat(4 << 20),
     })
     assert.deepEqual(output, {})
+    assert.equal(ok, true, "it exited zero, having read nothing")
+  } finally {
+    h.cleanup()
+  }
+})
+
+test("a hook that did not run is told apart from one with nothing to add", async () => {
+  const h = harness()
+  try {
+    assert.deepEqual(await attemptHook("session-stop", { session_id: "s" }), { ok: true, output: {} })
+  } finally {
+    h.cleanup()
+  }
+  const failing = harness({ LETEO_FAKE_HOOK_EXIT: "3" })
+  try {
+    assert.equal((await attemptHook("session-stop", { session_id: "s" })).ok, false, "non-zero exit")
+  } finally {
+    failing.cleanup()
+  }
+  const missing = harness({ LETEO_BIN: "/nonexistent/leteo" })
+  try {
+    assert.equal((await attemptHook("session-stop", { session_id: "s" })).ok, false, "no such binary")
+  } finally {
+    missing.cleanup()
+  }
+})
+
+test("a summary that starts like an option is still a summary", async () => {
+  const h = harness()
+  try {
+    const pi = fakePi()
+    leteo(pi as any)
+    const summary = "--project=other\n- fixed the bug"
+    await pi.handlers.get("session_compact")!(
+      { type: "session_compact", compactionEntry: { summary } },
+      context("pi-session-1", HERE),
+    )
+    const [saved] = h.log().filter((entry) => entry.kind === "save")
+    const separator = saved.args.indexOf("--")
+    assert.deepEqual(saved.args.slice(separator + 1), ["--project=other", summary])
+    assert.ok(
+      saved.args.slice(0, separator).every((argument: string) => !argument.startsWith("--project")),
+      "nothing the model wrote is before the separator",
+    )
+  } finally {
+    h.cleanup()
+  }
+})
+
+test("a summary that could not be saved is not reported as saved", async () => {
+  const notices: string[] = []
+  const h = harness({ LETEO_FAKE_SAVE_EXIT: "1" })
+  try {
+    const pi = fakePi()
+    leteo(pi as any)
+    const failing = { ...context("pi-session-1", HERE), ui: { notify: (text: string) => notices.push(text) } }
+    await pi.handlers.get("session_compact")!(
+      { type: "session_compact", compactionEntry: { summary: "Goal: ship" } },
+      failing,
+    )
+    assert.equal(notices.length, 1)
+    assert.match(notices[0], /could not store the summary/)
+
+    const options = { appendSystemPrompt: "" }
+    await pi.handlers.get("before_agent_start")!(
+      { type: "before_agent_start", prompt: "continue the work", systemPrompt: "", systemPromptOptions: options },
+      context(),
+    )
+    assert.match(options.appendSystemPrompt, /could not store the summary/, "the model is told too")
+    assert.ok(options.appendSystemPrompt.includes("RECOVERED CONTEXT"), "the recovery still follows")
   } finally {
     h.cleanup()
   }

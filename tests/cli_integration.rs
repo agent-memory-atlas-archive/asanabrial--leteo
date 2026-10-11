@@ -2423,3 +2423,43 @@ fn every_hook_does_nothing_inside_pi_unless_the_pi_package_is_the_caller() {
         );
     }
 }
+
+/// The Pi package files a compaction summary with `leteo save`, and the summary
+/// is text a model wrote. One that opens with `-` or `--project=other` is a
+/// positional once the options come first and `--` ends them, and is read as an
+/// option otherwise, which files it under another project or refuses the call.
+#[test]
+fn save_takes_a_title_and_content_that_start_like_options_after_a_separator() {
+    let temp = tempfile::tempdir().expect("create CLI test directory");
+    let database = temp.path().join("leteo-save-dash.db");
+    run_json(
+        leteo(&database)
+            .arg("session-start")
+            .arg("pi-session")
+            .arg("--project")
+            .arg("real-project")
+            .arg("--directory")
+            .arg(temp.path()),
+    );
+
+    let saved = run_json(
+        leteo(&database)
+            .arg("save")
+            .args(["--type", "session_summary", "--session", "pi-session", "--"])
+            .arg("--project=other")
+            .arg("- fixed the bug"),
+    );
+    let saved = &saved["observation"];
+    assert_eq!(saved["title"], json!("--project=other"));
+    assert_eq!(saved["content"], json!("- fixed the bug"));
+    assert_eq!(saved["type"], json!("session_summary"));
+    assert_eq!(saved["project"], json!("real-project"));
+
+    leteo(&database)
+        .arg("save")
+        .args(["--type", "session_summary", "--session", "pi-session"])
+        .arg("--project=other")
+        .arg("- fixed the bug")
+        .assert()
+        .failure();
+}
