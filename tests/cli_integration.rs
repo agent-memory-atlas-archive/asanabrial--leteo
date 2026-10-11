@@ -11,6 +11,10 @@ fn leteo(database: &Path) -> Command {
     // listens on, so no test reaches the network.
     command.env_remove("LETEO_MODEL_DIR");
     command.env("LETEO_MODEL_URL", "http://127.0.0.1:9");
+    // A suite run from inside a Pi session inherits the marker the hook guard
+    // reads, and every hook test would then be answered with nothing.
+    command.env_remove("PI_CODING_AGENT");
+    command.env_remove("LETEO_HOOK_CLIENT");
     command
 }
 
@@ -2354,4 +2358,108 @@ fn a_save_naming_its_project_from_an_unreadable_working_directory_records_no_dir
         .expect("exactly one session");
     assert_eq!(project, "chosen");
     assert_eq!(directory, "", "an empty directory, never `.`");
+}
+
+/// Pi runs Claude models through pi-claude-bridge, which loads the user's Claude
+/// Code settings, so the Claude Code hooks fire inside a Pi session that the Pi
+/// package already registered. Registering it twice puts two sessions in the
+/// store for one conversation.
+///
+/// Pi marks its child processes with `PI_CODING_AGENT`, and Claude Code's hooks
+/// are plain `leteo hook <event>` commands, so the binary is where the marker
+/// can be read. It cannot tell Claude Code's call from the Pi package's own,
+/// which inherits the same marker and runs the same command; the package names
+/// itself with `LETEO_HOOK_CLIENT=pi` and is the one caller let through.
+#[test]
+fn every_hook_does_nothing_inside_pi_unless_the_pi_package_is_the_caller() {
+    for event in [
+        "session-start",
+        "post-compaction",
+        "user-prompt-submit",
+        "subagent-stop",
+        "session-stop",
+    ] {
+        let temp = tempfile::tempdir().expect("create CLI test directory");
+        let database = temp.path().join("leteo-pi-guard.db");
+        let payload = json!({
+            "session_id": "pi-guard-session",
+            "cwd": temp.path().to_string_lossy(),
+            "project": "pi-guard",
+            "prompt": "a prompt long enough to be kept",
+            "stdout": "## Key Learnings:\n1. The guard must not run for the Pi package\n",
+        })
+        .to_string();
+
+        let silenced = run_json(
+            leteo(&database)
+                .env("PI_CODING_AGENT", "true")
+                .arg("hook")
+                .arg(event)
+                .write_stdin(payload.clone()),
+        );
+        assert_eq!(silenced, json!({}), "{event} under Pi");
+        assert!(
+            !database.exists(),
+            "{event} under Pi must not even open the store"
+        );
+
+        let pi_package = run_json(
+            leteo(&database)
+                .env("PI_CODING_AGENT", "true")
+                .env("LETEO_HOOK_CLIENT", "pi")
+                .arg("hook")
+                .arg(event)
+                .arg("--verbose")
+                .write_stdin(payload),
+        );
+        assert_eq!(
+            pi_package["session_id"],
+            json!("pi-guard-session"),
+            "{event} from the Pi package runs"
+        );
+        assert!(
+            database.exists(),
+            "{event} from the Pi package uses the store"
+        );
+    }
+}
+
+/// The Pi package files a compaction summary with `leteo save`, and the summary
+/// is text a model wrote. One that opens with `-` or `--project=other` is a
+/// positional once the options come first and `--` ends them, and is read as an
+/// option otherwise, which files it under another project or refuses the call.
+#[test]
+fn save_takes_a_title_and_content_that_start_like_options_after_a_separator() {
+    let temp = tempfile::tempdir().expect("create CLI test directory");
+    let database = temp.path().join("leteo-save-dash.db");
+    run_json(
+        leteo(&database)
+            .arg("session-start")
+            .arg("pi-session")
+            .arg("--project")
+            .arg("real-project")
+            .arg("--directory")
+            .arg(temp.path()),
+    );
+
+    let saved = run_json(
+        leteo(&database)
+            .arg("save")
+            .args(["--type", "session_summary", "--session", "pi-session", "--"])
+            .arg("--project=other")
+            .arg("- fixed the bug"),
+    );
+    let saved = &saved["observation"];
+    assert_eq!(saved["title"], json!("--project=other"));
+    assert_eq!(saved["content"], json!("- fixed the bug"));
+    assert_eq!(saved["type"], json!("session_summary"));
+    assert_eq!(saved["project"], json!("real-project"));
+
+    leteo(&database)
+        .arg("save")
+        .args(["--type", "session_summary", "--session", "pi-session"])
+        .arg("--project=other")
+        .arg("- fixed the bug")
+        .assert()
+        .failure();
 }

@@ -6,6 +6,18 @@ All notable changes to Leteo are documented in this file.
 
 ### Added
 
+- **Pi gets a package that registers Leteo's MCP server itself.** `leteo setup
+  pi` writes `plugin/pi` into Pi's agent directory, lists it under `packages` in
+  `settings.json` (idempotent, and the other settings and packages are left as
+  they were), and removes the `leteo` entry an earlier setup wrote in
+  `mcp.json`, since a server of that name there overrides the package's
+  registration. The package opens and ends the session, persists prompts,
+  captures Key Learnings from tool output of more than 50 characters (Leteo's
+  own tools excluded), saves the compaction summary, recovers context after it,
+  appends the memory protocol to the system prompt, and registers `leteo mcp`
+  with the `direct` exposure, so the model can call the tools without searching
+  for them. A reload does not end the session (#269).
+
 - **The comparison page measures more than Engram.** The harness behind it now
   runs every engine through one adapter, which starts the engine isolated under a
   throwaway state, writes the held-out corpus through its own write path, searches
@@ -98,6 +110,13 @@ All notable changes to Leteo are documented in this file.
   as a token count (#112, #200).
 
 ### Fixed
+
+- **Claude Code's hooks no longer register a second session inside Pi.** Pi
+  runs Claude models through pi-claude-bridge, which loads the user's Claude
+  Code settings, so every `leteo hook` it fired put the conversation in the
+  store beside the one the Pi package owns. A hook now answers `{}` without
+  opening the store when `PI_CODING_AGENT` is set, unless the caller names
+  itself with `LETEO_HOOK_CLIENT=pi`, which the Pi package does (#269).
 
 - **A session recorded in a relative directory no longer matches every
   repository.** When the working directory could not be read, a save was filed
