@@ -9,7 +9,8 @@ import unittest
 os.environ.setdefault("BENCH_STATE", os.path.join(tempfile.gettempdir(), "leteo-adapters-selfcheck"))
 
 import adapters  # noqa: E402
-from adapters import Adapter, Hit, content_key, isolated_env, normalise  # noqa: E402
+import bench_engines  # noqa: E402
+from adapters import Adapter, Hit, Skipped, content_key, isolated_env, normalise, stored_titles  # noqa: E402
 
 LONG = "Offset pagination re-read the whole table for deep pages. Orders now page by a keyset cursor."
 MEMBERS = [
@@ -69,6 +70,42 @@ class Isolation(unittest.TestCase):
         finally:
             for var in adapters.STORE_VARIABLES:
                 os.environ.pop(var, None)
+
+
+class Naming(unittest.TestCase):
+    def test_a_repeated_title_is_made_unique_within_its_project_only(self):
+        ms = [dict(key="a", project="p", title="T"), dict(key="b", project="p", title="T"),
+              dict(key="c", project="q", title="T")]
+        self.assertEqual(stored_titles(ms), {"a": "T", "b": "T (2)", "c": "T"})
+
+
+class Skipping(unittest.TestCase):
+    def test_a_missing_runner_skips_the_engine_with_its_name_and_no_rows(self):
+        old = os.environ["PATH"]
+        os.environ["PATH"] = ""
+        try:
+            entry = bench_engines.run_one(adapters.BasicMemoryAdapter, tempfile.gettempdir(), [], "2026-01-01")
+        finally:
+            os.environ["PATH"] = old
+        self.assertEqual(entry["status"], "skipped")
+        self.assertIn("`uvx` was not found on PATH", entry["reason"])
+        self.assertEqual(entry["rows"], [])
+
+    def test_a_fault_while_running_is_named_and_never_scored(self):
+        class Broken(adapters.ServerMemoryAdapter):
+            def check(self):
+                pass
+
+            def version(self):
+                return "0"
+
+            def load(self, members):
+                raise RuntimeError("store unreadable")
+
+        entry = bench_engines.run_one(Broken, tempfile.gettempdir(), [], "2026-01-01")
+        self.assertEqual(entry["status"], "skipped")
+        self.assertIn("store unreadable", entry["reason"])
+        self.assertEqual(entry["rows"], [])
 
 
 if __name__ == "__main__":

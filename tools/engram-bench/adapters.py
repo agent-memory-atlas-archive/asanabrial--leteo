@@ -200,9 +200,186 @@ class LeteoAdapter(_SearchTool):
         self.keymap = {str(i): k for k, i in engram_ids.items()}
 
 
+def _tool_cache(*cmd):
+    """A package manager's own cache directory, or None.
+
+    Resolved by the tool that owns it, in the caller's real environment, so a
+    redirected HOME does not make every run download the packages again.
+    """
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    out = r.stdout.strip()
+    return out if r.returncode == 0 and out else None
+
+
+def package_cache_env():
+    env = {}
+    uv = _tool_cache("uv", "cache", "dir")
+    if uv:
+        env["UV_CACHE_DIR"] = uv
+    npm = _tool_cache("npm", "config", "get", "cache")
+    if npm:
+        env["npm_config_cache"] = npm
+    return env
+
+
+def stored_titles(members):
+    """The name each memory is stored under: its title, made unique per project.
+
+    Both external engines key a note or an entity by name, and the corpus holds
+    one pair of distractors with the same title in one project (`c5` and `c51`).
+    Engram's own `save` folds such a pair into one observation; writing the
+    second over the first here would silently drop a memory from these engines
+    too, so the later one carries a ` (2)`. Only a distractor is touched, and the
+    text that is searched stays as it was.
+    """
+    seen, out = {}, {}
+    for m in members:
+        n = seen[(m["project"], m["title"])] = seen.get((m["project"], m["title"]), 0) + 1
+        out[m["key"]] = m["title"] if n == 1 else f"{m['title']} ({n})"
+    return out
+
+
+class _External(Adapter):
+    """An engine that is a separate package started through a package runner.
+
+    Each project gets its own server and its own store, which is how Engram and
+    Leteo are asked too: a query is put to the project it belongs to and cannot
+    be answered from the other's memories.
+    """
+
+    runner = ""
+    needs = ""
+
+    def check(self):
+        if not shutil.which(self.runner):
+            raise Skipped(f"`{self.runner}` was not found on PATH; it is needed to run {self.label} ({self.needs})")
+
+    def command(self):
+        raise NotImplementedError
+
+    def env_for(self, project):
+        raise NotImplementedError
+
+    def launch(self, project):
+        cwd = os.path.join(BENCH, "work", f"{self.name}-{project}")
+        os.makedirs(cwd, exist_ok=True)
+        return self.command(), cwd, self.env_for(project)
+
+    def open(self, project):
+        return self._server(project, lambda: self.launch(project), self.warm)
+
+    def by_project(self, members):
+        out = {}
+        for m in members:
+            out.setdefault(m["project"], []).append(m)
+        return out
+
+
+class BasicMemoryAdapter(_External):
+    """basic-memory, AGPL-3.0: run only as an external process, nothing vendored."""
+
+    name, label, runner = "basic-memory", "basic-memory", "uvx"
+    needs = "uvx runs the pinned release"
+    PIN = "0.23.2"
+
+    def command(self):
+        return [self.runner, f"basic-memory@{self.PIN}", "mcp"]
+
+    def paths(self, project):
+        root = os.path.join(BENCH, "basic-memory", project)
+        return os.path.join(root, "config"), os.path.join(root, "notes")
+
+    def env_for(self, project):
+        config, home = self.paths(project)
+        os.makedirs(home, exist_ok=True)
+        return isolated_env(
+            BENCH, f"basic-memory-{project}", BASIC_MEMORY_CONFIG_DIR=config, BASIC_MEMORY_HOME=home,
+            BASIC_MEMORY_SEMANTIC_EMBEDDING_CACHE_DIR=os.path.join(BENCH, "basic-memory", "embedding-model"),
+            **package_cache_env())
+
+    def version(self):
+        env = self.env_for("version")
+        r = subprocess.run(self.command()[:-1] + ["--version"], capture_output=True, text=True, env=env, timeout=300)
+        m = re.search(r"version:\s*(\d+\.\d+\.\d+)", (r.stdout or "") + (r.stderr or ""))
+        if not m:
+            raise RuntimeError(f"`basic-memory --version` printed no version: {(r.stderr or r.stdout).strip()[:200]}")
+        return m.group(1)
+
+    def warm(self, server):
+        call_json(server, "search_notes", {"query": "warmup", "output_format": "json"})
+
+    def load(self, members):
+        shutil.rmtree(os.path.join(BENCH, "basic-memory"), ignore_errors=True)
+        names = stored_titles(members)
+        for project, group in self.by_project(members).items():
+            server = self.open(project)
+            for m in group:
+                args = {"title": names[m["key"]], "content": m["content"], "directory": project,
+                        "note_type": m["type"], "output_format": "json"}
+                if m["topic"]:
+                    args["tags"] = [m["topic"]]
+                reply, _, _ = call_json(server, "write_note", args)
+                self.keymap[reply["file_path"]] = m["key"]
+
+    def search(self, project, query, limit):
+        reply, _, _ = call_json(self.open(project), "search_notes",
+                                {"query": query, "page_size": limit, "output_format": "json"})
+        return [Hit(r.get("file_path"), r.get("content") or r.get("matched_chunk")) for r in reply.get("results") or []]
+
+
+class ServerMemoryAdapter(_External):
+    """The reference MCP knowledge-graph server.
+
+    Its `search_nodes` is an unranked, case-insensitive substring match of the
+    whole query against entity names, types and observations: the order is the
+    order stored, and a multi-word query matches only if those words appear
+    together and in that order. An empty answer to such a query is what the
+    server does, not a fault of the adapter.
+    """
+
+    name, label, runner = "server-memory", "server-memory", "npx"
+    needs = "npx runs the pinned release"
+    PIN = "2026.8.31"
+
+    def command(self):
+        return [self.runner, "-y", f"@modelcontextprotocol/server-memory@{self.PIN}"]
+
+    def env_for(self, project):
+        store = os.path.join(BENCH, "server-memory")
+        os.makedirs(store, exist_ok=True)
+        return isolated_env(BENCH, f"server-memory-{project}",
+                            MEMORY_FILE_PATH=os.path.join(store, f"{project}.jsonl"), **package_cache_env())
+
+    def version(self):
+        # npx cannot print the version it ran, and the server reports its own
+        # protocol-level string in `initialize`, which is not the package's. The
+        # pin is the version that runs.
+        return self.PIN
+
+    def warm(self, server):
+        call_json(server, "search_nodes", {"query": "warmup"})
+
+    def load(self, members):
+        shutil.rmtree(os.path.join(BENCH, "server-memory"), ignore_errors=True)
+        names = stored_titles(members)
+        for project, group in self.by_project(members).items():
+            server = self.open(project)
+            for m in group:
+                call_json(server, "create_entities", {"entities": [
+                    {"name": names[m["key"]], "entityType": m["type"], "observations": [m["content"]]}]})
+                self.keymap[f"{project}/{names[m['key']]}"] = m["key"]
+
+    def search(self, project, query, limit):
+        reply, _, _ = call_json(self.open(project), "search_nodes", {"query": query})
+        return [Hit(f"{project}/{e['name']}", " ".join(e.get("observations") or [])) for e in reply.get("entities") or []]
+
+
 # The deterministic tier: no model, no network at query time beyond fetching the
 # engine itself, so a re-run on the same versions gives the same ranking.
-DETERMINISTIC = (EngramAdapter, LeteoAdapter)
+DETERMINISTIC = (EngramAdapter, LeteoAdapter, BasicMemoryAdapter, ServerMemoryAdapter)
 
 # The opt-in tier is for engines that need a local LLM (mem0, claude-mem, Letta,
 # Graphiti on Ollama). It is selected with `--tier llm`, which compare.py refuses

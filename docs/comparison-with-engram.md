@@ -67,7 +67,7 @@ beside them and to no other.
 | measured | value |
 |---|---|
 | tier | deterministic |
-| Leteo commit | `a452466cd8485c9fea6db118549e385d7d5cb60a` |
+| Leteo commit | `824eedbb5b6f4e2496274b8b09d14bf8cbe142cd` |
 | harness | `tools/engram-bench`, run by `compare.py` at this commit |
 | search limit | 20 |
 | corpus | 91 memories (alpha-api 47, beta-web 44) |
@@ -79,6 +79,8 @@ beside them and to no other.
 |---|---|---|---|
 | Engram | 3.1.0 | 2026-10-11 | measured |
 | Leteo | 0.3.0 | 2026-10-11 | measured |
+| basic-memory | 0.23.2 | 2026-10-11 | measured |
+| server-memory | 2026.8.31 | 2026-10-11 | measured |
 
 The LLM tier (engines that need a local model) is opt-in and not part of this run: its engines have no row here, which is different from a row of zeros.
 
@@ -88,24 +90,26 @@ The LLM tier (engines that need a local model) is opt-in and not part of this ru
 |---|---|---|---:|---:|---:|---:|---:|---:|---:|
 | Engram | 3.1.0 | 2026-10-11 | 0.64 | 0.64 | 0.643 | 20 of 56 | 37 | 0 | 0 of 16 |
 | Leteo | 0.3.0 | 2026-10-11 | 0.96 | 0.96 | 0.964 | 1 of 56 | 135 | 0 | 5 of 16 |
+| basic-memory | 0.23.2 | 2026-10-11 | 0.95 | 0.96 | 0.955 | 1 of 56 | 619 | 0 | 15 of 16 |
+| server-memory | 2026.8.31 | 2026-10-11 | 0.23 | 0.23 | 0.232 | 43 of 56 | 14 | 0 | 0 of 16 |
 
-| query kind | n | Engram h@1 / h@5 / MRR | Leteo h@1 / h@5 / MRR |
-|---|---:|---:|---:|
-| longnl | 6 | 0.00 / 0.00 / 0.000 | 1.00 / 1.00 / 1.000 |
-| multiword | 24 | 0.96 / 0.96 / 0.958 | 1.00 / 1.00 / 1.000 |
-| paraphrase | 4 | 0.00 / 0.00 / 0.000 | 1.00 / 1.00 / 1.000 |
-| partial | 4 | 1.00 / 1.00 / 1.000 | 1.00 / 1.00 / 1.000 |
-| short | 10 | 0.80 / 0.80 / 0.800 | 0.90 / 0.90 / 0.900 |
-| spanish | 4 | 0.25 / 0.25 / 0.250 | 0.75 / 0.75 / 0.750 |
-| typo | 4 | 0.00 / 0.00 / 0.000 | 1.00 / 1.00 / 1.000 |
-| **overall** | 56 | 0.64 / 0.64 / 0.643 | 0.96 / 0.96 / 0.964 |
+| query kind | n | Engram h@1 / h@5 / MRR | Leteo h@1 / h@5 / MRR | basic-memory h@1 / h@5 / MRR | server-memory h@1 / h@5 / MRR |
+|---|---:|---:|---:|---:|---:|
+| longnl | 6 | 0.00 / 0.00 / 0.000 | 1.00 / 1.00 / 1.000 | 1.00 / 1.00 / 1.000 | 0.00 / 0.00 / 0.000 |
+| multiword | 24 | 0.96 / 0.96 / 0.958 | 1.00 / 1.00 / 1.000 | 1.00 / 1.00 / 1.000 | 0.00 / 0.00 / 0.000 |
+| paraphrase | 4 | 0.00 / 0.00 / 0.000 | 1.00 / 1.00 / 1.000 | 0.75 / 1.00 / 0.875 | 0.00 / 0.00 / 0.000 |
+| partial | 4 | 1.00 / 1.00 / 1.000 | 1.00 / 1.00 / 1.000 | 1.00 / 1.00 / 1.000 | 1.00 / 1.00 / 1.000 |
+| short | 10 | 0.80 / 0.80 / 0.800 | 0.90 / 0.90 / 0.900 | 0.80 / 0.80 / 0.800 | 0.80 / 0.80 / 0.800 |
+| spanish | 4 | 0.25 / 0.25 / 0.250 | 0.75 / 0.75 / 0.750 | 1.00 / 1.00 / 1.000 | 0.25 / 0.25 / 0.250 |
+| typo | 4 | 0.00 / 0.00 / 0.000 | 1.00 / 1.00 / 1.000 | 1.00 / 1.00 / 1.000 | 0.00 / 0.00 / 0.000 |
+| **overall** | 56 | 0.64 / 0.64 / 0.643 | 0.96 / 0.96 / 0.964 | 0.95 / 0.96 / 0.955 | 0.23 / 0.23 / 0.232 |
 
 ### Warm-search latency and reply size
 
 | engine | warm search median | p90 | mean reply bytes | mean results | zero-result queries | 20-result replies | mean bytes at 20 |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| engram | 8.2 ms | 13.5 ms | 560 | 0.7 | 20 | 0 | 0 |
-| leteo | 0.2 ms | 1.3 ms | 1212 | 2.4 | 1 | 0 | 0 |
+| engram | 8.6 ms | 9.7 ms | 560 | 0.7 | 20 | 0 | 0 |
+| leteo | 0.2 ms | 1.5 ms | 1212 | 2.4 | 1 | 0 | 0 |
 
 ### Questions the corpus cannot answer
 
@@ -129,16 +133,16 @@ The LLM tier (engines that need a local model) is opt-in and not part of this ru
 
 ### Who leads, per query kind
 
-| query kind | Engram MRR | Leteo MRR | Engram `any` MRR | leader, defaults | leader, `any` |
-|---|---:|---:|---:|---|---|
-| longnl | 0.000 | 1.000 | 0.167 | Leteo 1.000 | Leteo 1.000 |
-| multiword | 0.958 | 1.000 | 0.958 | Leteo 1.000 | Leteo 1.000 |
-| paraphrase | 0.000 | 1.000 | 0.500 | Leteo 1.000 | Leteo 1.000 |
-| partial | 1.000 | 1.000 | 1.000 | tie Engram, Leteo 1.000 | tie Engram, Leteo 1.000 |
-| short | 0.800 | 0.900 | 0.800 | Leteo 0.900 | Leteo 0.900 |
-| spanish | 0.250 | 0.750 | 0.750 | Leteo 0.750 | tie Engram, Leteo 0.750 |
-| typo | 0.000 | 1.000 | 0.750 | Leteo 1.000 | Leteo 1.000 |
-| **overall** | 0.643 | 0.964 | 0.786 | Leteo 0.964 | Leteo 0.964 |
+| query kind | Engram MRR | Leteo MRR | basic-memory MRR | server-memory MRR | Engram `any` MRR | leader, defaults | leader, `any` |
+|---|---:|---:|---:|---:|---:|---|---|
+| longnl | 0.000 | 1.000 | 1.000 | 0.000 | 0.167 | tie Leteo, basic-memory 1.000 | tie Leteo, basic-memory 1.000 |
+| multiword | 0.958 | 1.000 | 1.000 | 0.000 | 0.958 | tie Leteo, basic-memory 1.000 | tie Leteo, basic-memory 1.000 |
+| paraphrase | 0.000 | 1.000 | 0.875 | 0.000 | 0.500 | Leteo 1.000 | Leteo 1.000 |
+| partial | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 | tie Engram, Leteo, basic-memory, server-memory 1.000 | tie Engram, Leteo, basic-memory, server-memory 1.000 |
+| short | 0.800 | 0.900 | 0.800 | 0.800 | 0.800 | Leteo 0.900 | Leteo 0.900 |
+| spanish | 0.250 | 0.750 | 1.000 | 0.250 | 0.750 | basic-memory 1.000 | basic-memory 1.000 |
+| typo | 0.000 | 1.000 | 1.000 | 0.000 | 0.750 | tie Leteo, basic-memory 1.000 | tie Leteo, basic-memory 1.000 |
+| **overall** | 0.643 | 0.964 | 0.955 | 0.232 | 0.786 | Leteo 0.964 | Leteo 0.964 |
 
 ### Reply bytes, session-start hook latency, cold CLI search
 
