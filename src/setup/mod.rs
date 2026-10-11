@@ -293,6 +293,9 @@ pub fn uninstall(agent: &str, options: &SetupOptions) -> Result<SetupResult> {
     let adapter = find_adapter(agent)?;
     let environment = SetupEnvironment::resolve(options)?;
     let paths = resolve_paths(adapter, &environment);
+    if pi_package::is_pi(adapter) {
+        pi_package::check_settings(&environment)?;
+    }
     let mut actions = Vec::new();
 
     if let Some(existing) = read_optional(&paths.mcp_config)? {

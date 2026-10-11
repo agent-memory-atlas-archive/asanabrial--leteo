@@ -261,19 +261,59 @@ fn pi_setup_recognises_its_package_however_the_settings_spell_the_path() {
 }
 
 #[test]
-fn pi_setup_refuses_settings_it_cannot_read_rather_than_replace_them() {
+fn pi_setup_with_unreadable_settings_writes_nothing_at_all() {
+    // The old entry going and the package arriving are one change. Done in that
+    // order and stopped by the settings, Pi is left with no Leteo whatever.
+    for (settings, complaint) in [
+        ("{ not json", "settings.json"),
+        (r#"{"packages": "npm:x"}"#, "packages"),
+        ("[]", "JSON object"),
+    ] {
+        let temp = TempDir::new().unwrap();
+        let setup_options = options(&temp);
+        let mcp = resolve_agent_paths("pi", &setup_options)
+            .unwrap()
+            .mcp_config;
+        let legacy = r#"{"mcpServers":{"leteo":{"command":"/old/leteo"},"other":{"command":"o"}}}"#;
+        write_fixture(&mcp, legacy);
+        write_fixture(&pi_settings(&temp), settings);
+
+        let error = setup("pi", &setup_options).unwrap_err();
+        assert!(format!("{error:#}").contains(complaint), "{error:#}");
+        assert_eq!(fs::read_to_string(&mcp).unwrap(), legacy, "{settings}");
+        assert_eq!(
+            fs::read_to_string(pi_settings(&temp)).unwrap(),
+            settings,
+            "the settings are not replaced"
+        );
+        assert!(!pi_package_dir(&temp).exists(), "{settings}");
+    }
+}
+
+#[test]
+fn pi_uninstall_with_unreadable_settings_leaves_everything_as_it_found_it() {
+    // Taking the files away while the settings still list them would leave Pi
+    // pointing at a package that is not there, so the run stops before it
+    // touches anything, and says why.
     let temp = TempDir::new().unwrap();
+    let setup_options = options(&temp);
+    setup("pi", &setup_options).unwrap();
+    let mcp = resolve_agent_paths("pi", &setup_options)
+        .unwrap()
+        .mcp_config;
+    let legacy = r#"{"mcpServers":{"leteo":{"command":"/old/leteo"}}}"#;
+    write_fixture(&mcp, legacy);
     write_fixture(&pi_settings(&temp), "{ not json");
-    let error = setup("pi", &options(&temp)).unwrap_err();
+
+    let error = uninstall("pi", &setup_options).unwrap_err();
     assert!(format!("{error:#}").contains("settings.json"), "{error:#}");
+    assert_eq!(fs::read_to_string(&mcp).unwrap(), legacy);
+    assert!(pi_package_dir(&temp).join("leteo.ts").exists());
+    assert!(pi_package_dir(&temp).join("package.json").exists());
     assert_eq!(
         fs::read_to_string(pi_settings(&temp)).unwrap(),
         "{ not json"
     );
-
-    write_fixture(&pi_settings(&temp), r#"{"packages": "npm:x"}"#);
-    let error = setup("pi", &options(&temp)).unwrap_err();
-    assert!(format!("{error:#}").contains("packages"), "{error:#}");
 }
 
 #[test]

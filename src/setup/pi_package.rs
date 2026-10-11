@@ -195,15 +195,36 @@ pub(super) fn setup(
             adapter.display_name
         );
     }
-    let mut actions = Vec::new();
+    // Everything is worked out before anything is written. The old entry going
+    // and the package arriving are one change: done in the other order and
+    // stopped by settings Pi cannot read, Pi would be left with no Leteo at all.
+    let directory = package_dir(environment);
+    let settings = settings_path(environment);
+    let existing_settings = read_optional(&settings)?;
+    let desired_settings = register(
+        &settings,
+        existing_settings.as_deref(),
+        &environment.pi_agent_dir(),
+        &directory,
+    )?;
+    let files = package_files(
+        &environment.executable,
+        options.tools.as_deref().unwrap_or(DEFAULT_TOOLS),
+    )?;
 
     // The entry an earlier setup wrote. A `mcp.json` server overrides an
     // extension's registration of the same name, so left in place it would keep
     // the old command and `codemode` exposure in force over the package's.
-    if let Some(existing) = read_optional(mcp_config)?
-        && names_leteo(&existing, adapter.config_format)
-    {
-        let desired = remove_json_server(&existing, McpFormat::Pi)?;
+    let mcp = match read_optional(mcp_config)? {
+        Some(existing) if names_leteo(&existing, adapter.config_format) => {
+            let desired = remove_json_server(&existing, McpFormat::Pi)?;
+            Some((existing, desired))
+        }
+        _ => None,
+    };
+
+    let mut actions = Vec::new();
+    if let Some((existing, desired)) = mcp {
         actions.push(apply_content(
             mcp_config,
             Some(&existing),
@@ -212,12 +233,7 @@ pub(super) fn setup(
             options.dry_run,
         )?);
     }
-
-    let directory = package_dir(environment);
-    for (name, content) in package_files(
-        &environment.executable,
-        options.tools.as_deref().unwrap_or(DEFAULT_TOOLS),
-    )? {
+    for (name, content) in files {
         let path = directory.join(name);
         let existing = read_optional(&path)?;
         actions.push(apply_content(
@@ -228,19 +244,10 @@ pub(super) fn setup(
             options.dry_run,
         )?);
     }
-
-    let settings = settings_path(environment);
-    let existing = read_optional(&settings)?;
-    let desired = register(
-        &settings,
-        existing.as_deref(),
-        &environment.pi_agent_dir(),
-        &directory,
-    )?;
     actions.push(apply_content(
         &settings,
-        existing.as_deref(),
-        desired.as_bytes(),
+        existing_settings.as_deref(),
+        desired_settings.as_bytes(),
         ActionKind::PackageRegistration,
         options.dry_run,
     )?);
@@ -250,6 +257,25 @@ pub(super) fn setup(
         dry_run: options.dry_run,
         actions,
     })
+}
+
+/// Whether Pi's settings can be read, asked before `uninstall` touches anything.
+///
+/// Removing the files and the old entry while the settings still list the
+/// package would leave Pi pointing at a package that is not there, and settings
+/// that cannot be parsed cannot be edited. So the run stops, names the file, and
+/// leaves every other file as it found it.
+pub(super) fn check_settings(environment: &SetupEnvironment) -> Result<()> {
+    let settings = settings_path(environment);
+    if let Some(existing) = read_optional(&settings)? {
+        deregister(
+            &settings,
+            &existing,
+            &environment.pi_agent_dir(),
+            &package_dir(environment),
+        )?;
+    }
+    Ok(())
 }
 
 /// What `uninstall` adds for Pi, beside the `mcp.json` entry every agent loses.
