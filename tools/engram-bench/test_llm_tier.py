@@ -235,6 +235,49 @@ class Letta(unittest.TestCase):
         self.assertIn("0.16.8", e["reason"])
 
 
+class GraphitiGate(unittest.TestCase):
+    def run_with(self, value):
+        old = os.environ.pop("BENCH_GRAPHITI", None)
+        if value is not None:
+            os.environ["BENCH_GRAPHITI"] = value
+        try:
+            return bench_engines.run_llm(llm_tier.GraphitiAdapter, tempfile.gettempdir(), [], "2026-01-01", 3)
+        finally:
+            os.environ.pop("BENCH_GRAPHITI", None)
+            if old is not None:
+                os.environ["BENCH_GRAPHITI"] = old
+
+    def test_by_default_it_is_listed_as_not_measured_with_the_measured_reason(self):
+        e = self.run_with(None)
+        self.assertEqual((e["status"], e["passes"]), ("skipped", []))
+        self.assertIn("16 of the first 18 episodes", e["reason"])
+        self.assertIn("BENCH_GRAPHITI=1", e["reason"])
+
+    def test_any_value_but_one_leaves_it_gated(self):
+        self.assertIn("16 of the first 18", self.run_with("true")["reason"])
+
+    def test_opting_in_gets_past_the_gate_to_the_real_prerequisites(self):
+        old = os.environ["PATH"]
+        os.environ["PATH"] = ""
+        try:
+            e = self.run_with("1")
+        finally:
+            os.environ["PATH"] = old
+        self.assertNotIn("16 of the first 18", e["reason"])
+
+
+class DiskWatchdog(unittest.TestCase):
+    def test_no_pass_starts_when_the_disk_is_nearly_full(self):
+        saved = bench_engines.shutil.disk_usage
+        bench_engines.shutil.disk_usage = lambda p: type("U", (), {"free": 1024 ** 3})()
+        try:
+            e = bench_engines.run_llm(Passes().cls("ok"), tempfile.gettempdir(), [], "2026-01-01", 3)
+        finally:
+            bench_engines.shutil.disk_usage = saved
+        self.assertEqual((e["status"], e["passes"]), ("skipped", []))
+        self.assertIn("stopped before pass 1", e["reason"])
+
+
 class Passes(unittest.TestCase):
     def cls(self, behaviour):
         class A(llm_tier.LLMAdapter):

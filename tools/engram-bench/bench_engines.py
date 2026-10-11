@@ -12,6 +12,7 @@ import argparse
 import datetime
 import json
 import os
+import shutil
 import sys
 import time
 
@@ -61,6 +62,10 @@ def run_one(cls, state, members, date):
 # spread of several.
 DEFAULT_PASSES = 3
 
+# A run that fills the disk takes the machine's other work down with it, which
+# happened once. Below this much free space no further pass is started.
+MIN_FREE_BYTES = 8 * 1024 ** 3
+
 
 def run_llm(cls, state, members, date, passes):
     """One LLM-tier engine: `passes` independent loads, each from an empty store.
@@ -76,6 +81,10 @@ def run_llm(cls, state, members, date, passes):
     for k in range(1, passes + 1):
         adapter = cls(os.path.join(state, f"pass-{k}"))
         try:
+            free = shutil.disk_usage(state).free
+            if free < MIN_FREE_BYTES:
+                raise RuntimeError(f"stopped before pass {k}: {free / 1024 ** 3:.1f} GiB of disk free, "
+                                   f"under the {MIN_FREE_BYTES // 1024 ** 3} GiB this run needs to leave")
             adapter.check()
             if not entry["version"]:
                 entry["version"] = adapter.version()

@@ -563,6 +563,19 @@ class GraphitiAdapter(LLMAdapter):
     notes_text = ("search returns extracted facts, never the saved text; a fact is mapped to the memory "
                   "its source episode is, and a fact drawn from two memories is unmappable",)
 
+    GATE = "BENCH_GRAPHITI"
+
+    def check(self):
+        # Measured on this model, not assumed: see the page. A run that takes hours
+        # and stores almost nothing is opt-in, so a default run lists it as not
+        # measured with this reason instead of spending them.
+        if os.environ.get(self.GATE) != "1":
+            raise Skipped(
+                "not run by default: on qwen2.5:7b in json_object mode Graphiti's own validation rejected 16 of the "
+                "first 18 episodes (EdgeDuplicate and Organization errors) at about 45 s per episode, so one pass of "
+                f"91 memories exceeds an hour; set {self.GATE}=1 to run it anyway")
+        super().check()
+
     def check_tools(self):
         docker_ready()
         # Never pulled here: the image is several gigabytes and a pull on a nearly
