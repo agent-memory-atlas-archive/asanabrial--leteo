@@ -140,9 +140,9 @@ def main() -> int:
         print("the hard-set data is not the data checksums.json records")
         return 2
     # After the data is known to be the recorded data, not before: the corpus
-    # module is the engram-bench one and has nothing to do with whether the
+    # module is the memory-bench one and has nothing to do with whether the
     # files can be trusted.
-    sys.path.insert(0, os.path.join(HERE, "..", "..", "engram-bench"))
+    sys.path.insert(0, os.path.join(HERE, "..", "..", "memory-bench"))
     import corpus as C
 
     targets = {t["key"]: t for t in C.TARGETS}

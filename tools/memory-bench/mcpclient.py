@@ -2,7 +2,7 @@ import json, os, subprocess, tempfile, time
 
 # Every store lives under BENCH_STATE and each engine is started with HOME and
 # its data directory pointed there, so a run cannot reach the user's database.
-BENCH = os.environ.get("BENCH_STATE") or os.path.join(tempfile.gettempdir(), "leteo-engram-bench")
+BENCH = os.environ.get("BENCH_STATE") or os.path.join(tempfile.gettempdir(), "leteo-memory-bench")
 ENGRAM = os.environ.get("ENGRAM_BIN", "engram")
 LETEO = os.environ.get("LETEO_BIN", "leteo")
 # The server is started from a directory under BENCH_STATE, so a relative path

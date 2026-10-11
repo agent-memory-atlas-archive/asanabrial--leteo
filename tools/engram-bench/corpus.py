@@ -1,1 +1,0 @@
-../memory-bench/corpus.py

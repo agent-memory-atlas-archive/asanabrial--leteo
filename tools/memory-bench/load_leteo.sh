@@ -1,7 +1,7 @@
 #!/bin/sh
 # Adopts a copy, so the Engram store the benchmark reads is left as it was.
 set -e
-B=${BENCH_STATE:-${TMPDIR:-/tmp}/leteo-engram-bench}
+B=${BENCH_STATE:-${TMPDIR:-/tmp}/leteo-memory-bench}
 L=${LETEO_BIN:-leteo}
 rm -rf "$B/lhome" "$B/ecopy"; mkdir -p "$B/lhome" "$B/ecopy"
 sqlite3 "$B/ehome/data/engram.db" ".backup '$B/ecopy/engram.db'"

@@ -1454,7 +1454,7 @@ fn strip_list_marker(line: &str) -> Option<&str> {
 /// A commit does not change the comparison corpus together with the search it
 /// scores.
 ///
-/// `tools/engram-bench/comparison_corpus.py` is the held-out corpus the Engram
+/// `tools/memory-bench/comparison_corpus.py` is the held-out corpus the Engram
 /// comparison is measured on, and `ratchet.py` gates on a different one
 /// (`corpus.py`) so the ratchet cannot tune against it. The hold-out only means
 /// something if a ranking change cannot also move the queries that are supposed
@@ -1474,7 +1474,7 @@ fn strip_list_marker(line: &str) -> Option<&str> {
 #[test]
 fn a_commit_does_not_change_the_comparison_corpus_with_the_search_it_scores() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let corpus = "tools/engram-bench/comparison_corpus.py";
+    let corpus = "tools/memory-bench/comparison_corpus.py";
     assert!(
         root.join(corpus).exists(),
         "the comparison-corpus guard names `{corpus}`, which is not here; if the \
