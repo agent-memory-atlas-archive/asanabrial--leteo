@@ -70,7 +70,9 @@ position, so it still takes a rank from the memories below it.
 An engine whose prerequisite is missing — its binary, its package runner, a
 service — is **skipped with that reason** and has no row of numbers. An engine
 that starts and then fails is listed the same way, with the error. Leteo, the
-build under test, is the one engine whose absence fails the run.
+build under test, is the one engine whose absence fails the run. The LLM tier maps
+hits the same way, by provenance where the engine keeps one: mem0's metadata,
+claude-mem's memory ids and Graphiti's source episodes.
 
 The Engram side is saved through Engram's own `engram save` CLI, so its own write
 path builds its index; a copy of that store is then adopted with
@@ -103,10 +105,47 @@ release in `adapters.py`.
   fault of the adapter, and the `returned nothing` column is the count of them.
   Its rank is simply the order in which entities are stored.
 
-The **LLM tier** — engines that need a local language model, such as mem0,
-claude-mem, Letta and Graphiti on Ollama — is a separate, opt-in tier selected
-with `compare.py --tier llm`. It has no adapters yet, so the flag refuses to run
-and those engines appear nowhere in the results: not measured is not zero.
+The **LLM tier** is a separate, opt-in tier for engines that need a local
+language model, run with `compare.py --tier llm` against a local Ollama and
+nothing else: no paid API is called and the corpus is only ever sent to a
+loopback address. Its engines, each pinned to an exact release:
+
+- **mem0** 2.2.1, through its Python SDK, because OpenMemory MCP no longer exists
+  (it was removed from the mem0 repository). Two rows. `infer=False` stores each
+  memory verbatim and uses the model only for embeddings; `infer=True` lets the
+  LLM extract the facts that are stored, so a memory it extracts nothing from is
+  not searchable, and the row says how many. The vector store is a local Qdrant
+  under the throwaway state, and each memory carries its corpus key in its
+  metadata, which is the provenance.
+- **claude-mem** 13.35.0, through the `save_memory` and `search` tools of its MCP
+  server. `save_memory` stores the text as given, so this row calls no model at
+  all; its own vector index is Chroma's local ONNX embedder. Its hook-driven
+  capture, where a model would compress what an agent did, needs a live Claude
+  Code session and is not measured. Hits are mapped through the memory ids its
+  `save_memory` replies carry. The worker the MCP server starts is stopped when
+  the run ends.
+- **Graphiti MCP** v1.1.0 on a throwaway FalkorDB container, with Ollama behind
+  its OpenAI-compatible API in `json_object` mode. `add_memory` returns before
+  the episode is extracted and offers no completion signal, so each episode is
+  named for its corpus key and the loader polls `get_episodes` for that name
+  before anything is searched (a caller-supplied uuid cannot be used: in this
+  release it names an episode that must already exist). Search returns extracted facts and never the saved text; a fact is
+  mapped to a corpus memory through the episodes it lists as its source, and a
+  fact drawn from two memories is counted as unmappable rather than guessed.
+- **Letta** is listed and **not measured**, with the reason on the page: the
+  server with archival passages that the plan named does not exist at 0.34.10.
+
+Because a model that extracts facts or builds a graph does not give the same
+store twice, every LLM-tier engine is loaded from an empty store several times
+(three **passes** by default, `--passes N`), and the page shows each figure as the
+mean with the lowest and the highest pass beside it. The pass count is a column of
+its own, the models are named with their digests, and the dependencies are
+checked first: Ollama not running, a model not pulled, Docker or a package manager
+absent each give a skip with that reason, never a row of zeros. The models are set
+with `BENCH_LLM_MODEL` (default `qwen2.5:7b`), `BENCH_EMBED_MODEL` (default
+`nomic-embed-text`) and `BENCH_OLLAMA_URL`. Every throwaway container is named
+`leteo-bench-<pid>-…`, binds a random loopback port, mounts no volume, and is
+removed with `docker rm -f -v` when the run ends or is interrupted.
 
 ## Results
 
@@ -199,6 +238,16 @@ Skipped: `ENGRAM_SRC` is not set, and Engram's session-start hook is a script in
 
 <!-- END GENERATED: compare.py -->
 
+## Results, LLM tier
+
+These engines need a language model, so they are measured only on request, with
+`compare.py --tier llm`, on a local Ollama and nothing else: no paid API is
+called and the corpus never leaves the machine. An engine that cannot run here is
+listed with the reason and has no row of numbers.
+
+<!-- BEGIN GENERATED: compare.py --tier llm -->
+<!-- END GENERATED: compare.py --tier llm -->
+
 ## Where each engine leads
 
 The generated block computes a **leader** for every query kind, under each
@@ -219,6 +268,21 @@ commit under test:
 cargo build --release
 LETEO_BIN=target/release/leteo python3 tools/engram-bench/compare.py
 ```
+
+The LLM tier is a second command, never run by CI, because it needs a local
+Ollama with the two models pulled, Docker for Graphiti, `uv`, `npm`, `node` and
+`bun`, and hours:
+
+```sh
+ollama pull qwen2.5:7b && ollama pull nomic-embed-text
+python3 tools/engram-bench/compare.py --tier llm              # three passes per engine
+python3 tools/engram-bench/compare.py --tier llm --passes 1   # a quick look
+python3 tools/engram-bench/compare.py --tier llm --only graphiti   # one engine, with BENCH_STATE reused
+```
+
+It rewrites only the LLM section of this page and needs no Leteo binary. With
+`--only` and a reused `BENCH_STATE` the other engines keep their earlier rows and
+their own run dates.
 
 It rewrites this page's generated block and prints the harness output it came
 from. It needs stock `python3`, plus whatever the engines it should measure need:
@@ -255,6 +319,15 @@ directory instead of a fresh temporary one.
   engine does return are the right ones. The latency, reply-size and no-answer
   tables cover Engram and Leteo only: the external engines' time includes process
   and model start-up the others do not pay.
+- **The LLM tier runs on a small local model.** Every figure in that section was
+  produced with the models it names, not the hosted models these projects are
+  built and tuned around, and the prompts, entity types and defaults were left as
+  shipped. mem0 was installed as `pip install mem0ai` does, which leaves its
+  optional keyword-search and language-model extras out, and it says so at start.
+  Read those rows as the engine on a local model, not as the engine at its best.
+- **A pass is a draw.** The spread across passes is the variation of one
+  configuration, with a handful of passes; it is not a confidence interval, and
+  rows with overlapping ranges are not separated by this run.
 - **One machine, one day.** Timing is printed and never gated: it does not
   transfer between SQLite builds, and ranking does. The ranking numbers transfer
   better than the milliseconds.

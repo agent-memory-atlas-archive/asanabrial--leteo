@@ -388,12 +388,3 @@ class ServerMemoryAdapter(_External):
 # The deterministic tier: no model, no network at query time beyond fetching the
 # engine itself, so a re-run on the same versions gives the same ranking.
 DETERMINISTIC = (EngramAdapter, LeteoAdapter, BasicMemoryAdapter, ServerMemoryAdapter)
-
-# The opt-in tier is for engines that need a local LLM (mem0, claude-mem, Letta,
-# Graphiti on Ollama). It is selected with `--tier llm`, which compare.py refuses
-# until adapters are registered here; an engine that is not measured has no row,
-# which is different from a row of zeros.
-LLM: tuple = ()
-
-TIERS = {"deterministic": DETERMINISTIC, "llm": LLM}
-

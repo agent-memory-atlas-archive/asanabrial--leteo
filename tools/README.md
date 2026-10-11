@@ -279,12 +279,21 @@ drifted; the individual scripts (`bench_engines.py` for the head-to-head,
 `load_engram.py`, `load_leteo.sh`, `bench_search.py`, `bench_any.py`,
 `bench_cost.py`) still run on their own, and `compare.py` skips a step it cannot
 run and says so. `python3 -m unittest discover -s tools/engram-bench -p
-'test_adapters.py'` checks the hit mapping, the isolation and the skip handling.
+'test_*.py'` checks the hit mapping, the isolation and the skip handling.
 
-`compare.py --tier llm` is reserved for the opt-in tier of engines that need a
-local model (mem0, claude-mem, Letta, Graphiti on Ollama). It has no adapters yet
-and refuses to run; those engines have no row on the page, which is not the same
-as a row of zeros. Adding one is a class in `adapters.py` and an entry in `LLM`.
+`compare.py --tier llm` is the one opt-in flag for the engines that need a local
+model, and it is never run by CI. It measures mem0 (two rows, `infer=False` and
+`infer=True`), claude-mem and Graphiti MCP on a local Ollama and nothing else,
+loads each engine from an empty store `--passes` times (three by default) and
+rewrites only the LLM section of the page, with every figure as a mean and the
+lowest and highest pass, the models and their digests, and the pass count. It
+needs Ollama with `qwen2.5:7b` and `nomic-embed-text` (or the models named in
+`BENCH_LLM_MODEL` and `BENCH_EMBED_MODEL`), `uv`, `npm`, `node`, `bun` and Docker;
+whatever is missing skips that engine with the reason. Letta is listed and skipped
+with its reason. Graphiti's FalkorDB runs in a throwaway container named
+`leteo-bench-<pid>-…` on a random loopback port, with no volume, removed when the
+run ends. Adding an engine is a class in `llm_tier.py` and an entry in `LLM`; the
+pure logic is checked by `test_llm_tier.py` and needs none of the services.
 
 `bench_cost.py` needs an Engram source checkout because Engram's
 session-start hook is a shell script in its tree, not part of its binary.

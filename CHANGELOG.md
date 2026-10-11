@@ -15,8 +15,14 @@ All notable changes to Leteo are documented in this file.
   basic-memory and the reference MCP memory server beside Engram and Leteo, each
   row with its version and run date, the unmappable hits per engine, and any engine
   that could not run listed with the reason instead of as zeros. Engram's and
-  Leteo's numbers are unchanged. `compare.py --tier llm` is reserved for the
-  opt-in engines that need a local model and refuses until they exist (#248).
+  Leteo's numbers are unchanged (#248).
+
+- **The comparison can include engines that need a local model.** `compare.py
+  --tier llm` runs mem0 (verbatim and with fact extraction), claude-mem and
+  Graphiti MCP on a local Ollama, loads each from an empty store several times,
+  and reports every figure as a mean with the lowest and highest pass, beside the
+  models and digests used. An engine that cannot run is listed with the reason,
+  not scored as zero. It is opt-in and not part of CI (#248).
 
 - **The cloud dashboard can be browsed, read-only.** An administrator signed
   in to `leteo cloud serve` can list the projects, open a project's sessions
