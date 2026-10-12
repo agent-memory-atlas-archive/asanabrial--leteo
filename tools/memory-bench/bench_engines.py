@@ -78,6 +78,53 @@ def run_one(cls, state, members, date):
     return entry
 
 
+def run_repeated(cls, state, members, date, passes):
+    """One deterministic-tier engine whose store is not the same twice.
+
+    Each pass starts from an empty store — a state directory of its own, or the
+    one the adapter's `load` wipes and rewrites — so what one pass left behind
+    cannot answer for the next. The first pass's rows are kept as `rows`, so the
+    tables that read a single measurement still have one.
+
+    A run that does not take every pass it planned is not a measurement at all:
+    keeping the passes that survived would rank an engine on a truncated one,
+    which is the single draw this exists to stop presenting as reproducible. It
+    is reported as the fault it is instead.
+    """
+    entry = engine_entry(cls, date, cls.required, passes=[])
+    fault = None
+    for k in range(1, passes + 1):
+        adapter = cls(os.path.join(state, f"pass-{k}"))
+        try:
+            adapter.check()
+            if not entry["version"]:
+                entry["version"] = adapter.version()
+            adapter.load(members)
+            rows, na = measure(adapter, members)
+            entry["passes"].append(dict(rows=rows, no_answer=na))
+            if k == 1:
+                entry["rows"], entry["no_answer"] = rows, na
+        except Exception as e:  # noqa: BLE001 - any engine fault is named, never scored
+            fault = e
+            break
+        finally:
+            adapter.close()
+    if len(entry["passes"]) != passes:
+        # A `Skipped` after a pass has completed is not an absent prerequisite:
+        # the engine started, answered that pass and then stopped, and the page
+        # has to read that as a fault rather than as a machine that never had the
+        # engine at all. Either way the run is not a measurement, so it carries no
+        # row, and the reason says how far it got.
+        status, detail = ending(fault)
+        if entry["passes"]:
+            status = "failed"
+            reason = f"stopped after {len(entry['passes'])} of {passes} passes: {detail}"
+        else:
+            reason = detail if status == "skipped" else f"could not run: {detail}"
+        entry.update(status=status, reason=reason, rows=[], no_answer=[], passes=[])
+    return entry
+
+
 # Passes of the LLM tier. A model that extracts facts or chooses entities does
 # not give the same store twice, so one pass is one draw and the page reports the
 # spread of several.
@@ -150,7 +197,14 @@ def main(argv):
     for cls in adapters:
         if only and cls.name not in only:
             continue
-        entry = run_llm(cls, BENCH, members, date, args.passes) if args.tier == "llm" else run_one(cls, BENCH, members, date)
+        if args.tier == "llm":
+            entry = run_llm(cls, BENCH, members, date, args.passes)
+        elif getattr(cls, "passes", 1) > 1:
+            # The default is for a stand-in adapter that is not an `Adapter`
+            # subclass; every shipped one inherits `passes` from the base class.
+            entry = run_repeated(cls, BENCH, members, date, cls.passes)
+        else:
+            entry = run_one(cls, BENCH, members, date)
         note = entry["reason"] or (f"{len(entry['passes'])} of {entry['planned']} passes; {entry['failed']}" if entry.get("failed") else "")
         print(f"{entry['label']}: {entry['status']}{' - ' + note if note else ''}", file=sys.stderr)
         out.append(entry)

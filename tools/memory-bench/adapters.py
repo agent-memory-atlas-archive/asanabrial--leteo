@@ -110,6 +110,10 @@ class Adapter:
     # The engine the page is about: if it cannot be measured the run has failed,
     # rather than quietly producing a page without it.
     required = False
+    # How many independent loads the deterministic tier gives this engine. One
+    # is right for an engine whose store is the same twice; an engine that fills
+    # its index asynchronously is measured over several and reported as a spread.
+    passes = 1
 
     def __init__(self, state):
         self.state = state
@@ -292,6 +296,12 @@ class BasicMemoryAdapter(_External):
     name, label, runner = "basic-memory", "basic-memory", "uvx"
     needs = "uvx runs the pinned release"
     PIN = "0.23.2"
+    # Its full-text index is filled asynchronously after `write_note` returns,
+    # and 0.23.2 exposes no completion signal to wait on (`status --wait` is
+    # documented to return immediately), so two loads of the same corpus rank a
+    # paraphrase differently. The row is measured over five loads and reported
+    # as a spread rather than as one draw presented as reproducible.
+    passes = 5
 
     def command(self):
         return [self.runner, f"basic-memory@{self.PIN}", "mcp"]

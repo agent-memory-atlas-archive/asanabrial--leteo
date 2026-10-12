@@ -81,6 +81,16 @@ All notable changes to Leteo are documented in this file.
 
 ### Changed
 
+- **basic-memory's row is measured over several passes, not once.** Its
+  full-text index is filled asynchronously after `write_note` returns, and
+  0.23.2 exposes no completion signal to wait on, so two loads of the same
+  corpus are not the same store and their total hits differ. `bench_engines.py`
+  now runs an engine that declares more than one pass into a state of its own per
+  pass; the page's head-to-head row reports the mean with the lowest and the
+  highest pass, the engines table the pass count, the per-kind table the mean
+  alone, and a run that faults before its passes are done is not measured at all
+  (#262).
+
 - **A search no longer writes vectors; a memory gets its vector where it is
   written.** `mem_search` used to embed every memory in scope with no current
   vector and keep them while it held the store's single lock: on a 54k-memory
