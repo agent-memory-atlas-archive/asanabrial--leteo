@@ -262,7 +262,9 @@ numbers stay comparable with earlier runs. The deterministic tier adds
 basic-memory (run through `uvx`, as an external process only: it is AGPL-3.0) and
 `@modelcontextprotocol/server-memory` (through `npx`), both pinned to an exact
 version in `adapters.py`. An engine whose binary, package runner or service is
-missing is skipped with a named reason and has no row.
+missing is skipped with a named reason and has no row; an engine that starts and
+then faults is `failed` with the exception named, and has no row either, so a
+crash after starting is never read as a prerequisite that was absent.
 
 An engine whose answer is not the same twice declares how many passes it needs
 (`Adapter.passes`, five for basic-memory, which fills its full-text index

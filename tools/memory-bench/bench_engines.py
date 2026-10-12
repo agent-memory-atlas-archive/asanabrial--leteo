@@ -51,7 +51,10 @@ def run_one(cls, state, members, date):
     except Skipped as e:
         entry.update(status="skipped", reason=str(e), rows=[], no_answer=[])
     except Exception as e:  # noqa: BLE001 - any engine fault is named, never scored
-        entry.update(status="skipped", reason=f"could not run: {type(e).__name__}: {e}", rows=[], no_answer=[])
+        # A crash is not a missing prerequisite. `skipped` says the engine could
+        # not start, and a run that started and then faulted has to be readable
+        # as that on the page rather than as a skip with a long reason.
+        entry.update(status="failed", reason=f"could not run: {type(e).__name__}: {e}", rows=[], no_answer=[])
     finally:
         adapter.close()
     return entry
@@ -167,7 +170,7 @@ def main(argv):
             continue
         if args.tier == "llm":
             entry = run_llm(cls, BENCH, members, date, args.passes)
-        elif cls.passes > 1:
+        elif getattr(cls, "passes", 1) > 1:
             entry = run_repeated(cls, BENCH, members, date, cls.passes)
         else:
             entry = run_one(cls, BENCH, members, date)
@@ -185,6 +188,13 @@ def main(argv):
     missing = [e["label"] for e in out if e["required"] and e["status"] != "measured"]
     if missing:
         print(f"required engine not measured: {', '.join(missing)}", file=sys.stderr)
+        return 2
+    if not any(e["status"] == "measured" for e in out):
+        # A run that measured nothing has no numbers to publish, and a comparison
+        # that "succeeded" having executed nothing guards nothing. Every LLM-tier
+        # engine is non-required, so this is also what refuses a tier whose
+        # engines all skipped rather than returning a silent success.
+        print("no engine was measured", file=sys.stderr)
         return 2
     return 0
 

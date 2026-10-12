@@ -91,7 +91,7 @@ class Skipping(unittest.TestCase):
         self.assertIn("`uvx` was not found on PATH", entry["reason"])
         self.assertEqual(entry["rows"], [])
 
-    def test_a_fault_while_running_is_named_and_never_scored(self):
+    def test_an_engine_that_starts_and_then_faults_is_failed_and_never_scored(self):
         class Broken(adapters.ServerMemoryAdapter):
             def check(self):
                 pass
@@ -103,7 +103,7 @@ class Skipping(unittest.TestCase):
                 raise RuntimeError("store unreadable")
 
         entry = bench_engines.run_one(Broken, tempfile.gettempdir(), [], "2026-01-01")
-        self.assertEqual(entry["status"], "skipped")
+        self.assertEqual(entry["status"], "failed")
         self.assertIn("store unreadable", entry["reason"])
         self.assertEqual(entry["rows"], [])
 

@@ -167,9 +167,11 @@ def engine_status(engine):
 def engines_table(engines):
     """Every engine of the tier, measured or not, with the reason when not.
 
-    A skipped engine appears here and nowhere below: the tables that carry
-    numbers hold only engines that produced some. An engine measured over several
-    passes says so here, because a row measured once and a row measured five
+    An engine that was not measured appears here and nowhere below: the tables
+    that carry numbers hold only engines that produced some. `skipped` and
+    `failed` are different faults -- a missing prerequisite against a crash after
+    it started -- and the page names which. An engine measured over several passes
+    says the pass count here, because a row measured once and a row measured five
     times are not the same claim.
     """
     lines = ["| engine | version | run date | status |", "|---|---|---|---|"]
@@ -177,7 +179,8 @@ def engines_table(engines):
         if e["status"] == "measured":
             lines.append(f"| {e['label']} | {e['version']} | {e['date']} | {engine_status(e)} |")
         else:
-            lines.append(f"| {e['label']} | {e['version'] or '—'} | {e['date']} | **not measured:** {e['reason']} |")
+            why = "failed" if e["status"] == "failed" else "not measured"
+            lines.append(f"| {e['label']} | {e['version'] or '—'} | {e['date']} | **{why}:** {e['reason']} |")
     return "\n".join(lines)
 
 
@@ -212,6 +215,11 @@ def overall_table(measured):
 
 
 def kind_table(measured):
+    # A run that measured no engine has no kinds to break down, and the row's `n`
+    # is read from the first engine: this returns before reading one, so an empty
+    # comparison renders an empty table rather than taking the page down.
+    if not measured:
+        return "| query kind | n |\n|---|---:|"
     lines = [
         "| query kind | n | " + " | ".join(f"{e['label']} h@1 / h@5 / MRR" for e in measured) + " |",
         "|---|---:|" + "---:|" * len(measured),
@@ -333,6 +341,12 @@ def leads_table(measured, any_stats):
     Engram's `any` run available the last column ranks it in place of Engram's
     defaults.
     """
+
+    # No engine measured means nothing to rank, and `leader` would take the max
+    # of an empty field. An empty comparison renders an empty table rather than
+    # raising on the way to the page.
+    if not measured:
+        return "| query kind | Engram `any` MRR | leader, defaults | leader, `any` |\n|---|---:|---|---|"
 
     def leader(scores):
         best = max(v for _, v in scores)
