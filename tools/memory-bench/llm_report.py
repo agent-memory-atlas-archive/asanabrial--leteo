@@ -61,7 +61,11 @@ def engines_table(engines):
                 status += f"; **stopped:** {e['failed']}"
             lines.append(f"| {e['label']} | {e['version']} | {models_cell(e)} | {e['date']} | {passes_cell(e)} | {status} |")
         else:
-            lines.append(f"| {e['label']} | {e['version'] or '—'} | — | {e['date']} | — | **not measured:** {e['reason']} |")
+            # `failed` and `skipped` are different faults, as on the deterministic
+            # table: a run that started and then crashed must not read as an engine
+            # whose prerequisite was absent.
+            why = "failed" if e["status"] == "failed" else "not measured"
+            lines.append(f"| {e['label']} | {e['version'] or '—'} | — | {e['date']} | — | **{why}:** {e['reason']} |")
     return "\n".join(lines)
 
 
@@ -73,13 +77,17 @@ def results_table(measured):
     ]
     for e in measured:
         stats = each_pass(e, lambda p: summarise(p["rows"]))
+        # Both "of N" denominators are this engine's own: a row must not carry the
+        # first engine's totals when it was asked fewer answerable or unanswerable
+        # queries.
         n = stats[0]["n"]
+        no_answer = len(e["passes"][0]["no_answer"])
         lines.append(
             f"| {e['label']} | {passes_cell(e)} | {cell([s['hit1'] for s in stats], 2)} | {cell([s['hit5'] for s in stats], 2)} "
             f"| {cell([s['mrr'] for s in stats])} "
             f"| {cell(each_pass(e, lambda p: sum(r['n'] == 0 for r in p['rows'])), 1)} of {n} "
             f"| {cell(each_pass(e, lambda p: sum(r['unmappable'] for r in p['rows'])), 1)} "
-            f"| {cell(each_pass(e, lambda p: sum(r['n'] > 0 for r in p['no_answer'])), 1)} of {len(measured[0]['passes'][0]['no_answer'])} "
+            f"| {cell(each_pass(e, lambda p: sum(r['n'] > 0 for r in p['no_answer'])), 1)} of {no_answer} "
             f"| {cell(each_pass(e, lambda p: p['load_seconds']), 0)} s |"
         )
     return "\n".join(lines)
