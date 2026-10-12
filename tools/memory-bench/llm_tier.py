@@ -20,12 +20,10 @@ import socket
 import subprocess
 import threading
 import time
-import urllib.error
 import urllib.parse
 import urllib.request
-import uuid
 
-from adapters import Adapter, Hit, Skipped, content_key, isolated_env, package_cache_env, stored_titles
+from adapters import Adapter, Hit, Skipped, isolated_env, package_cache_env, stored_titles
 from mcpclient import BENCH, MCP, call_json
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -146,13 +144,20 @@ def docker_ready():
         raise Skipped("the Docker daemon is not reachable; start Docker to measure this engine")
 
 
+def _record(name):
+    """Arm cleanup and list a container as ours, before the daemon is asked for it.
+
+    Done before the start: an interruption between the daemon creating the
+    container and this process hearing about it would otherwise leave it behind.
+    """
+    _arm()
+    _STARTED.append(name)
+    return name
+
+
 def start_container(image, suffix, ports, env=None, args=()):
     """Start one container; return `{container port: host port}`."""
-    _arm()
-    name = container_name(suffix)
-    # Recorded before the start: an interruption between the daemon creating the
-    # container and this process hearing about it would otherwise leave it behind.
-    _STARTED.append(name)
+    name = _record(container_name(suffix))
     r = subprocess.run(run_command(image, suffix, ports, env, args), capture_output=True, text=True)
     if r.returncode:
         raise RuntimeError(f"`docker run {image}` failed: {(r.stderr or r.stdout).strip()[-300:]}")
@@ -168,9 +173,7 @@ def start_container(image, suffix, ports, env=None, args=()):
 
 def track_container(suffix):
     """Arm cleanup for a container this process is about to start itself."""
-    _arm()
-    _STARTED.append(container_name(suffix))
-    return container_name(suffix)
+    return _record(container_name(suffix))
 
 
 def remove_container(name):
@@ -338,17 +341,25 @@ class Mem0Adapter(LLMAdapter):
     def check_tools(self):
         need_tool("uv", "to run the pinned mem0 SDK in an isolated environment")
 
-    def command(self):
+    def uv_run(self):
+        """`uv run` for the pinned SDK, with what to run left to the caller.
+
+        The pins and the interpreter live here and nowhere else, so the version
+        probe cannot be silently reshaped by a change to the worker's own
+        arguments the way `command()[:-2]` could.
+        """
         return ["uv", "run", "--no-project", "--python", "3.12", "--with", f"mem0ai=={self.PIN}",
-                "--with", f"ollama=={self.OLLAMA_CLIENT_PIN}", "python", "-u",
-                os.path.join(HERE, "llm_workers", "mem0_worker.py")]
+                "--with", f"ollama=={self.OLLAMA_CLIENT_PIN}"]
+
+    def command(self):
+        return self.uv_run() + ["python", "-u", os.path.join(HERE, "llm_workers", "mem0_worker.py")]
 
     def env(self):
         return isolated_env(self.state, self.name, MEM0_TELEMETRY="False", MEM0_DIR=os.path.join(self.state, "mem0"),
                             **uv_env())
 
     def version(self):
-        r = subprocess.run(self.command()[:-2] + ["-c", "import importlib.metadata as m; print(m.version('mem0ai'))"],
+        r = subprocess.run(self.uv_run() + ["python", "-c", "import importlib.metadata as m; print(m.version('mem0ai'))"],
                            capture_output=True, text=True, env=self.env(), timeout=600)
         if r.returncode:
             raise RuntimeError(f"could not import mem0ai=={self.PIN}: {r.stderr.strip()[-300:]}")

@@ -83,6 +83,27 @@ class Containers(unittest.TestCase):
     def test_removal_takes_the_anonymous_volumes_with_it(self):
         self.assertEqual(llm_tier.remove_command("n")[:4], ["docker", "rm", "-f", "-v"])
 
+    def test_both_ways_of_owning_a_container_record_it_for_cleanup(self):
+        # `start_container` and `track_container` are the two doors into the same
+        # registration; a name missing from `_STARTED` is a container left behind
+        # when the run ends.
+        saved = (llm_tier._arm, llm_tier.subprocess.run, list(llm_tier._STARTED))
+        llm_tier._arm = lambda: None
+        llm_tier._STARTED[:] = []
+
+        class Done:
+            returncode, stdout, stderr = 0, "127.0.0.1:5555\n", ""
+
+        llm_tier.subprocess.run = lambda cmd, **kw: Done()
+        try:
+            self.assertEqual(llm_tier.track_container("one"), llm_tier.container_name("one"))
+            llm_tier.start_container("img:1", "two", [6379])
+            self.assertEqual(llm_tier._STARTED,
+                             [llm_tier.container_name("one"), llm_tier.container_name("two")])
+        finally:
+            llm_tier._arm, llm_tier.subprocess.run = saved[0], saved[1]
+            llm_tier._STARTED[:] = saved[2]
+
 
 class Prerequisites(WithoutPath):
     def test_no_docker_skips_with_its_name(self):
@@ -192,6 +213,41 @@ class Mem0Provenance(unittest.TestCase):
     def test_a_store_that_kept_nothing_is_a_fault_not_a_row(self):
         with self.assertRaises(RuntimeError):
             self.adapter({})
+
+
+class Mem0Version(unittest.TestCase):
+    PROBE = "import importlib.metadata as m; print(m.version('mem0ai'))"
+
+    def setUp(self):
+        self.seen = []
+        self.saved = llm_tier.subprocess.run
+
+        class Done:
+            returncode, stdout, stderr = 0, "2.2.1\n", ""
+
+        llm_tier.subprocess.run = lambda cmd, **kw: (self.seen.append([str(c) for c in cmd]), Done())[1]
+
+    def tearDown(self):
+        llm_tier.subprocess.run = self.saved
+
+    def version_command(self, adapter):
+        self.assertEqual(adapter.version(), "2.2.1")
+        return next(c for c in self.seen if c[-2:] == ["-c", self.PROBE])
+
+    def test_the_version_probe_is_built_from_the_pins_and_the_interpreter(self):
+        a = llm_tier.Mem0VerbatimAdapter(tempfile.gettempdir())
+        self.assertEqual(self.version_command(a), a.uv_run() + ["python", "-c", self.PROBE])
+
+    def test_a_longer_worker_command_does_not_reshape_the_version_probe(self):
+        # The defect was `command()[:-2]`: the probe's last two argv entries came
+        # from whatever the worker command happened to end with, so growing that
+        # tail rebuilt the probe around the wrong arguments.
+        class Changed(llm_tier.Mem0VerbatimAdapter):
+            def command(self):
+                return self.uv_run() + ["python", "-u", "another_worker.py", "--extra"]
+
+        changed = Changed(tempfile.gettempdir())
+        self.assertEqual(self.version_command(changed), changed.uv_run() + ["python", "-c", self.PROBE])
 
 
 def rows(ranks):
