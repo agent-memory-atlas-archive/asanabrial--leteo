@@ -94,8 +94,9 @@ reproducible. A run that faults part way keeps the passes that completed, and th
 page says how many of how many it got and what stopped it, so a truncated run
 never reads as a completed one. basic-memory is the one such engine here: it
 fills its full-text index asynchronously after `write_note` returns, and 0.23.2
-exposes no completion signal to wait on, so two loads of the same corpus rank a
-paraphrase differently. Engram and Leteo are unchanged.
+exposes no completion signal to wait on, so two loads of the same corpus are not
+the same store. Engram's and Leteo's ranking figures are unchanged; the
+warm-search latency and reply-size rows are this machine's and move with it.
 
 ## The engines
 

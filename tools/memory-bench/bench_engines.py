@@ -72,6 +72,7 @@ def run_repeated(cls, state, members, date, passes):
     """
     entry = dict(name=cls.name, label=cls.label, date=date, required=cls.required, status="measured", reason="",
                  version="", rows=[], no_answer=[], passes=[], failed="", planned=passes)
+    skipped = ""
     for k in range(1, passes + 1):
         adapter = cls(os.path.join(state, f"pass-{k}"))
         try:
@@ -84,7 +85,7 @@ def run_repeated(cls, state, members, date, passes):
             if k == 1:
                 entry["rows"], entry["no_answer"] = rows, na
         except Skipped as e:
-            entry["failed"] = f"pass {k}: {e}"
+            entry["failed"], skipped = f"pass {k}: {e}", str(e)
             break
         except Exception as e:  # noqa: BLE001 - any engine fault is named, never scored
             entry["failed"] = f"pass {k}: {type(e).__name__}: {e}"
@@ -92,7 +93,13 @@ def run_repeated(cls, state, members, date, passes):
         finally:
             adapter.close()
     if not entry["passes"]:
-        entry.update(status="skipped", reason=entry["failed"] or "could not run")
+        # `run_one`'s distinction, kept here: a crash after the engine started is
+        # `failed`, an absent prerequisite is `skipped`, and the page reads the
+        # two as different faults.
+        if skipped:
+            entry.update(status="skipped", reason=skipped)
+        else:
+            entry.update(status="failed", reason=f"could not run: {entry['failed']}")
     return entry
 
 
@@ -171,6 +178,8 @@ def main(argv):
         if args.tier == "llm":
             entry = run_llm(cls, BENCH, members, date, args.passes)
         elif getattr(cls, "passes", 1) > 1:
+            # The default is for a stand-in adapter that is not an `Adapter`
+            # subclass; every shipped one inherits `passes` from the base class.
             entry = run_repeated(cls, BENCH, members, date, cls.passes)
         else:
             entry = run_one(cls, BENCH, members, date)

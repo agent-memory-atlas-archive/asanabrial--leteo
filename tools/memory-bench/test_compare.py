@@ -49,6 +49,9 @@ class Figure(unittest.TestCase):
     def test_a_run_that_planned_five_and_kept_one_says_so(self):
         self.assertEqual(compare.figure([0.750], 3, planned=5), "0.750 (1 of 5 passes)")
 
+    def test_a_spread_finer_than_the_printed_digits_is_every_pass(self):
+        self.assertEqual(compare.figure([0.4996, 0.5004], 3), "0.500 (every pass)")
+
 
 class EnginesTable(unittest.TestCase):
     def test_a_measured_engine_is_a_row_with_its_version_and_date(self):
@@ -130,6 +133,8 @@ class FakeAdapter(Adapter):
     name, label = "fake", "fake"
     calls = 0
     fail_on = 0
+    crash_on = 0
+    states = []
 
     def check(self):
         pass
@@ -139,8 +144,11 @@ class FakeAdapter(Adapter):
 
     def load(self, members):
         FakeAdapter.calls += 1
+        FakeAdapter.states.append(self.state)
         if FakeAdapter.calls == FakeAdapter.fail_on:
             raise Skipped("no engine")
+        if FakeAdapter.calls == FakeAdapter.crash_on:
+            raise RuntimeError("store unreadable")
 
     def search(self, project, query, limit):
         return []
@@ -150,6 +158,8 @@ class RunRepeated(unittest.TestCase):
     def setUp(self):
         FakeAdapter.calls = 0
         FakeAdapter.fail_on = 0
+        FakeAdapter.crash_on = 0
+        FakeAdapter.states = []
         self.state = tempfile.mkdtemp(prefix="leteo-run-repeated-")
         self.addCleanup(shutil.rmtree, self.state, ignore_errors=True)
 
@@ -161,6 +171,10 @@ class RunRepeated(unittest.TestCase):
         self.assertEqual(entry["status"], "measured")
         self.assertIn("mean of 3 passes", compare.engines_table([entry]))
 
+    def test_every_pass_is_given_a_state_of_its_own(self):
+        bench_engines.run_repeated(FakeAdapter, self.state, corpus(), "2026-01-01", 3)
+        self.assertEqual(len(set(FakeAdapter.states)), 3)
+
     def test_a_fault_keeps_the_passes_that_ran_and_stops(self):
         FakeAdapter.fail_on = 2
         entry = bench_engines.run_repeated(FakeAdapter, self.state, corpus(), "2026-01-01", 3)
@@ -171,11 +185,20 @@ class RunRepeated(unittest.TestCase):
         self.assertIn("mean of 1 of 3 passes", table)
         self.assertIn("**stopped:** pass 2: no engine", table)
 
-    def test_no_pass_at_all_is_not_measured(self):
+    def test_no_pass_at_all_from_a_missing_prerequisite_is_skipped(self):
         FakeAdapter.fail_on = 1
         entry = bench_engines.run_repeated(FakeAdapter, self.state, corpus(), "2026-01-01", 3)
         self.assertEqual(entry["passes"], [])
         self.assertEqual(entry["status"], "skipped")
+        self.assertIn("**not measured:**", compare.engines_table([entry]))
+
+    def test_a_crash_on_the_first_pass_is_failed_not_skipped(self):
+        FakeAdapter.crash_on = 1
+        entry = bench_engines.run_repeated(FakeAdapter, self.state, corpus(), "2026-01-01", 3)
+        self.assertEqual(entry["passes"], [])
+        self.assertEqual(entry["status"], "failed")
+        self.assertIn("could not run:", entry["reason"])
+        self.assertIn("**failed:**", compare.engines_table([entry]))
 
 
 if __name__ == "__main__":

@@ -137,7 +137,11 @@ def figure(values, digits, planned=1):
             return f"{values[0]:.{digits}f}"
         return f"{values[0]:.{digits}f} (1 of {planned} passes)"
     mean, lo, hi = llm_report.spread(values)
-    return f"{mean:.{digits}f} (every pass)" if lo == hi else f"{mean:.{digits}f} ({lo:.{digits}f}–{hi:.{digits}f})"
+    # The bounds are compared as they will be printed: a spread finer than the
+    # last printed digit would otherwise render as `0.500 (0.500–0.500)`, a range
+    # that shows no movement.
+    low, high = f"{lo:.{digits}f}", f"{hi:.{digits}f}"
+    return f"{mean:.{digits}f} (every pass)" if low == high else f"{mean:.{digits}f} ({low}–{high})"
 
 
 def mean_figure(values, digits):

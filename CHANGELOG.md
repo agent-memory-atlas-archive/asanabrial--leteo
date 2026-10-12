@@ -84,12 +84,11 @@ All notable changes to Leteo are documented in this file.
 - **basic-memory's row is measured over several passes, not once.** Its
   full-text index is filled asynchronously after `write_note` returns, and
   0.23.2 exposes no completion signal to wait on, so two loads of the same
-  corpus rank a paraphrase differently: over five loads its MRR and its total
-  hits both moved from run to run, while Engram and Leteo were identical every
-  time. `bench_engines.py` now runs an engine that declares more than one pass
-  into a state of its own per pass, and the page reports its figures as the mean
-  with the lowest and the highest pass beside it and names the pass count, rather
-  than one draw presented as reproducible (#262).
+  corpus are not the same store and their total hits differ. `bench_engines.py`
+  now runs an engine that declares more than one pass into a state of its own per
+  pass, and the page reports its figures as the mean with the lowest and the
+  highest pass beside it and names the pass count, rather than one draw presented
+  as reproducible (#262).
 
 - **A search no longer writes vectors; a memory gets its vector where it is
   written.** `mem_search` used to embed every memory in scope with no current
