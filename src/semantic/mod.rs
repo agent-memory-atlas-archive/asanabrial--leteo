@@ -96,7 +96,7 @@ pub const FLOOR: f32 = 0.30;
 /// question the store cannot answer, that padding is what turns one shared word
 /// into a full page of unrelated memories. The best semantic match is kept -- it
 /// is the one the stage has an opinion about -- and the tail is dropped.
-/// Measured against `tools/engram-bench`'s no-answer questions.
+/// Measured against `tools/memory-bench`'s no-answer questions.
 pub const MERGE_CAP: usize = 5;
 
 /// Where the repository keeps the model, relative to its root.

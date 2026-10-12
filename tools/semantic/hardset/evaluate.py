@@ -1,6 +1,6 @@
 """Does the semantic stage find what the words cannot? Asked of the binary, with a CI.
 
-The engram-bench ratchet measures questions drawn from a memory's own vocabulary,
+The memory-bench ratchet measures questions drawn from a memory's own vocabulary,
 and the lexical stages answer those. This set is the opposite: questions that do
 not use the target's words, in English, in the other twelve languages, and against
 memories that are themselves translated. It is LLM-generated (see README.md) and
@@ -37,7 +37,7 @@ import tempfile
 from collections import defaultdict
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(HERE, "..", "..", "engram-bench"))
+sys.path.insert(0, os.path.join(HERE, "..", "..", "memory-bench"))
 import corpus as C  # noqa: E402
 
 DATA = os.path.join(HERE, "data")
@@ -60,7 +60,7 @@ def load(name):
 
 
 class Store:
-    """The engram-bench corpus, or its translation, saved through `mem_save`."""
+    """The memory-bench corpus, or its translation, saved through `mem_save`."""
 
     def __init__(self, root, name, members, binary):
         self.root = os.path.join(root, name)

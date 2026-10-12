@@ -449,9 +449,9 @@ jobs:
   # change to a stage, a weight or a tokenizer can leave every unit test green
   # and lose partial-word or paraphrase queries, and the same goes for a preview
   # or a default that quietly doubles what an agent is sent per call. This job
-  # runs the release binary over the corpus in `tools/engram-bench` and fails
+  # runs the release binary over the corpus in `tools/memory-bench` and fails
   # when a query kind's MRR falls below, or a reply grows past, the numbers in
-  # `tools/engram-bench/floors.json`.
+  # `tools/memory-bench/floors.json`.
   #
   # Linux only, like `cloud-tests`: ranking transfers between SQLite builds and
   # timing does not, so nothing here gates on time.
@@ -480,7 +480,7 @@ jobs:
         with:
           cache-on-failure: true
       - run: cargo build --release --locked
-      - run: python3 tools/engram-bench/ratchet.py
+      - run: python3 tools/memory-bench/ratchet.py
         env:
           LETEO_BIN: ${{ github.workspace }}/target/release/leteo
           LETEO_MODEL_DIR: ${{ github.workspace }}/assets/model
