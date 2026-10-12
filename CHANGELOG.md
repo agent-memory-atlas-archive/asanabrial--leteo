@@ -91,6 +91,18 @@ All notable changes to Leteo are documented in this file.
   figures as the mean with the lowest and the highest pass beside it and names
   the pass count, rather than one draw presented as reproducible (#262).
 
+- **A search no longer writes vectors; a memory gets its vector where it is
+  written.** `mem_search` used to embed every memory in scope with no current
+  vector and keep them while it held the store's single lock: on a 54k-memory
+  store with no vectors the first fallback search spent seconds embedding and
+  writing before it could answer, and a store it could not write held every
+  vector in memory for the question. A save, a revision, a consolidation and an
+  import now give their row a vector as they commit, a bounded backfill fills
+  what is left — in the background for `mcp` and `serve`, after a CLI search, and
+  on demand for `doctor --repair` — and the search stage only reads. The same
+  first fallback search on the 54k copy is 0.25 s against 2.39 s and writes
+  nothing. `doctor` reports the coverage as `semantic_vectors`. (#205)
+
 - **The benchmark harness is `tools/memory-bench/`, formerly `tools/engram-bench/`.**
   It compares Leteo with every engine on `docs/comparison.md`, not Engram alone,
   and the old name hid where the other engines' benchmarks were (#267).
