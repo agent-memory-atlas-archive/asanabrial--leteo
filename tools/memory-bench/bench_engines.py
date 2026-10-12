@@ -91,9 +91,8 @@ def run_repeated(cls, state, members, date, passes):
     which is the single draw this exists to stop presenting as reproducible. It
     is reported as the fault it is instead.
     """
-    entry = dict(name=cls.name, label=cls.label, date=date, required=cls.required, status="measured", reason="",
-                 version="", rows=[], no_answer=[], passes=[])
-    skipped, fault = "", ""
+    entry = engine_entry(cls, date, cls.required, passes=[])
+    fault = None
     for k in range(1, passes + 1):
         adapter = cls(os.path.join(state, f"pass-{k}"))
         try:
@@ -105,20 +104,14 @@ def run_repeated(cls, state, members, date, passes):
             entry["passes"].append(dict(rows=rows, no_answer=na))
             if k == 1:
                 entry["rows"], entry["no_answer"] = rows, na
-        except Skipped as e:
-            skipped, fault = str(e), f"pass {k}: {e}"
-            break
         except Exception as e:  # noqa: BLE001 - any engine fault is named, never scored
-            fault = f"pass {k}: {type(e).__name__}: {e}"
+            fault = e
             break
         finally:
             adapter.close()
     if len(entry["passes"]) != passes:
-        # `run_one`'s distinction, kept here: a crash after the engine started is
-        # `failed`, an absent prerequisite is `skipped`, and the page reads the
-        # two as different faults.
-        entry.update(status="skipped" if skipped else "failed",
-                     reason=skipped or f"could not run: {fault}",
+        status, detail = ending(fault)
+        entry.update(status=status, reason=detail if status == "skipped" else f"could not run: {detail}",
                      rows=[], no_answer=[], passes=[])
     return entry
 
