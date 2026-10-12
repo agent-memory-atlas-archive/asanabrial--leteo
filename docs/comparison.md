@@ -90,10 +90,12 @@ release in `adapters.py`.
 An engine whose answer is not the same twice is measured over several loads, each
 into a store of its own, and its row reports the mean with the lowest and the
 highest pass and the pass count, so no figure is one draw presented as
-reproducible. basic-memory is the one such engine here: it fills its full-text
-index asynchronously after `write_note` returns, and 0.23.2 exposes no completion
-signal to wait on, so two loads of the same corpus rank a paraphrase differently.
-Engram and Leteo are unchanged.
+reproducible. A run that faults part way keeps the passes that completed, and the
+page says how many of how many it got and what stopped it, so a truncated run
+never reads as a completed one. basic-memory is the one such engine here: it
+fills its full-text index asynchronously after `write_note` returns, and 0.23.2
+exposes no completion signal to wait on, so two loads of the same corpus rank a
+paraphrase differently. Engram and Leteo are unchanged.
 
 ## The engines
 

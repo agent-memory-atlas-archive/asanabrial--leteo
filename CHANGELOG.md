@@ -85,8 +85,8 @@ All notable changes to Leteo are documented in this file.
   full-text index is filled asynchronously after `write_note` returns, and
   0.23.2 exposes no completion signal to wait on, so two loads of the same
   corpus rank a paraphrase differently: over five loads its MRR moved between
-  0.946 and 0.955 and its total hits between 605 and 622, while Engram and Leteo
-  were identical every time. `bench_engines.py` now runs an engine that declares
+  0.946 and 0.955 and its total hits moved with it, while Engram and Leteo were
+  identical every time. `bench_engines.py` now runs an engine that declares
   more than one pass into a state of its own per pass, and the page reports its
   figures as the mean with the lowest and the highest pass beside it and names
   the pass count, rather than one draw presented as reproducible (#262).

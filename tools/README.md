@@ -269,7 +269,9 @@ An engine whose answer is not the same twice declares how many passes it needs
 asynchronously and exposes no completion signal to wait on). It is loaded into a
 state of its own per pass, and its row reports the mean with the lowest and the
 highest pass and the pass count, rather than one draw presented as reproducible.
-An engine measured once keeps its plain number.
+An engine measured once keeps its plain number. A run that faults part way keeps
+the passes that completed, and the page says how many of how many it got and what
+stopped it, so a truncated run never reads as a completed one.
 
 One command runs the load and the benchmarks and rewrites the comparison page
 from what it measured:

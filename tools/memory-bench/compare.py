@@ -118,14 +118,24 @@ def per_pass(engine, kind, field):
     return out
 
 
-def figure(values, digits):
+def planned_of(engine):
+    """How many passes the run set out to take; one for an engine measured once."""
+    return engine.get("planned") or len(passes_of(engine))
+
+
+def figure(values, digits, planned=1):
     """One pass prints plain; several print the mean with the lowest and the highest.
 
     A row measured once is written exactly as it always was, so an engine that
-    needs passes does not restyle the engines that do not.
+    needs passes does not restyle the engines that do not. An engine that planned
+    several passes and kept one is not a one-pass engine, and it says how short
+    the run was instead of printing that single draw plain; `engines_table` names
+    the fault beside it.
     """
     if len(values) == 1:
-        return f"{values[0]:.{digits}f}"
+        if planned == 1:
+            return f"{values[0]:.{digits}f}"
+        return f"{values[0]:.{digits}f} (1 of {planned} passes)"
     mean, lo, hi = llm_report.spread(values)
     return f"{mean:.{digits}f} (every pass)" if lo == hi else f"{mean:.{digits}f} ({lo:.{digits}f}–{hi:.{digits}f})"
 
@@ -133,6 +143,25 @@ def figure(values, digits):
 def mean_figure(values, digits):
     """The mean alone, for a table whose columns are already wide."""
     return f"{statistics.mean(values):.{digits}f}"
+
+
+def engine_status(engine):
+    """The status cell: the pass count when there is more than one, and the fault
+    when a run stopped short of the passes it planned.
+
+    A page generated from a truncated run must not read like a completed one, and
+    the fault is written here because no other table carries it.
+    """
+    done, planned = len(passes_of(engine)), planned_of(engine)
+    if planned == 1:
+        status = "measured"
+    elif done == planned:
+        status = f"measured, mean of {done} passes"
+    else:
+        status = f"measured, mean of {done} of {planned} passes"
+    if engine.get("failed"):
+        status += f"; **stopped:** {engine['failed']}"
+    return status
 
 
 def engines_table(engines):
@@ -146,9 +175,7 @@ def engines_table(engines):
     lines = ["| engine | version | run date | status |", "|---|---|---|---|"]
     for e in engines:
         if e["status"] == "measured":
-            passes = len(passes_of(e))
-            status = "measured" if passes == 1 else f"measured, mean of {passes} passes"
-            lines.append(f"| {e['label']} | {e['version']} | {e['date']} | {status} |")
+            lines.append(f"| {e['label']} | {e['version']} | {e['date']} | {engine_status(e)} |")
         else:
             lines.append(f"| {e['label']} | {e['version'] or '—'} | {e['date']} | **not measured:** {e['reason']} |")
     return "\n".join(lines)
@@ -176,9 +203,10 @@ def overall_table(measured):
         answered = [sum(r["n"] > 0 for r in p["no_answer"]) for p in passes_of(e)]
         lines.append(
             f"| {e['label']} | {e['version']} | {e['date']} "
-            f"| {figure(per_pass(e, 'ALL', 'hit1'), 2)} | {figure(per_pass(e, 'ALL', 'hit5'), 2)} | {figure(per_pass(e, 'ALL', 'mrr'), 3)} "
-            f"| {figure(empty, 0)} of {n} | {figure(hits, 0)} | {figure(unmappable, 0)} "
-            f"| {figure(answered, 0)} of {len(passes_of(e)[0]['no_answer'])} |"
+            f"| {figure(per_pass(e, 'ALL', 'hit1'), 2, planned_of(e))} | {figure(per_pass(e, 'ALL', 'hit5'), 2, planned_of(e))} "
+            f"| {figure(per_pass(e, 'ALL', 'mrr'), 3, planned_of(e))} "
+            f"| {figure(empty, 0, planned_of(e))} of {n} | {figure(hits, 0, planned_of(e))} | {figure(unmappable, 0, planned_of(e))} "
+            f"| {figure(answered, 0, planned_of(e))} of {len(passes_of(e)[0]['no_answer'])} |"
         )
     return "\n".join(lines)
 
