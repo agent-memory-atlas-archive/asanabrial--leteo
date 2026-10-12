@@ -167,7 +167,7 @@ removed with `docker rm -f -v` when the run ends or is interrupted.
 | measured | value |
 |---|---|
 | tier | deterministic |
-| Leteo commit | `1ab466ef9f14b975448d2758f13969b0f8df366e` |
+| Leteo commit | `f75764f0d0f1e12648317e4c413f88937183c5b8` |
 | harness | `tools/memory-bench`, run by `compare.py` at this commit |
 | search limit | 20 |
 | corpus | 91 memories (alpha-api 47, beta-web 44) |
@@ -190,28 +190,28 @@ The LLM tier (engines that need a local model) is opt-in and not part of this ru
 |---|---|---|---:|---:|---:|---:|---:|---:|---:|
 | Engram | 3.1.0 | 2026-10-12 | 0.64 | 0.64 | 0.643 | 20 of 56 | 37 | 0 | 0 of 16 |
 | Leteo | 0.3.0 | 2026-10-12 | 0.96 | 0.96 | 0.964 | 1 of 56 | 135 | 0 | 5 of 16 |
-| basic-memory | 0.23.2 | 2026-10-12 | 0.95 (every pass) | 0.96 (every pass) | 0.955 (every pass) | 1 (every pass) of 56 | 621 (617–622) | 0 (every pass) | 15 (every pass) of 16 |
+| basic-memory | 0.23.2 | 2026-10-12 | 0.94 (0.93–0.95) | 0.96 (every pass) | 0.950 (0.946–0.955) | 1 (every pass) of 56 | 619 (617–622) | 0 (every pass) | 15 (every pass) of 16 |
 | server-memory | 2026.8.31 | 2026-10-12 | 0.23 | 0.23 | 0.232 | 43 of 56 | 14 | 0 | 0 of 16 |
 
 An engine that does not give the same store twice is measured over several passes: the head-to-head row above shows the mean with the lowest and the highest pass in parentheses, the engines table says how many passes it took, and the per-kind table below shows the mean alone. A row measured once is its own number.
 
 | query kind | n | Engram h@1 / h@5 / MRR | Leteo h@1 / h@5 / MRR | basic-memory h@1 / h@5 / MRR | server-memory h@1 / h@5 / MRR |
 |---|---:|---:|---:|---:|---:|
-| longnl | 6 | 0.00 / 0.00 / 0.000 | 1.00 / 1.00 / 1.000 | 1.00 / 1.00 / 1.000 | 0.00 / 0.00 / 0.000 |
+| longnl | 6 | 0.00 / 0.00 / 0.000 | 1.00 / 1.00 / 1.000 | 0.90 / 1.00 / 0.950 | 0.00 / 0.00 / 0.000 |
 | multiword | 24 | 0.96 / 0.96 / 0.958 | 1.00 / 1.00 / 1.000 | 1.00 / 1.00 / 1.000 | 0.00 / 0.00 / 0.000 |
 | paraphrase | 4 | 0.00 / 0.00 / 0.000 | 1.00 / 1.00 / 1.000 | 0.75 / 1.00 / 0.875 | 0.00 / 0.00 / 0.000 |
 | partial | 4 | 1.00 / 1.00 / 1.000 | 1.00 / 1.00 / 1.000 | 1.00 / 1.00 / 1.000 | 1.00 / 1.00 / 1.000 |
 | short | 10 | 0.80 / 0.80 / 0.800 | 0.90 / 0.90 / 0.900 | 0.80 / 0.80 / 0.800 | 0.80 / 0.80 / 0.800 |
 | spanish | 4 | 0.25 / 0.25 / 0.250 | 0.75 / 0.75 / 0.750 | 1.00 / 1.00 / 1.000 | 0.25 / 0.25 / 0.250 |
 | typo | 4 | 0.00 / 0.00 / 0.000 | 1.00 / 1.00 / 1.000 | 1.00 / 1.00 / 1.000 | 0.00 / 0.00 / 0.000 |
-| **overall** | 56 | 0.64 / 0.64 / 0.643 | 0.96 / 0.96 / 0.964 | 0.95 / 0.96 / 0.955 | 0.23 / 0.23 / 0.232 |
+| **overall** | 56 | 0.64 / 0.64 / 0.643 | 0.96 / 0.96 / 0.964 | 0.94 / 0.96 / 0.950 | 0.23 / 0.23 / 0.232 |
 
 ### Warm-search latency and reply size
 
 | engine | warm search median | p90 | mean reply bytes | mean results | zero-result queries | 20-result replies | mean bytes at 20 |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| engram | 14.6 ms | 22.8 ms | 479 | 0.7 | 20 | 0 | 0 |
-| leteo | 0.2 ms | 1.6 ms | 1212 | 2.4 | 1 | 0 | 0 |
+| engram | 11.2 ms | 14.0 ms | 479 | 0.7 | 20 | 0 | 0 |
+| leteo | 0.2 ms | 1.3 ms | 1212 | 2.4 | 1 | 0 | 0 |
 
 ### Questions the corpus cannot answer
 
@@ -237,14 +237,14 @@ An engine that does not give the same store twice is measured over several passe
 
 | query kind | Engram MRR | Leteo MRR | basic-memory MRR | server-memory MRR | Engram `any` MRR | leader, defaults | leader, `any` |
 |---|---:|---:|---:|---:|---:|---|---|
-| longnl | 0.000 | 1.000 | 1.000 | 0.000 | 0.167 | tie Leteo, basic-memory 1.000 | tie Leteo, basic-memory 1.000 |
+| longnl | 0.000 | 1.000 | 0.950 | 0.000 | 0.167 | Leteo 1.000 | Leteo 1.000 |
 | multiword | 0.958 | 1.000 | 1.000 | 0.000 | 0.958 | tie Leteo, basic-memory 1.000 | tie Leteo, basic-memory 1.000 |
 | paraphrase | 0.000 | 1.000 | 0.875 | 0.000 | 0.500 | Leteo 1.000 | Leteo 1.000 |
 | partial | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 | tie Engram, Leteo, basic-memory, server-memory 1.000 | tie Engram, Leteo, basic-memory, server-memory 1.000 |
 | short | 0.800 | 0.900 | 0.800 | 0.800 | 0.800 | Leteo 0.900 | Leteo 0.900 |
 | spanish | 0.250 | 0.750 | 1.000 | 0.250 | 0.750 | basic-memory 1.000 | basic-memory 1.000 |
 | typo | 0.000 | 1.000 | 1.000 | 0.000 | 0.750 | tie Leteo, basic-memory 1.000 | tie Leteo, basic-memory 1.000 |
-| **overall** | 0.643 | 0.964 | 0.955 | 0.232 | 0.786 | Leteo 0.964 | Leteo 0.964 |
+| **overall** | 0.643 | 0.964 | 0.950 | 0.232 | 0.786 | Leteo 0.964 | Leteo 0.964 |
 
 ### Reply bytes, session-start hook latency, cold CLI search
 
