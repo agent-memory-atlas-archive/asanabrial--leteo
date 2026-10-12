@@ -20,12 +20,10 @@ import socket
 import subprocess
 import threading
 import time
-import urllib.error
 import urllib.parse
 import urllib.request
-import uuid
 
-from adapters import Adapter, Hit, Skipped, content_key, isolated_env, package_cache_env, stored_titles
+from adapters import Adapter, Hit, Skipped, isolated_env, package_cache_env, stored_titles
 from mcpclient import BENCH, MCP, call_json
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -40,6 +38,48 @@ EMBED_MODEL = os.environ.get("BENCH_EMBED_MODEL", "nomic-embed-text")
 # container reaches the Ollama on the same machine.
 LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1", "host.docker.internal")
 
+# Every wait in this module is a bound on something local, and each is named with
+# the reason behind its value: a bare number cannot tell a later change whether it
+# was generous or tight.
+
+# Ollama answers its own version and tag listing on the loopback at once; the only
+# slow call is the first while the daemon is warming, which this is well clear of.
+OLLAMA_SECONDS = 15
+
+# The first call to an embedder loads its weights into the daemon, so the width
+# probe is given room for a cold load rather than a warm round trip.
+EMBEDDING_SECONDS = 120
+
+# `uv run --no-project` resolves and installs the pinned SDK on first use. The
+# environment is shared across passes and runs, so only the first ever pays it.
+UV_RUN_SECONDS = 600
+
+# claude-mem fills its vector index in the background after `save_memory` returns,
+# one pass of the corpus at a time.
+CLAUDE_MEM_INDEX_SECONDS = 600
+
+# claude-mem's worker answers only once Chroma has downloaded and loaded its
+# embedder; the first calls after launch fail for that reason and are retried.
+CLAUDE_MEM_RETRY_SECONDS = 10
+
+# `npm install --prefix` fetches the pinned claude-mem package and its tree; the
+# package cache is shared across passes and runs, so only a cold first install
+# pays it.
+CLAUDE_MEM_INSTALL_SECONDS = 900
+
+# One mem0 `add` with inference runs the model and fills the store; a pass of 91
+# memories took about 11 minutes on the machine that produced the page, so this is
+# generous by design and still names a hang before the hour is spent.
+MEM0_ADD_SECONDS = 900
+
+# One mem0 `search` embeds the query and reads the store with no extraction, so it
+# is bounded apart from the write budget.
+MEM0_SEARCH_SECONDS = 300
+
+# FalkorDB answers PING as soon as it is up; the wait is the container's own start,
+# not the graph engine behind it.
+FALKORDB_READY_SECONDS = 120
+
 
 def require_local(url):
     host = urllib.parse.urlparse(url).hostname or ""
@@ -49,7 +89,7 @@ def require_local(url):
 
 
 def ollama_get(path, url=None):
-    with urllib.request.urlopen((url or OLLAMA_URL) + path, timeout=15) as r:
+    with urllib.request.urlopen((url or OLLAMA_URL) + path, timeout=OLLAMA_SECONDS) as r:
         return json.load(r)
 
 
@@ -146,13 +186,20 @@ def docker_ready():
         raise Skipped("the Docker daemon is not reachable; start Docker to measure this engine")
 
 
+def _record(name):
+    """Arm cleanup and list a container as ours, before the daemon is asked for it.
+
+    Done before the start: an interruption between the daemon creating the
+    container and this process hearing about it would otherwise leave it behind.
+    """
+    _arm()
+    _STARTED.append(name)
+    return name
+
+
 def start_container(image, suffix, ports, env=None, args=()):
     """Start one container; return `{container port: host port}`."""
-    _arm()
-    name = container_name(suffix)
-    # Recorded before the start: an interruption between the daemon creating the
-    # container and this process hearing about it would otherwise leave it behind.
-    _STARTED.append(name)
+    name = _record(container_name(suffix))
     r = subprocess.run(run_command(image, suffix, ports, env, args), capture_output=True, text=True)
     if r.returncode:
         raise RuntimeError(f"`docker run {image}` failed: {(r.stderr or r.stdout).strip()[-300:]}")
@@ -168,9 +215,7 @@ def start_container(image, suffix, ports, env=None, args=()):
 
 def track_container(suffix):
     """Arm cleanup for a container this process is about to start itself."""
-    _arm()
-    _STARTED.append(container_name(suffix))
-    return container_name(suffix)
+    return _record(container_name(suffix))
 
 
 def remove_container(name):
@@ -338,18 +383,26 @@ class Mem0Adapter(LLMAdapter):
     def check_tools(self):
         need_tool("uv", "to run the pinned mem0 SDK in an isolated environment")
 
-    def command(self):
+    def uv_run(self):
+        """`uv run` for the pinned SDK, with what to run left to the caller.
+
+        The pins and the interpreter live here and nowhere else, so the version
+        probe cannot be silently reshaped by a change to the worker's own
+        arguments the way `command()[:-2]` could.
+        """
         return ["uv", "run", "--no-project", "--python", "3.12", "--with", f"mem0ai=={self.PIN}",
-                "--with", f"ollama=={self.OLLAMA_CLIENT_PIN}", "python", "-u",
-                os.path.join(HERE, "llm_workers", "mem0_worker.py")]
+                "--with", f"ollama=={self.OLLAMA_CLIENT_PIN}"]
+
+    def command(self):
+        return self.uv_run() + ["python", "-u", os.path.join(HERE, "llm_workers", "mem0_worker.py")]
 
     def env(self):
         return isolated_env(self.state, self.name, MEM0_TELEMETRY="False", MEM0_DIR=os.path.join(self.state, "mem0"),
                             **uv_env())
 
     def version(self):
-        r = subprocess.run(self.command()[:-2] + ["-c", "import importlib.metadata as m; print(m.version('mem0ai'))"],
-                           capture_output=True, text=True, env=self.env(), timeout=600)
+        r = subprocess.run(self.uv_run() + ["python", "-c", "import importlib.metadata as m; print(m.version('mem0ai'))"],
+                           capture_output=True, text=True, env=self.env(), timeout=UV_RUN_SECONDS)
         if r.returncode:
             raise RuntimeError(f"could not import mem0ai=={self.PIN}: {r.stderr.strip()[-300:]}")
         return r.stdout.strip().splitlines()[-1]
@@ -358,7 +411,8 @@ class Mem0Adapter(LLMAdapter):
         if "w" not in self._servers:
             d = self.own_dir()
             w = LineWorker(self.command(), d, self.env(), os.path.join(d, "worker.log"))
-            w.send(dict(dir=d, ollama_url=OLLAMA_URL, llm_model=LLM_MODEL, embed_model=EMBED_MODEL), timeout=600)
+            w.send(dict(dir=d, ollama_url=OLLAMA_URL, llm_model=LLM_MODEL, embed_model=EMBED_MODEL),
+                   timeout=UV_RUN_SECONDS)
             self._servers["w"] = w
         return self._servers["w"]
 
@@ -368,21 +422,30 @@ class Mem0Adapter(LLMAdapter):
         empty, merged = 0, 0
         for m in members:
             out = w.send(dict(op="add", text=f"{names[m['key']]}\n{m['content']}", user=m["project"], key=m["key"],
-                              infer=self.infer), timeout=900)
+                              infer=self.infer), timeout=MEM0_ADD_SECONDS)
             events = out["events"]
             if not events:
                 empty += 1
                 continue
             merged += sum(e in ("UPDATE", "DELETE") for e in events)
             self.keymap[m["key"]] = m["key"]
+        # Every row reports stored against sent. Without extraction a write that
+        # returned no events is a memory mem0 dropped, and the count says so on
+        # the row rather than leaving it to read as an ordinary search miss; with
+        # extraction the same count is the memories the model kept a fact from,
+        # and the drops are facts it chose not to write.
+        stored = len(self.keymap)
         if self.infer:
-            self.notes.append(f"{len(self.keymap)} of {len(members)} memories produced at least one stored fact"
+            self.notes.append(f"{stored} of {len(members)} memories produced at least one stored fact"
                               + (f"; {merged} extraction events updated or deleted an earlier fact" if merged else ""))
+        else:
+            self.notes.append(f"{stored} of {len(members)} memories were stored"
+                              + (f"; {empty} write{'' if empty == 1 else 's'} returned no events" if empty else ""))
         if not self.keymap:
             raise RuntimeError("mem0 stored nothing")
 
     def search(self, project, query, limit):
-        out = self.worker().send(dict(op="search", query=query, user=project, limit=limit), timeout=300)
+        out = self.worker().send(dict(op="search", query=query, user=project, limit=limit), timeout=MEM0_SEARCH_SECONDS)
         return [Hit(h["key"], h["text"]) for h in out["hits"]]
 
 
@@ -437,7 +500,7 @@ class ClaudeMemAdapter(LLMAdapter):
         os.makedirs(self.package_dir(), exist_ok=True)
         r = subprocess.run(["npm", "install", "--prefix", self.package_dir(), f"claude-mem@{self.PIN}",
                             "--ignore-scripts", "--no-audit", "--no-fund"], capture_output=True, text=True,
-                           env=isolated_env(self.state, "npm", **package_cache_env()), timeout=900)
+                           env=isolated_env(self.state, "npm", **package_cache_env()), timeout=CLAUDE_MEM_INSTALL_SECONDS)
         if r.returncode:
             raise RuntimeError(f"npm install claude-mem@{self.PIN} failed: {(r.stderr or r.stdout).strip()[-300:]}")
 
@@ -472,7 +535,7 @@ class ClaudeMemAdapter(LLMAdapter):
             if "error" not in raw and not (raw.get("result") or {}).get("isError") \
                     and "could not complete this request" not in text:
                 return text
-            time.sleep(10)
+            time.sleep(CLAUDE_MEM_RETRY_SECONDS)
         raise RuntimeError(f"{tool} kept failing: {text[:200]}")
 
     def load(self, members):
@@ -502,7 +565,7 @@ class ClaudeMemAdapter(LLMAdapter):
             state = json.load(open(path))
             return all(state.get(p, {}).get("observations", 0) >= n for p, n in newest.items())
 
-        wait_until(synced, 600, "claude-mem's vector index")
+        wait_until(synced, CLAUDE_MEM_INDEX_SECONDS, "claude-mem's vector index")
 
     def search(self, project, query, limit):
         text = self.call("search", {"query": query, "project": project, "limit": limit})
@@ -544,7 +607,7 @@ def embedding_width(model, url=None):
     req = urllib.request.Request((url or OLLAMA_URL) + "/api/embed", method="POST",
                                  data=json.dumps({"model": model, "input": "width"}).encode(),
                                  headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=120) as r:
+    with urllib.request.urlopen(req, timeout=EMBEDDING_SECONDS) as r:
         return len(json.load(r)["embeddings"][0])
 
 
@@ -613,7 +676,7 @@ class GraphitiAdapter(LLMAdapter):
         self.containers = []
         name, ports = start_container(self.FALKORDB_IMAGE, "graphiti-falkordb", [6379])
         self.containers.append(name)
-        wait_until(lambda: redis_answers(ports[6379]), 120, "FalkorDB")
+        wait_until(lambda: redis_answers(ports[6379]), FALKORDB_READY_SECONDS, "FalkorDB")
         width = embedding_width(EMBED_MODEL)
         host = "host.docker.internal"
         env = {"OPENAI_API_URL": OLLAMA_URL.replace("localhost", host).replace("127.0.0.1", host) + "/v1",

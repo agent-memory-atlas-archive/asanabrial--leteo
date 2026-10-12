@@ -4,6 +4,7 @@
 
 None of these starts Ollama, Docker or an engine.
 """
+import json
 import os
 import tempfile
 import unittest
@@ -82,6 +83,27 @@ class Containers(unittest.TestCase):
 
     def test_removal_takes_the_anonymous_volumes_with_it(self):
         self.assertEqual(llm_tier.remove_command("n")[:4], ["docker", "rm", "-f", "-v"])
+
+    def test_both_ways_of_owning_a_container_record_it_for_cleanup(self):
+        # `start_container` and `track_container` are the two doors into the same
+        # registration; a name missing from `_STARTED` is a container left behind
+        # when the run ends.
+        saved = (llm_tier._arm, llm_tier.subprocess.run, list(llm_tier._STARTED))
+        llm_tier._arm = lambda: None
+        llm_tier._STARTED[:] = []
+
+        class Done:
+            returncode, stdout, stderr = 0, "127.0.0.1:5555\n", ""
+
+        llm_tier.subprocess.run = lambda cmd, **kw: Done()
+        try:
+            self.assertEqual(llm_tier.track_container("one"), llm_tier.container_name("one"))
+            llm_tier.start_container("img:1", "two", [6379])
+            self.assertEqual(llm_tier._STARTED,
+                             [llm_tier.container_name("one"), llm_tier.container_name("two")])
+        finally:
+            llm_tier._arm, llm_tier.subprocess.run = saved[0], saved[1]
+            llm_tier._STARTED[:] = saved[2]
 
 
 class Prerequisites(WithoutPath):
@@ -166,6 +188,12 @@ class Mem0Provenance(unittest.TestCase):
         a.load(self.MEMBERS)
         return a
 
+    def verbatim(self, events):
+        a = llm_tier.Mem0VerbatimAdapter(tempfile.gettempdir())
+        a._servers["w"] = FakeWorker(events)
+        a.load(self.MEMBERS)
+        return a
+
     def test_a_memory_the_model_extracted_nothing_from_has_no_provenance(self):
         a = self.adapter({"a": ["ADD"], "b": [], "c": ["ADD", "ADD"]})
         self.assertEqual(a.map_hit(llm_tier.Hit("a", "x"), self.MEMBERS), "a")
@@ -175,9 +203,224 @@ class Mem0Provenance(unittest.TestCase):
         a = self.adapter({"a": ["ADD"], "b": [], "c": ["UPDATE"]})
         self.assertTrue(any("2 of 3 memories" in n and "1 extraction events updated" in n for n in a.notes), a.notes)
 
+    def test_a_row_without_extraction_still_names_the_writes_that_were_dropped(self):
+        a = self.verbatim({"a": ["ADD"], "b": [], "c": ["ADD"]})
+        self.assertTrue(any("2 of 3 memories were stored" in n and "1 write returned no events" in n for n in a.notes), a.notes)
+
+    def test_a_row_that_stored_everything_names_no_drop(self):
+        a = self.verbatim({"a": ["ADD"], "b": ["ADD"], "c": ["ADD"]})
+        self.assertTrue(any("3 of 3 memories were stored" in n and "returned no events" not in n for n in a.notes), a.notes)
+
     def test_a_store_that_kept_nothing_is_a_fault_not_a_row(self):
         with self.assertRaises(RuntimeError):
             self.adapter({})
+
+
+class Mem0Version(unittest.TestCase):
+    PROBE = "import importlib.metadata as m; print(m.version('mem0ai'))"
+
+    def setUp(self):
+        self.seen = []
+        self.saved = llm_tier.subprocess.run
+
+        class Done:
+            returncode, stdout, stderr = 0, "2.2.1\n", ""
+
+        llm_tier.subprocess.run = lambda cmd, **kw: (self.seen.append([str(c) for c in cmd]), Done())[1]
+
+    def tearDown(self):
+        llm_tier.subprocess.run = self.saved
+
+    def version_command(self, adapter):
+        self.assertEqual(adapter.version(), "2.2.1")
+        return next(c for c in self.seen if c[-2:] == ["-c", self.PROBE])
+
+    def test_the_version_probe_is_built_from_the_pins_and_the_interpreter(self):
+        a = llm_tier.Mem0VerbatimAdapter(tempfile.gettempdir())
+        self.assertEqual(self.version_command(a), a.uv_run() + ["python", "-c", self.PROBE])
+
+    def test_a_longer_worker_command_does_not_reshape_the_version_probe(self):
+        # The defect was `command()[:-2]`: the probe's last two argv entries came
+        # from whatever the worker command happened to end with, so growing that
+        # tail rebuilt the probe around the wrong arguments.
+        class Changed(llm_tier.Mem0VerbatimAdapter):
+            def command(self):
+                return self.uv_run() + ["python", "-u", "another_worker.py", "--extra"]
+
+        changed = Changed(tempfile.gettempdir())
+        self.assertEqual(self.version_command(changed), changed.uv_run() + ["python", "-c", self.PROBE])
+
+
+class FakeClaudeMem(llm_tier.ClaudeMemAdapter):
+    """claude-mem over a `call` that answers from a script, no MCP server."""
+
+    def __init__(self, replies):
+        super().__init__(tempfile.gettempdir())
+        self.replies = list(replies)
+        self.saved = []
+        self.newest = None
+
+    def install(self):
+        pass
+
+    def server(self):
+        return None
+
+    def call(self, tool, args, attempts=4):
+        if tool == "search":
+            return ""
+        self.saved.append(args)
+        return self.replies.pop(0)
+
+    def wait_indexed(self, newest):
+        self.newest = newest
+
+
+class ClaudeMemLoad(unittest.TestCase):
+    MEMBERS = [dict(key="a", project="p", title="A", content="content a", type="decision"),
+               dict(key="b", project="q", title="B", content="content b", type="note")]
+
+    def loaded(self, replies):
+        a = FakeClaudeMem(replies)
+        a.load(self.MEMBERS)
+        return a
+
+    def test_load_records_every_id_and_its_projects_newest(self):
+        a = self.loaded(["Saved memory #11: A.", "Saved memory #12: B."])
+        self.assertEqual(a.keymap, {"11": "a", "12": "b"})
+        self.assertEqual(a.newest, {"p": 11, "q": 12})
+        self.assertEqual([(s["title"], s["metadata"]["key"]) for s in a.saved], [("A", "a"), ("B", "b")])
+
+    def test_a_save_that_folds_one_memory_into_another_id_is_a_fault(self):
+        # Two corpus memories sharing one id means the store holds fewer than were
+        # written, which the ranking cannot report.
+        with self.assertRaises(RuntimeError) as caught:
+            self.loaded(["Saved memory #7: A.", "Saved memory #7: B."])
+        self.assertIn("folded b into a", str(caught.exception))
+
+    def test_a_save_that_answers_no_memory_id_is_a_fault(self):
+        with self.assertRaises(RuntimeError) as caught:
+            self.loaded(["The worker could not complete this request."])
+        self.assertIn("no memory id", str(caught.exception))
+
+
+class ClaudeMemIndex(unittest.TestCase):
+    def probe(self, newest, state):
+        """Run `wait_indexed` against a scripted sync file, capturing the wait."""
+        a = llm_tier.ClaudeMemAdapter(tempfile.gettempdir())
+        with tempfile.TemporaryDirectory() as d:
+            a.data_dir = lambda: d
+            with open(os.path.join(d, "chroma-sync-state.json"), "w") as f:
+                json.dump(state, f)
+            seen = {}
+            saved = llm_tier.wait_until
+            llm_tier.wait_until = lambda probe, seconds, what: seen.update(seconds=seconds, what=what, ready=probe())
+            try:
+                a.wait_indexed(newest)
+            finally:
+                llm_tier.wait_until = saved
+        return seen
+
+    def test_the_wait_names_its_timeout_and_is_ready_only_when_every_memory_is_indexed(self):
+        seen = self.probe({"p": 3, "q": 2}, {"p": {"observations": 3}, "q": {"observations": 2}})
+        self.assertTrue(seen["ready"])
+        self.assertEqual(seen["seconds"], llm_tier.CLAUDE_MEM_INDEX_SECONDS)
+        self.assertEqual(seen["what"], "claude-mem's vector index")
+
+    def test_a_project_the_index_has_not_reached_is_not_ready(self):
+        self.assertFalse(self.probe({"p": 3, "q": 2}, {"p": {"observations": 3}})["ready"])
+
+
+class FakeClock:
+    def __init__(self, ticks):
+        self.ticks = list(ticks)
+
+    def time(self):
+        return self.ticks.pop(0) if self.ticks else 10 ** 6
+
+    def sleep(self, seconds):
+        pass
+
+
+class GraphitiWaitAndSearch(unittest.TestCase):
+    def graphiti(self):
+        a = llm_tier.GraphitiAdapter(tempfile.gettempdir())
+        a._servers["mcp"] = object()
+        return a
+
+    def run_settle(self, replies, ticks, keys=("k1", "k2")):
+        a = self.graphiti()
+        replies = list(replies)
+        calls = []
+        saved = (llm_tier.call_json, llm_tier.time)
+
+        def fake_call(server, tool, args):
+            calls.append(tool)
+            return (replies.pop(0) if replies else {"episodes": []}), "", 0
+
+        llm_tier.call_json = fake_call
+        llm_tier.time = FakeClock(ticks)
+        try:
+            pending = a.wait_settled("p", keys)
+        finally:
+            llm_tier.call_json, llm_tier.time = saved
+        return a, pending, calls
+
+    def test_an_episode_that_never_appears_stops_at_the_stall_timeout(self):
+        # Two empty polls, then the clock has passed STALL_SECONDS: the waiting
+        # keys come back rather than the loop sleeping 900 real seconds.
+        a, pending, calls = self.run_settle([{"episodes": []}, {"episodes": []}], ticks=[0, 0, 10, 901])
+        self.assertEqual(pending, {"k1", "k2"})
+        self.assertEqual(calls, ["get_episodes", "get_episodes"])
+        self.assertEqual(a.keymap, {})
+
+    def test_episodes_that_appear_are_mapped_and_dropped_from_pending(self):
+        a, pending, calls = self.run_settle([{"episodes": [{"name": "k1", "uuid": "e1"}]},
+                                             {"episodes": [{"name": "k2", "uuid": "e2"}]}],
+                                            ticks=[0, 0, 1, 2, 3])
+        self.assertEqual(pending, set())
+        self.assertEqual(calls, ["get_episodes", "get_episodes"])
+        self.assertEqual(a.keymap, {"e1": "k1", "e2": "k2"})
+
+    def test_search_reduces_each_fact_to_the_episodes_it_came_from(self):
+        a = self.graphiti()
+        saved = llm_tier.call_json
+        llm_tier.call_json = lambda *args: ({"facts": [{"fact": "f1", "episodes": ["e1"]}, {"fact": "f2"}]}, "", 0)
+        try:
+            hits = a.search("p", "q", 5)
+        finally:
+            llm_tier.call_json = saved
+        self.assertEqual([(h.ref, h.text) for h in hits], [("e1", "f1"), ("-", "f2")])
+
+    def test_search_names_an_engine_error(self):
+        a = self.graphiti()
+        saved = llm_tier.call_json
+        llm_tier.call_json = lambda *args: ({"error": "no group p"}, "", 0)
+        try:
+            with self.assertRaises(RuntimeError) as caught:
+                a.search("p", "q", 5)
+        finally:
+            llm_tier.call_json = saved
+        self.assertIn("no group p", str(caught.exception))
+
+
+class FakeSearchWorker:
+    def __init__(self, hits):
+        self.hits = hits
+        self.requests = []
+
+    def send(self, req, timeout):
+        self.requests.append(req)
+        return {"hits": self.hits}
+
+
+class Mem0Search(unittest.TestCase):
+    def test_search_reduces_the_worker_reply_to_hits_and_asks_for_the_limit(self):
+        a = llm_tier.Mem0VerbatimAdapter(tempfile.gettempdir())
+        a._servers["w"] = FakeSearchWorker([{"key": "a", "text": "one"}, {"key": "b", "text": "two"}])
+        hits = a.search("p", "q", 5)
+        self.assertEqual([(h.ref, h.text) for h in hits], [("a", "one"), ("b", "two")])
+        self.assertEqual(a._servers["w"].requests, [dict(op="search", query="q", user="p", limit=5)])
 
 
 def rows(ranks):
@@ -206,6 +449,22 @@ class Spread(unittest.TestCase):
         self.assertIn("| e | 2 of 3 |", llm_report.results_table([engine("e", [[1], [1]], planned=3)]))
         self.assertIn("| e | 3 |", llm_report.results_table([engine("e", [[1], [1], [1]])]))
 
+    def test_each_rows_of_n_denominators_are_its_own_engines(self):
+        # Two engines of different sizes: neither denominator may be taken from
+        # the other engine's row.
+        a = engine("a", [[1]])
+        b = engine("b", [[1, 1]], planned=1)
+        b["passes"][0]["no_answer"] = [dict(n=0)] * 7
+
+        def row(label):
+            return next(line for line in llm_report.results_table([a, b]).splitlines()
+                        if line.startswith(f"| {label} |"))
+
+        self.assertIn("of 1", row("a"))
+        self.assertIn("of 4", row("a"))
+        self.assertIn("of 2", row("b"))
+        self.assertIn("of 7", row("b"))
+
 
 class Page(unittest.TestCase):
     def test_an_engine_that_was_not_measured_is_listed_with_its_reason_and_has_no_numbers(self):
@@ -214,6 +473,14 @@ class Page(unittest.TestCase):
         text = llm_report.engines_table([engine("mem0", [[1]]), skipped])
         self.assertIn("**not measured:** the Docker daemon is not reachable", text)
         self.assertNotIn("Graphiti | ", llm_report.results_table([engine("mem0", [[1]])]))
+
+    def test_a_crashed_engine_is_failed_and_not_read_as_a_missing_prerequisite(self):
+        crashed = dict(label="Graphiti", status="failed", reason="could not run: pass 1: RuntimeError: no episode finished",
+                       version="", date="2026-01-01", passes=[], models={}, planned=3,
+                       failed="pass 1: RuntimeError: no episode finished")
+        text = llm_report.engines_table([crashed])
+        self.assertIn("**failed:** could not run: pass 1: RuntimeError: no episode finished", text)
+        self.assertNotIn("not measured", text)
 
     def test_a_run_that_stopped_part_way_keeps_its_passes_and_says_why(self):
         e = engine("mem0", [[1]], planned=3)
@@ -283,7 +550,7 @@ class DiskWatchdog(unittest.TestCase):
             e = bench_engines.run_llm(Passes().cls("ok"), tempfile.gettempdir(), [], "2026-01-01", 3)
         finally:
             bench_engines.shutil.disk_usage = saved
-        self.assertEqual((e["status"], e["passes"]), ("skipped", []))
+        self.assertEqual((e["status"], e["passes"]), ("failed", []))
         self.assertIn("stopped before pass 1", e["reason"])
 
 
@@ -302,6 +569,8 @@ class Passes(unittest.TestCase):
 
             def load(self, members):
                 A.calls += 1
+                if behaviour == "first-fails" and A.calls == 1:
+                    raise RuntimeError("store unreadable")
                 if behaviour == "second-fails" and A.calls == 2:
                     raise RuntimeError("store unreadable")
 
@@ -328,6 +597,11 @@ class Passes(unittest.TestCase):
         e = self.run_it("ok")
         self.assertEqual((e["status"], len(e["passes"]), e["planned"]), ("measured", 3, 3))
         self.assertEqual([(len(p["rows"]), len(p["no_answer"])) for p in e["passes"]], [(1, 1)] * 3)
+
+    def test_a_fault_in_the_first_pass_is_failed_not_a_skip(self):
+        e = self.run_it("first-fails")
+        self.assertEqual((e["status"], e["passes"]), ("failed", []))
+        self.assertIn("could not run: pass 1: RuntimeError: store unreadable", e["reason"])
 
     def test_a_fault_in_a_later_pass_keeps_the_earlier_ones_and_stops(self):
         e = self.run_it("second-fails")
