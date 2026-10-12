@@ -100,16 +100,55 @@ def of_kind(engine, kind):
     return [r for r in engine["rows"] if kind == "ALL" or r["kind"] == kind]
 
 
+def passes_of(engine):
+    """The per-pass measurements; an engine measured once has exactly one.
+
+    `run_one` writes only `rows` and `run_repeated` adds `passes` beside it, so
+    a table can be written against the passes and stay the same table for an
+    engine that has one.
+    """
+    return engine.get("passes") or [dict(rows=engine["rows"], no_answer=engine["no_answer"])]
+
+
+def per_pass(engine, kind, field):
+    """One figure per pass, for `figure` to turn into a number or a spread."""
+    out = []
+    for p in passes_of(engine):
+        out.append(summarise([r for r in p["rows"] if kind == "ALL" or r["kind"] == kind])[field])
+    return out
+
+
+def figure(values, digits):
+    """One pass prints plain; several print the mean with the lowest and the highest.
+
+    A row measured once is written exactly as it always was, so an engine that
+    needs passes does not restyle the engines that do not.
+    """
+    if len(values) == 1:
+        return f"{values[0]:.{digits}f}"
+    mean, lo, hi = llm_report.spread(values)
+    return f"{mean:.{digits}f} (every pass)" if lo == hi else f"{mean:.{digits}f} ({lo:.{digits}f}–{hi:.{digits}f})"
+
+
+def mean_figure(values, digits):
+    """The mean alone, for a table whose columns are already wide."""
+    return f"{statistics.mean(values):.{digits}f}"
+
+
 def engines_table(engines):
     """Every engine of the tier, measured or not, with the reason when not.
 
     A skipped engine appears here and nowhere below: the tables that carry
-    numbers hold only engines that produced some.
+    numbers hold only engines that produced some. An engine measured over several
+    passes says so here, because a row measured once and a row measured five
+    times are not the same claim.
     """
     lines = ["| engine | version | run date | status |", "|---|---|---|---|"]
     for e in engines:
         if e["status"] == "measured":
-            lines.append(f"| {e['label']} | {e['version']} | {e['date']} | measured |")
+            passes = len(passes_of(e))
+            status = "measured" if passes == 1 else f"measured, mean of {passes} passes"
+            lines.append(f"| {e['label']} | {e['version']} | {e['date']} | {status} |")
         else:
             lines.append(f"| {e['label']} | {e['version'] or '—'} | {e['date']} | **not measured:** {e['reason']} |")
     return "\n".join(lines)
@@ -121,21 +160,25 @@ def overall_table(measured):
     `returned nothing` counts answerable queries the engine replied to with no
     hit at all, and `unmappable` counts returned hits that are none of the corpus
     memories: both score zero, and they are different faults. `answered` is how
-    many of the unanswerable questions got any hit.
+    many of the unanswerable questions got any hit. An engine measured over
+    passes shows each count as the mean with the lowest and the highest beside it,
+    because the total hits move between loads even when the ranks do not.
     """
     lines = [
         "| engine | version | run date | h@1 | h@5 | MRR | returned nothing | hits returned | unmappable hits | no-answer questions answered |",
         "|---|---|---|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for e in measured:
-        s = summarise(e["rows"])
-        empty = sum(r["n"] == 0 for r in e["rows"])
-        hits = sum(r["n"] for r in e["rows"])
-        unmappable = sum(r["unmappable"] for r in e["rows"])
-        answered = sum(r["n"] > 0 for r in e["no_answer"])
+        n = summarise(e["rows"])["n"]
+        empty = [sum(r["n"] == 0 for r in p["rows"]) for p in passes_of(e)]
+        hits = [sum(r["n"] for r in p["rows"]) for p in passes_of(e)]
+        unmappable = [sum(r["unmappable"] for r in p["rows"]) for p in passes_of(e)]
+        answered = [sum(r["n"] > 0 for r in p["no_answer"]) for p in passes_of(e)]
         lines.append(
-            f"| {e['label']} | {e['version']} | {e['date']} | {s['hit1']:.2f} | {s['hit5']:.2f} | {s['mrr']:.3f} "
-            f"| {empty} of {s['n']} | {hits} | {unmappable} | {answered} of {len(e['no_answer'])} |"
+            f"| {e['label']} | {e['version']} | {e['date']} "
+            f"| {figure(per_pass(e, 'ALL', 'hit1'), 2)} | {figure(per_pass(e, 'ALL', 'hit5'), 2)} | {figure(per_pass(e, 'ALL', 'mrr'), 3)} "
+            f"| {figure(empty, 0)} of {n} | {figure(hits, 0)} | {figure(unmappable, 0)} "
+            f"| {figure(answered, 0)} of {len(passes_of(e)[0]['no_answer'])} |"
         )
     return "\n".join(lines)
 
@@ -149,8 +192,13 @@ def kind_table(measured):
         name = "**overall**" if kind == "ALL" else kind
         cells = []
         for e in measured:
-            s = summarise(of_kind(e, kind))
-            cells.append(f"{s['hit1']:.2f} / {s['hit5']:.2f} / {s['mrr']:.3f}")
+            # The mean alone, as the LLM tier's per-kind table does: a kind holds
+            # a handful of queries, and its spread across passes would mostly be
+            # one query moving. The overall row above carries the spread.
+            cells.append(
+                f"{mean_figure(per_pass(e, kind, 'hit1'), 2)} / {mean_figure(per_pass(e, kind, 'hit5'), 2)} "
+                f"/ {mean_figure(per_pass(e, kind, 'mrr'), 3)}"
+            )
         lines.append(f"| {name} | {len(of_kind(measured[0], kind))} | " + " | ".join(cells) + " |")
     return "\n".join(lines)
 
@@ -251,9 +299,11 @@ def leads_table(measured, any_stats):
     """Who has the higher MRR on each kind, computed from the tables above.
 
     A tie is an exact equality rather than a closeness test, and every engine
-    that shares the top is named. A per-kind lead of one query is noise, and the
-    page says so beside the table. With Engram's `any` run available the last
-    column ranks it in place of Engram's defaults.
+    that shares the top is named. An engine measured over passes is ranked by the
+    mean of its passes, so the leader cell does not flip with one draw. A per-kind
+    lead of one query is noise, and the page says so beside the table. With
+    Engram's `any` run available the last column ranks it in place of Engram's
+    defaults.
     """
 
     def leader(scores):
@@ -266,7 +316,7 @@ def leads_table(measured, any_stats):
         "|---|" + "---:|" * (len(measured) + 1) + "---|---|",
     ]
     for kind in kinds_of(measured) + ["ALL"]:
-        scores = [(e["label"], summarise(of_kind(e, kind))["mrr"]) for e in measured]
+        scores = [(e["label"], statistics.mean(per_pass(e, kind, "mrr"))) for e in measured]
         a = any_stats.get(kind, {}).get("mrr")
         name = "**overall**" if kind == "ALL" else kind
         a_lead = "—"
@@ -453,6 +503,10 @@ def main(argv):
         out.append(f"### Head to head, each engine's own search, limit {search_limit()}, defaults")
         out.append("")
         out.append(overall_table(measured))
+        out.append("")
+        out.append("An engine that does not give the same store twice is measured over several passes: its figures "
+                   "are the mean with the lowest and the highest pass in parentheses, and the engines table says "
+                   "how many passes it took. A row measured once is its own number.")
         out.append("")
         out.append(kind_table(measured))
         out.append("")

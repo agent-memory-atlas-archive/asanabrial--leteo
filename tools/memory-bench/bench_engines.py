@@ -57,6 +57,42 @@ def run_one(cls, state, members, date):
     return entry
 
 
+def run_repeated(cls, state, members, date, passes):
+    """One deterministic-tier engine whose store is not the same twice.
+
+    Each pass starts from an empty store — a state directory of its own, or the
+    one the adapter's `load` wipes and rewrites — so what one pass left behind
+    cannot answer for the next. The first pass's rows are kept as `rows`, so the
+    tables that read a single measurement still have one; the page reads `passes`
+    for the spread. A fault ends the engine's run with the passes that completed
+    kept and the fault named, as the LLM tier does.
+    """
+    entry = dict(name=cls.name, label=cls.label, date=date, required=cls.required, status="measured", reason="",
+                 version="", rows=[], no_answer=[], passes=[], failed="", planned=passes)
+    for k in range(1, passes + 1):
+        adapter = cls(os.path.join(state, f"pass-{k}"))
+        try:
+            adapter.check()
+            if not entry["version"]:
+                entry["version"] = adapter.version()
+            adapter.load(members)
+            rows, na = measure(adapter, members)
+            entry["passes"].append(dict(rows=rows, no_answer=na))
+            if k == 1:
+                entry["rows"], entry["no_answer"] = rows, na
+        except Skipped as e:
+            entry["failed"] = f"pass {k}: {e}"
+            break
+        except Exception as e:  # noqa: BLE001 - any engine fault is named, never scored
+            entry["failed"] = f"pass {k}: {type(e).__name__}: {e}"
+            break
+        finally:
+            adapter.close()
+    if not entry["passes"]:
+        entry.update(status="skipped", reason=entry["failed"] or "could not run")
+    return entry
+
+
 # Passes of the LLM tier. A model that extracts facts or chooses entities does
 # not give the same store twice, so one pass is one draw and the page reports the
 # spread of several.
@@ -129,7 +165,12 @@ def main(argv):
     for cls in adapters:
         if only and cls.name not in only:
             continue
-        entry = run_llm(cls, BENCH, members, date, args.passes) if args.tier == "llm" else run_one(cls, BENCH, members, date)
+        if args.tier == "llm":
+            entry = run_llm(cls, BENCH, members, date, args.passes)
+        elif cls.passes > 1:
+            entry = run_repeated(cls, BENCH, members, date, cls.passes)
+        else:
+            entry = run_one(cls, BENCH, members, date)
         note = entry["reason"] or (f"{len(entry['passes'])} of {entry['planned']} passes; {entry['failed']}" if entry.get("failed") else "")
         print(f"{entry['label']}: {entry['status']}{' - ' + note if note else ''}", file=sys.stderr)
         out.append(entry)

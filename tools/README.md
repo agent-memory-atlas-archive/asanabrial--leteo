@@ -264,6 +264,13 @@ basic-memory (run through `uvx`, as an external process only: it is AGPL-3.0) an
 version in `adapters.py`. An engine whose binary, package runner or service is
 missing is skipped with a named reason and has no row.
 
+An engine whose answer is not the same twice declares how many passes it needs
+(`Adapter.passes`, five for basic-memory, which fills its full-text index
+asynchronously and exposes no completion signal to wait on). It is loaded into a
+state of its own per pass, and its row reports the mean with the lowest and the
+highest pass and the pass count, rather than one draw presented as reproducible.
+An engine measured once keeps its plain number.
+
 One command runs the load and the benchmarks and rewrites the comparison page
 from what it measured:
 
