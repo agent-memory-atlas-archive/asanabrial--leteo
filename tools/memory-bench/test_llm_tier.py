@@ -4,6 +4,7 @@
 
 None of these starts Ollama, Docker or an engine.
 """
+import json
 import os
 import tempfile
 import unittest
@@ -248,6 +249,178 @@ class Mem0Version(unittest.TestCase):
 
         changed = Changed(tempfile.gettempdir())
         self.assertEqual(self.version_command(changed), changed.uv_run() + ["python", "-c", self.PROBE])
+
+
+class FakeClaudeMem(llm_tier.ClaudeMemAdapter):
+    """claude-mem over a `call` that answers from a script, no MCP server."""
+
+    def __init__(self, replies):
+        super().__init__(tempfile.gettempdir())
+        self.replies = list(replies)
+        self.saved = []
+        self.newest = None
+
+    def install(self):
+        pass
+
+    def server(self):
+        return None
+
+    def call(self, tool, args, attempts=4):
+        if tool == "search":
+            return ""
+        self.saved.append(args)
+        return self.replies.pop(0)
+
+    def wait_indexed(self, newest):
+        self.newest = newest
+
+
+class ClaudeMemLoad(unittest.TestCase):
+    MEMBERS = [dict(key="a", project="p", title="A", content="content a", type="decision"),
+               dict(key="b", project="q", title="B", content="content b", type="note")]
+
+    def loaded(self, replies):
+        a = FakeClaudeMem(replies)
+        a.load(self.MEMBERS)
+        return a
+
+    def test_load_records_every_id_and_its_projects_newest(self):
+        a = self.loaded(["Saved memory #11: A.", "Saved memory #12: B."])
+        self.assertEqual(a.keymap, {"11": "a", "12": "b"})
+        self.assertEqual(a.newest, {"p": 11, "q": 12})
+        self.assertEqual([(s["title"], s["metadata"]["key"]) for s in a.saved], [("A", "a"), ("B", "b")])
+
+    def test_a_save_that_folds_one_memory_into_another_id_is_a_fault(self):
+        # Two corpus memories sharing one id means the store holds fewer than were
+        # written, which the ranking cannot report.
+        with self.assertRaises(RuntimeError) as caught:
+            self.loaded(["Saved memory #7: A.", "Saved memory #7: B."])
+        self.assertIn("folded b into a", str(caught.exception))
+
+    def test_a_save_that_answers_no_memory_id_is_a_fault(self):
+        with self.assertRaises(RuntimeError) as caught:
+            self.loaded(["The worker could not complete this request."])
+        self.assertIn("no memory id", str(caught.exception))
+
+
+class ClaudeMemIndex(unittest.TestCase):
+    def probe(self, newest, state):
+        """Run `wait_indexed` against a scripted sync file, capturing the wait."""
+        a = llm_tier.ClaudeMemAdapter(tempfile.gettempdir())
+        with tempfile.TemporaryDirectory() as d:
+            a.data_dir = lambda: d
+            with open(os.path.join(d, "chroma-sync-state.json"), "w") as f:
+                json.dump(state, f)
+            seen = {}
+            saved = llm_tier.wait_until
+            llm_tier.wait_until = lambda probe, seconds, what: seen.update(seconds=seconds, what=what, ready=probe())
+            try:
+                a.wait_indexed(newest)
+            finally:
+                llm_tier.wait_until = saved
+        return seen
+
+    def test_the_wait_names_its_timeout_and_is_ready_only_when_every_memory_is_indexed(self):
+        seen = self.probe({"p": 3, "q": 2}, {"p": {"observations": 3}, "q": {"observations": 2}})
+        self.assertTrue(seen["ready"])
+        self.assertEqual(seen["seconds"], llm_tier.CLAUDE_MEM_INDEX_SECONDS)
+        self.assertEqual(seen["what"], "claude-mem's vector index")
+
+    def test_a_project_the_index_has_not_reached_is_not_ready(self):
+        self.assertFalse(self.probe({"p": 3, "q": 2}, {"p": {"observations": 3}})["ready"])
+
+
+class FakeClock:
+    def __init__(self, ticks):
+        self.ticks = list(ticks)
+
+    def time(self):
+        return self.ticks.pop(0) if self.ticks else 10 ** 6
+
+    def sleep(self, seconds):
+        pass
+
+
+class GraphitiWaitAndSearch(unittest.TestCase):
+    def graphiti(self):
+        a = llm_tier.GraphitiAdapter(tempfile.gettempdir())
+        a._servers["mcp"] = object()
+        return a
+
+    def run_settle(self, replies, ticks, keys=("k1", "k2")):
+        a = self.graphiti()
+        replies = list(replies)
+        calls = []
+        saved = (llm_tier.call_json, llm_tier.time)
+
+        def fake_call(server, tool, args):
+            calls.append(tool)
+            return (replies.pop(0) if replies else {"episodes": []}), "", 0
+
+        llm_tier.call_json = fake_call
+        llm_tier.time = FakeClock(ticks)
+        try:
+            pending = a.wait_settled("p", keys)
+        finally:
+            llm_tier.call_json, llm_tier.time = saved
+        return a, pending, calls
+
+    def test_an_episode_that_never_appears_stops_at_the_stall_timeout(self):
+        # Two empty polls, then the clock has passed STALL_SECONDS: the waiting
+        # keys come back rather than the loop sleeping 900 real seconds.
+        a, pending, calls = self.run_settle([{"episodes": []}, {"episodes": []}], ticks=[0, 0, 10, 901])
+        self.assertEqual(pending, {"k1", "k2"})
+        self.assertEqual(calls, ["get_episodes", "get_episodes"])
+        self.assertEqual(a.keymap, {})
+
+    def test_episodes_that_appear_are_mapped_and_dropped_from_pending(self):
+        a, pending, calls = self.run_settle([{"episodes": [{"name": "k1", "uuid": "e1"}]},
+                                             {"episodes": [{"name": "k2", "uuid": "e2"}]}],
+                                            ticks=[0, 0, 1, 2, 3])
+        self.assertEqual(pending, set())
+        self.assertEqual(calls, ["get_episodes", "get_episodes"])
+        self.assertEqual(a.keymap, {"e1": "k1", "e2": "k2"})
+
+    def test_search_reduces_each_fact_to_the_episodes_it_came_from(self):
+        a = self.graphiti()
+        saved = llm_tier.call_json
+        llm_tier.call_json = lambda *args: ({"facts": [{"fact": "f1", "episodes": ["e1"]}, {"fact": "f2"}]}, "", 0)
+        try:
+            hits = a.search("p", "q", 5)
+        finally:
+            llm_tier.call_json = saved
+        self.assertEqual([(h.ref, h.text) for h in hits], [("e1", "f1"), ("-", "f2")])
+
+    def test_search_names_an_engine_error(self):
+        a = self.graphiti()
+        saved = llm_tier.call_json
+        llm_tier.call_json = lambda *args: ({"error": "no group p"}, "", 0)
+        try:
+            with self.assertRaises(RuntimeError) as caught:
+                a.search("p", "q", 5)
+        finally:
+            llm_tier.call_json = saved
+        self.assertIn("no group p", str(caught.exception))
+
+
+class FakeSearchWorker:
+    def __init__(self, hits):
+        self.hits = hits
+        self.requests = []
+
+    def send(self, req, timeout):
+        self.requests.append(req)
+        return {"hits": self.hits}
+
+
+class Mem0Search(unittest.TestCase):
+    def test_search_reduces_the_worker_reply_to_hits_and_asks_for_the_limit(self):
+        a = llm_tier.Mem0VerbatimAdapter(tempfile.gettempdir())
+        a._servers["w"] = FakeSearchWorker([{"key": "a", "text": "one"}, {"key": "b", "text": "two"}])
+        hits = a.search("p", "q", 5)
+        self.assertEqual([(h.ref, h.text) for h in hits], [("a", "one"), ("b", "two")])
+        self.assertEqual(a._servers["w"].requests, [dict(op="search", query="q", user="p", limit=5)])
 
 
 def rows(ranks):
