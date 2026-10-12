@@ -93,6 +93,11 @@ class KindTable(unittest.TestCase):
         self.assertIn("| k1 | 1 | 1.00 / 1.00 / 1.000 | 1.00 / 1.00 / 1.000 |", text)
         self.assertIn("| **overall** | 2 | 0.50 / 1.00 / 0.750 | 1.00 / 1.00 / 1.000 |", text)
 
+    def test_a_multi_pass_engine_shows_the_mean_of_its_passes(self):
+        a = measured("A", [dict(rows=[row("k2", 2)], no_answer=[]),
+                           dict(rows=[row("k2", 1)], no_answer=[])])
+        self.assertIn("| k2 | 1 | 0.50 / 1.00 / 0.750 |", compare.kind_table([a]))
+
 
 class LeadsTable(unittest.TestCase):
     def test_a_tie_names_every_engine_that_holds_the_top(self):
@@ -125,10 +130,14 @@ class FakeAdapter(Adapter):
     calls = 0
     fail_on = 0
     crash_on = 0
+    checks = 0
+    check_fail_on = 0
     states = []
 
     def check(self):
-        pass
+        FakeAdapter.checks += 1
+        if FakeAdapter.checks == FakeAdapter.check_fail_on:
+            raise Skipped("`uvx` was not found on PATH")
 
     def version(self):
         return "0"
@@ -150,6 +159,8 @@ class RunRepeated(unittest.TestCase):
         FakeAdapter.calls = 0
         FakeAdapter.fail_on = 0
         FakeAdapter.crash_on = 0
+        FakeAdapter.checks = 0
+        FakeAdapter.check_fail_on = 0
         FakeAdapter.states = []
         self.state = tempfile.mkdtemp(prefix="leteo-run-repeated-")
         self.addCleanup(shutil.rmtree, self.state, ignore_errors=True)
@@ -158,6 +169,7 @@ class RunRepeated(unittest.TestCase):
         entry = bench_engines.run_repeated(FakeAdapter, self.state, corpus(), "2026-01-01", 3)
         self.assertEqual(len(entry["passes"]), 3)
         self.assertEqual(entry["status"], "measured")
+        self.assertTrue(entry["rows"])
         self.assertEqual(entry["rows"], entry["passes"][0]["rows"])
         self.assertIn("mean of 3 passes", compare.engines_table([entry]))
 
@@ -165,19 +177,21 @@ class RunRepeated(unittest.TestCase):
         bench_engines.run_repeated(FakeAdapter, self.state, corpus(), "2026-01-01", 3)
         self.assertEqual(len(set(FakeAdapter.states)), 3)
 
-    def test_a_fault_on_a_later_pass_is_not_measured(self):
+    def test_a_prerequisite_that_vanishes_after_a_pass_is_a_fault_not_a_skip(self):
         FakeAdapter.fail_on = 2
         entry = bench_engines.run_repeated(FakeAdapter, self.state, corpus(), "2026-01-01", 3)
-        self.assertEqual(entry["status"], "skipped")
+        self.assertEqual(entry["status"], "failed")
         self.assertEqual(entry["passes"], [])
         self.assertEqual(entry["rows"], [])
-        self.assertIn("**not measured:**", compare.engines_table([entry]))
+        self.assertIn("stopped after 1 of 3 passes", entry["reason"])
+        self.assertIn("**failed:**", compare.engines_table([entry]))
 
-    def test_no_pass_at_all_from_a_missing_prerequisite_is_skipped(self):
-        FakeAdapter.fail_on = 1
+    def test_a_prerequisite_check_reports_is_skipped(self):
+        FakeAdapter.check_fail_on = 1
         entry = bench_engines.run_repeated(FakeAdapter, self.state, corpus(), "2026-01-01", 3)
         self.assertEqual(entry["passes"], [])
         self.assertEqual(entry["status"], "skipped")
+        self.assertIn("`uvx` was not found on PATH", entry["reason"])
         self.assertIn("**not measured:**", compare.engines_table([entry]))
 
     def test_a_crash_on_the_first_pass_is_failed_not_skipped(self):

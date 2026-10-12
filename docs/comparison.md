@@ -89,11 +89,11 @@ release in `adapters.py`.
 
 An engine whose answer is not the same twice is measured over several loads, each
 into a store of its own, and its head-to-head row reports the mean with the
-lowest and the highest pass and the pass count, so no figure is one draw
-presented as reproducible; the per-kind table shows the mean alone. A run that
-faults before its passes are done is not measured at all, and the engines table
-names what stopped it. basic-memory is the one such engine here: it fills its
-full-text index asynchronously after `write_note` returns, and 0.23.2 exposes no
+lowest and the highest pass, so no figure is one draw presented as reproducible;
+the engines table says how many passes it took and the per-kind table shows the
+mean alone. A run that faults before its passes are done is not measured at all,
+and the engines table names what stopped it. basic-memory is the one such engine
+here: it fills its full-text index asynchronously after `write_note` returns, and 0.23.2 exposes no
 completion signal to wait on, so two loads of the same corpus are not the same
 store. Engram's and Leteo's ranking figures are unchanged; the warm-search
 latency and reply-size rows are this machine's and move with it.

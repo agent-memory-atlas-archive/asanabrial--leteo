@@ -110,9 +110,18 @@ def run_repeated(cls, state, members, date, passes):
         finally:
             adapter.close()
     if len(entry["passes"]) != passes:
+        # A `Skipped` after a pass has completed is not an absent prerequisite:
+        # the engine started, answered that pass and then stopped, and the page
+        # has to read that as a fault rather than as a machine that never had the
+        # engine at all. Either way the run is not a measurement, so it carries no
+        # row, and the reason says how far it got.
         status, detail = ending(fault)
-        entry.update(status=status, reason=detail if status == "skipped" else f"could not run: {detail}",
-                     rows=[], no_answer=[], passes=[])
+        if entry["passes"]:
+            status = "failed"
+            reason = f"stopped after {len(entry['passes'])} of {passes} passes: {detail}"
+        else:
+            reason = detail if status == "skipped" else f"could not run: {detail}"
+        entry.update(status=status, reason=reason, rows=[], no_answer=[], passes=[])
     return entry
 
 

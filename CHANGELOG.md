@@ -87,8 +87,9 @@ All notable changes to Leteo are documented in this file.
   corpus are not the same store and their total hits differ. `bench_engines.py`
   now runs an engine that declares more than one pass into a state of its own per
   pass; the page's head-to-head row reports the mean with the lowest and the
-  highest pass and the pass count, the per-kind table the mean alone, and a run
-  that faults before its passes are done is not measured at all (#262).
+  highest pass, the engines table the pass count, the per-kind table the mean
+  alone, and a run that faults before its passes are done is not measured at all
+  (#262).
 
 - **A search no longer writes vectors; a memory gets its vector where it is
   written.** `mem_search` used to embed every memory in scope with no current
