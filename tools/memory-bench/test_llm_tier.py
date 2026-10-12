@@ -1,6 +1,6 @@
 """Self-checks for the LLM tier's pure logic: skipping, containers, mapping, spread.
 
-    python3 -m unittest discover -s tools/engram-bench -p 'test_*.py'
+    python3 -m unittest discover -s tools/memory-bench -p 'test_*.py'
 
 None of these starts Ollama, Docker or an engine.
 """

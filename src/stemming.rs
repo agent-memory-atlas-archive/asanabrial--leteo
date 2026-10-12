@@ -68,7 +68,7 @@ impl Stemmer {
 /// — Dutch alone differs on 102,728 words of this repository's own vocabulary —
 /// so the eight keep the source their floors were measured against.
 ///
-/// A language added here needs a set in `tools/engram-bench/inflection_sets.py`
+/// A language added here needs a set in `tools/memory-bench/inflection_sets.py`
 /// and a floor for it: a stemmer that no query can tell from `porter` is not
 /// shipping anything.
 pub fn algorithm(language: Interface) -> Option<Algorithm> {

@@ -180,7 +180,7 @@ and *lost* on precision, 20% against 23%. That is the right instrument for this
 question and this is not it. Settling it needs questions somebody actually
 asked, which is why `mem_save` now records the prompt a memory answers.
 
-## `engram-bench` — a floor under search quality, and a comparison on held-out data
+## `memory-bench` — a floor under search quality, and a comparison on held-out data
 
 The ratchet's corpus is 178 synthetic memories in two projects and 117 queries of
 seven kinds — paraphrase, short, Spanish, partial word, typo, several words, a
@@ -197,7 +197,7 @@ questions that reach their memory only through another inflection of a word it
 holds, at least three edits from it. `inflection.py` scores each set on the strict
 pass alone, in a store of its own with that language named in its settings, and the
 ratchet holds a floor per language under `inflection` in `floors.json`.
-`python3 tools/engram-bench/inflection.py --porter-only` runs the same stores
+`python3 tools/memory-bench/inflection.py --porter-only` runs the same stores
 with English named, which is the control: a set earns its place only if it scores
 far lower there. `inflection_check.py` verifies the edit distances against the typo
 budget in `src/store/search.rs`, and needs `pip install snowballstemmer` to say
@@ -211,7 +211,7 @@ against `floors.json`. CI runs it as the `search-quality` job.
 
 ```bash
 cargo build --release
-LETEO_BIN=target/release/leteo python3 tools/engram-bench/ratchet.py
+LETEO_BIN=target/release/leteo python3 tools/memory-bench/ratchet.py
 ```
 
 `LETEO_BIN` has no default here, because `leteo` on `PATH` is usually an
@@ -232,7 +232,7 @@ one ceiling on empty answers is the measured count,
 which can only fall. Since the semantic stage the kinds it can help — `spanish`,
 `paraphrase`, `multiword` — are measured with it on. When a run prints `RAISE?` a kind is two points or more above
 its floor. To raise floors after an improvement, or to move them on purpose,
-run `python3 tools/engram-bench/ratchet.py --propose`, which prints a
+run `python3 tools/memory-bench/ratchet.py --propose`, which prints a
 replacement file under those two rules, and commit it with the change that
 moved the numbers. A floor is never lowered to make a red run green without a
 sentence in the commit saying what was given up and why.
@@ -248,7 +248,7 @@ question not answered both score zero, and an agent is told different things by 
 two.
 
 The second use is the comparison with other memory engines, on a **held-out**
-corpus: `tools/engram-bench/comparison_corpus.py` is a different corpus from the
+corpus: `tools/memory-bench/comparison_corpus.py` is a different corpus from the
 one the ratchet gates on, so the ratchet cannot tune against the corpus that
 measures it. Each engine is an adapter in `adapters.py` behind one interface: it
 starts isolated under `BENCH_STATE`, so no run reaches a real store, writes the
@@ -269,7 +269,7 @@ from what it measured:
 
 ```bash
 cargo build --release
-LETEO_BIN=target/release/leteo python3 tools/engram-bench/compare.py
+LETEO_BIN=target/release/leteo python3 tools/memory-bench/compare.py
 ```
 
 It regenerates [`docs/comparison.md`](../docs/comparison.md), which carries each
@@ -278,7 +278,7 @@ numbers. The numbers live there rather than here, where they were dated prose an
 drifted; the individual scripts (`bench_engines.py` for the head-to-head,
 `load_engram.py`, `load_leteo.sh`, `bench_search.py`, `bench_any.py`,
 `bench_cost.py`) still run on their own, and `compare.py` skips a step it cannot
-run and says so. `python3 -m unittest discover -s tools/engram-bench -p
+run and says so. `python3 -m unittest discover -s tools/memory-bench -p
 'test_*.py'` checks the hit mapping, the isolation and the skip handling.
 
 `compare.py --tier llm` is the one opt-in flag for the engines that need a local

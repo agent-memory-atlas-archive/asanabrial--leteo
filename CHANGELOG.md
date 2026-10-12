@@ -93,6 +93,10 @@ All notable changes to Leteo are documented in this file.
   first fallback search on the 54k copy is 0.25 s against 2.39 s and writes
   nothing. `doctor` reports the coverage as `semantic_vectors`. (#205)
 
+- **The benchmark harness is `tools/memory-bench/`, formerly `tools/engram-bench/`.**
+  It compares Leteo with every engine on `docs/comparison.md`, not Engram alone,
+  and the old name hid where the other engines' benchmarks were (#267).
+
 - **Sardi says the save reminder and nothing else by default.** Its voice was
   `all`, so a report line went into the conversation on every prompt, in every
   session, for everybody who never opened the settings. The default is now

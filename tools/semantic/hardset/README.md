@@ -9,12 +9,12 @@ least of all. Quote any number from them with that sentence.
 | --- | --- | --- |
 | `data/para_en.json.gz` | English paraphrases of a memory's subject that share no content word with it | 120 |
 | `data/xl_<lang>.json.gz` | the same paraphrases written as questions in each of the other twelve languages (`ca de es eu fr gl it nl pl pt ro sv`), keyed to the English memory | 12 × 80 |
-| `data/mem_<lang>.json.gz` | the 40 engram-bench targets translated into `de es eu gl`; the engram-bench queries and the paraphrases are asked against them | 4 × 40 memories |
+| `data/mem_<lang>.json.gz` | the 40 memory-bench targets translated into `de es eu gl`; the memory-bench queries and the paraphrases are asked against them | 4 × 40 memories |
 | `data/absent.json.gz` | questions nothing in either project is about; silence is the right answer | 80 |
 
-`mem_<lang>` queries are the 117 engram-bench ones plus the 120 paraphrases, asked of a
+`mem_<lang>` queries are the 117 memory-bench ones plus the 120 paraphrases, asked of a
 store whose 40 target memories are replaced by their translation. That makes the hard
-set 120 + 960 + 948 = 2,028 questions; the controls (the engram-bench queries asked
+set 120 + 960 + 948 = 2,028 questions; the controls (the memory-bench queries asked
 in the project where their target does not exist, and `absent.json` in both projects) are
 reported beside it and not counted in it.
 

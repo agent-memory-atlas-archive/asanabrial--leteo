@@ -1,6 +1,6 @@
 """Self-checks for the parts of the adapters that decide what a hit is.
 
-    python3 -m unittest discover -s tools/engram-bench -p 'test_adapters.py'
+    python3 -m unittest discover -s tools/memory-bench -p 'test_adapters.py'
 """
 import os
 import tempfile
