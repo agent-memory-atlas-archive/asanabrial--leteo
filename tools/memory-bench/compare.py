@@ -144,6 +144,11 @@ def overall_table(measured):
 
 
 def kind_table(measured):
+    # A run that measured no engine has no kinds to break down, and the row's `n`
+    # is read from the first engine: this returns before reading one, so an empty
+    # comparison renders an empty table rather than taking the page down.
+    if not measured:
+        return "| query kind | n |\n|---|---:|"
     lines = [
         "| query kind | n | " + " | ".join(f"{e['label']} h@1 / h@5 / MRR" for e in measured) + " |",
         "|---|---:|" + "---:|" * len(measured),
@@ -258,6 +263,12 @@ def leads_table(measured, any_stats):
     page says so beside the table. With Engram's `any` run available the last
     column ranks it in place of Engram's defaults.
     """
+
+    # No engine measured means nothing to rank, and `leader` would take the max
+    # of an empty field. An empty comparison renders an empty table rather than
+    # raising on the way to the page.
+    if not measured:
+        return "| query kind | Engram `any` MRR | leader, defaults | leader, `any` |\n|---|---:|---|---|"
 
     def leader(scores):
         best = max(v for _, v in scores)
