@@ -88,15 +88,15 @@ version beside them and to no other. The external engines are pinned to an exact
 release in `adapters.py`.
 
 An engine whose answer is not the same twice is measured over several loads, each
-into a store of its own, and its row reports the mean with the lowest and the
-highest pass and the pass count, so no figure is one draw presented as
-reproducible. A run that faults part way keeps the passes that completed, and the
-page says how many of how many it got and what stopped it, so a truncated run
-never reads as a completed one. basic-memory is the one such engine here: it
-fills its full-text index asynchronously after `write_note` returns, and 0.23.2
-exposes no completion signal to wait on, so two loads of the same corpus are not
-the same store. Engram's and Leteo's ranking figures are unchanged; the
-warm-search latency and reply-size rows are this machine's and move with it.
+into a store of its own, and its head-to-head row reports the mean with the
+lowest and the highest pass and the pass count, so no figure is one draw
+presented as reproducible; the per-kind table shows the mean alone. A run that
+faults before its passes are done is not measured at all, and the engines table
+names what stopped it. basic-memory is the one such engine here: it fills its
+full-text index asynchronously after `write_note` returns, and 0.23.2 exposes no
+completion signal to wait on, so two loads of the same corpus are not the same
+store. Engram's and Leteo's ranking figures are unchanged; the warm-search
+latency and reply-size rows are this machine's and move with it.
 
 ## The engines
 
@@ -167,7 +167,7 @@ removed with `docker rm -f -v` when the run ends or is interrupted.
 | measured | value |
 |---|---|
 | tier | deterministic |
-| Leteo commit | `c09348009cece6de75b52cce2383848c89c48d32` |
+| Leteo commit | `1ab466ef9f14b975448d2758f13969b0f8df366e` |
 | harness | `tools/memory-bench`, run by `compare.py` at this commit |
 | search limit | 20 |
 | corpus | 91 memories (alpha-api 47, beta-web 44) |
@@ -193,7 +193,7 @@ The LLM tier (engines that need a local model) is opt-in and not part of this ru
 | basic-memory | 0.23.2 | 2026-10-12 | 0.95 (every pass) | 0.96 (every pass) | 0.955 (every pass) | 1 (every pass) of 56 | 621 (617–622) | 0 (every pass) | 15 (every pass) of 16 |
 | server-memory | 2026.8.31 | 2026-10-12 | 0.23 | 0.23 | 0.232 | 43 of 56 | 14 | 0 | 0 of 16 |
 
-An engine that does not give the same store twice is measured over several passes: its figures are the mean with the lowest and the highest pass in parentheses, and the engines table says how many passes it took. A row measured once is its own number.
+An engine that does not give the same store twice is measured over several passes: the head-to-head row above shows the mean with the lowest and the highest pass in parentheses, the engines table says how many passes it took, and the per-kind table below shows the mean alone. A row measured once is its own number.
 
 | query kind | n | Engram h@1 / h@5 / MRR | Leteo h@1 / h@5 / MRR | basic-memory h@1 / h@5 / MRR | server-memory h@1 / h@5 / MRR |
 |---|---:|---:|---:|---:|---:|
@@ -210,8 +210,8 @@ An engine that does not give the same store twice is measured over several passe
 
 | engine | warm search median | p90 | mean reply bytes | mean results | zero-result queries | 20-result replies | mean bytes at 20 |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| engram | 23.5 ms | 30.3 ms | 479 | 0.7 | 20 | 0 | 0 |
-| leteo | 1.1 ms | 3.0 ms | 1212 | 2.4 | 1 | 0 | 0 |
+| engram | 14.6 ms | 22.8 ms | 479 | 0.7 | 20 | 0 | 0 |
+| leteo | 0.2 ms | 1.6 ms | 1212 | 2.4 | 1 | 0 | 0 |
 
 ### Questions the corpus cannot answer
 

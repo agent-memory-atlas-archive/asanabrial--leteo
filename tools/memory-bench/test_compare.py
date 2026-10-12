@@ -46,11 +46,8 @@ class Figure(unittest.TestCase):
     def test_passes_that_agree_say_every_pass(self):
         self.assertEqual(compare.figure([0.750, 0.750], 3), "0.750 (every pass)")
 
-    def test_a_run_that_planned_five_and_kept_one_says_so(self):
-        self.assertEqual(compare.figure([0.750], 3, planned=5), "0.750 (1 of 5 passes)")
-
-    def test_a_spread_finer_than_the_printed_digits_is_every_pass(self):
-        self.assertEqual(compare.figure([0.4996, 0.5004], 3), "0.500 (every pass)")
+    def test_a_spread_finer_than_the_printed_digits_widens_instead(self):
+        self.assertEqual(compare.figure([0.4996, 0.5004], 3), "0.5000 (0.4996–0.5004)")
 
 
 class EnginesTable(unittest.TestCase):
@@ -72,12 +69,6 @@ class EnginesTable(unittest.TestCase):
     def test_a_row_measured_over_passes_names_the_count(self):
         e = measured("basic-memory", [one([1]) for _ in range(5)])
         self.assertIn("| basic-memory | 1.0 | 2026-01-01 | measured, mean of 5 passes |", compare.engines_table([e]))
-
-    def test_a_truncated_run_names_the_passes_it_kept_and_the_fault(self):
-        e = measured("basic-memory", [one([1])])
-        e["planned"], e["failed"] = 5, "pass 2: no engine"
-        self.assertIn("| basic-memory | 1.0 | 2026-01-01 | measured, mean of 1 of 5 passes; "
-                      "**stopped:** pass 2: no engine |", compare.engines_table([e]))
 
 
 class OverallTable(unittest.TestCase):
@@ -163,27 +154,24 @@ class RunRepeated(unittest.TestCase):
         self.state = tempfile.mkdtemp(prefix="leteo-run-repeated-")
         self.addCleanup(shutil.rmtree, self.state, ignore_errors=True)
 
-    def test_a_complete_run_keeps_every_pass_and_names_none_failed(self):
+    def test_a_complete_run_keeps_every_pass_and_the_first_passs_rows(self):
         entry = bench_engines.run_repeated(FakeAdapter, self.state, corpus(), "2026-01-01", 3)
         self.assertEqual(len(entry["passes"]), 3)
-        self.assertEqual(entry["planned"], 3)
-        self.assertEqual(entry["failed"], "")
         self.assertEqual(entry["status"], "measured")
+        self.assertEqual(entry["rows"], entry["passes"][0]["rows"])
         self.assertIn("mean of 3 passes", compare.engines_table([entry]))
 
     def test_every_pass_is_given_a_state_of_its_own(self):
         bench_engines.run_repeated(FakeAdapter, self.state, corpus(), "2026-01-01", 3)
         self.assertEqual(len(set(FakeAdapter.states)), 3)
 
-    def test_a_fault_keeps_the_passes_that_ran_and_stops(self):
+    def test_a_fault_on_a_later_pass_is_not_measured(self):
         FakeAdapter.fail_on = 2
         entry = bench_engines.run_repeated(FakeAdapter, self.state, corpus(), "2026-01-01", 3)
-        self.assertEqual(len(entry["passes"]), 1)
-        self.assertEqual(entry["failed"], "pass 2: no engine")
-        self.assertEqual(entry["status"], "measured")
-        table = compare.engines_table([entry])
-        self.assertIn("mean of 1 of 3 passes", table)
-        self.assertIn("**stopped:** pass 2: no engine", table)
+        self.assertEqual(entry["status"], "skipped")
+        self.assertEqual(entry["passes"], [])
+        self.assertEqual(entry["rows"], [])
+        self.assertIn("**not measured:**", compare.engines_table([entry]))
 
     def test_no_pass_at_all_from_a_missing_prerequisite_is_skipped(self):
         FakeAdapter.fail_on = 1

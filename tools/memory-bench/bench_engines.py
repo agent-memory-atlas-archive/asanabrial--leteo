@@ -66,13 +66,16 @@ def run_repeated(cls, state, members, date, passes):
     Each pass starts from an empty store — a state directory of its own, or the
     one the adapter's `load` wipes and rewrites — so what one pass left behind
     cannot answer for the next. The first pass's rows are kept as `rows`, so the
-    tables that read a single measurement still have one; the page reads `passes`
-    for the spread. A fault ends the engine's run with the passes that completed
-    kept and the fault named, as the LLM tier does.
+    tables that read a single measurement still have one.
+
+    A run that does not take every pass it planned is not a measurement at all:
+    keeping the passes that survived would rank an engine on a truncated one,
+    which is the single draw this exists to stop presenting as reproducible. It
+    is reported as the fault it is instead.
     """
     entry = dict(name=cls.name, label=cls.label, date=date, required=cls.required, status="measured", reason="",
-                 version="", rows=[], no_answer=[], passes=[], failed="", planned=passes)
-    skipped = ""
+                 version="", rows=[], no_answer=[], passes=[])
+    skipped, fault = "", ""
     for k in range(1, passes + 1):
         adapter = cls(os.path.join(state, f"pass-{k}"))
         try:
@@ -85,21 +88,20 @@ def run_repeated(cls, state, members, date, passes):
             if k == 1:
                 entry["rows"], entry["no_answer"] = rows, na
         except Skipped as e:
-            entry["failed"], skipped = f"pass {k}: {e}", str(e)
+            skipped, fault = str(e), f"pass {k}: {e}"
             break
         except Exception as e:  # noqa: BLE001 - any engine fault is named, never scored
-            entry["failed"] = f"pass {k}: {type(e).__name__}: {e}"
+            fault = f"pass {k}: {type(e).__name__}: {e}"
             break
         finally:
             adapter.close()
-    if not entry["passes"]:
+    if len(entry["passes"]) != passes:
         # `run_one`'s distinction, kept here: a crash after the engine started is
         # `failed`, an absent prerequisite is `skipped`, and the page reads the
         # two as different faults.
-        if skipped:
-            entry.update(status="skipped", reason=skipped)
-        else:
-            entry.update(status="failed", reason=f"could not run: {entry['failed']}")
+        entry.update(status="skipped" if skipped else "failed",
+                     reason=skipped or f"could not run: {fault}",
+                     rows=[], no_answer=[], passes=[])
     return entry
 
 

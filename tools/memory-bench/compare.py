@@ -118,30 +118,22 @@ def per_pass(engine, kind, field):
     return out
 
 
-def planned_of(engine):
-    """How many passes the run set out to take; one for an engine measured once."""
-    return engine.get("planned") or len(passes_of(engine))
-
-
-def figure(values, digits, planned=1):
+def figure(values, digits):
     """One pass prints plain; several print the mean with the lowest and the highest.
 
     A row measured once is written exactly as it always was, so an engine that
-    needs passes does not restyle the engines that do not. An engine that planned
-    several passes and kept one is not a one-pass engine, and it says how short
-    the run was instead of printing that single draw plain; `engines_table` names
-    the fault beside it.
+    needs passes does not restyle the engines that do not. Passes that differ are
+    never called `every pass`: the bounds are widened until they read apart, so a
+    spread finer than the column's own precision still shows as a range.
     """
     if len(values) == 1:
-        if planned == 1:
-            return f"{values[0]:.{digits}f}"
-        return f"{values[0]:.{digits}f} (1 of {planned} passes)"
+        return f"{values[0]:.{digits}f}"
     mean, lo, hi = llm_report.spread(values)
-    # The bounds are compared as they will be printed: a spread finer than the
-    # last printed digit would otherwise render as `0.500 (0.500–0.500)`, a range
-    # that shows no movement.
-    low, high = f"{lo:.{digits}f}", f"{hi:.{digits}f}"
-    return f"{mean:.{digits}f} (every pass)" if low == high else f"{mean:.{digits}f} ({low}–{high})"
+    if lo == hi:
+        return f"{mean:.{digits}f} (every pass)"
+    while digits < 9 and f"{lo:.{digits}f}" == f"{hi:.{digits}f}":
+        digits += 1
+    return f"{mean:.{digits}f} ({lo:.{digits}f}–{hi:.{digits}f})"
 
 
 def mean_figure(values, digits):
@@ -150,22 +142,10 @@ def mean_figure(values, digits):
 
 
 def engine_status(engine):
-    """The status cell: the pass count when there is more than one, and the fault
-    when a run stopped short of the passes it planned.
-
-    A page generated from a truncated run must not read like a completed one, and
-    the fault is written here because no other table carries it.
-    """
-    done, planned = len(passes_of(engine)), planned_of(engine)
-    if planned == 1:
-        status = "measured"
-    elif done == planned:
-        status = f"measured, mean of {done} passes"
-    else:
-        status = f"measured, mean of {done} of {planned} passes"
-    if engine.get("failed"):
-        status += f"; **stopped:** {engine['failed']}"
-    return status
+    """The status cell: the pass count when there is more than one, because a row
+    measured once and a row measured five times are not the same claim."""
+    passes = len(passes_of(engine))
+    return "measured" if passes == 1 else f"measured, mean of {passes} passes"
 
 
 def engines_table(engines):
@@ -210,10 +190,10 @@ def overall_table(measured):
         answered = [sum(r["n"] > 0 for r in p["no_answer"]) for p in passes_of(e)]
         lines.append(
             f"| {e['label']} | {e['version']} | {e['date']} "
-            f"| {figure(per_pass(e, 'ALL', 'hit1'), 2, planned_of(e))} | {figure(per_pass(e, 'ALL', 'hit5'), 2, planned_of(e))} "
-            f"| {figure(per_pass(e, 'ALL', 'mrr'), 3, planned_of(e))} "
-            f"| {figure(empty, 0, planned_of(e))} of {n} | {figure(hits, 0, planned_of(e))} | {figure(unmappable, 0, planned_of(e))} "
-            f"| {figure(answered, 0, planned_of(e))} of {len(passes_of(e)[0]['no_answer'])} |"
+            f"| {figure(per_pass(e, 'ALL', 'hit1'), 2)} | {figure(per_pass(e, 'ALL', 'hit5'), 2)} "
+            f"| {figure(per_pass(e, 'ALL', 'mrr'), 3)} "
+            f"| {figure(empty, 0)} of {n} | {figure(hits, 0)} | {figure(unmappable, 0)} "
+            f"| {figure(answered, 0)} of {len(passes_of(e)[0]['no_answer'])} |"
         )
     return "\n".join(lines)
 
@@ -550,9 +530,10 @@ def main(argv):
         out.append("")
         out.append(overall_table(measured))
         out.append("")
-        out.append("An engine that does not give the same store twice is measured over several passes: its figures "
-                   "are the mean with the lowest and the highest pass in parentheses, and the engines table says "
-                   "how many passes it took. A row measured once is its own number.")
+        out.append("An engine that does not give the same store twice is measured over several passes: the "
+                   "head-to-head row above shows the mean with the lowest and the highest pass in parentheses, the "
+                   "engines table says how many passes it took, and the per-kind table below shows the mean alone. "
+                   "A row measured once is its own number.")
         out.append("")
         out.append(kind_table(measured))
         out.append("")

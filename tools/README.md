@@ -269,11 +269,10 @@ crash after starting is never read as a prerequisite that was absent.
 An engine whose answer is not the same twice declares how many passes it needs
 (`Adapter.passes`, five for basic-memory, which fills its full-text index
 asynchronously and exposes no completion signal to wait on). It is loaded into a
-state of its own per pass, and its row reports the mean with the lowest and the
-highest pass and the pass count, rather than one draw presented as reproducible.
-An engine measured once keeps its plain number. A run that faults part way keeps
-the passes that completed, and the page says how many of how many it got and what
-stopped it, so a truncated run never reads as a completed one.
+state of its own per pass; its head-to-head row reports the mean with the lowest
+and the highest pass and the pass count, the per-kind table the mean alone, and
+an engine measured once keeps its plain number. A run that faults before its
+passes are done is not measured at all: the engines table names what stopped it.
 
 One command runs the load and the benchmarks and rewrites the comparison page
 from what it measured:
