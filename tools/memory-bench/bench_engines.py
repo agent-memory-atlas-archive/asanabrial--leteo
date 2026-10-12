@@ -148,6 +148,13 @@ def main(argv):
     if missing:
         print(f"required engine not measured: {', '.join(missing)}", file=sys.stderr)
         return 2
+    if not any(e["status"] == "measured" for e in out):
+        # A run that measured nothing has no numbers to publish, and a comparison
+        # that "succeeded" having executed nothing guards nothing. Every LLM-tier
+        # engine is non-required, so this is also what refuses a tier whose
+        # engines all skipped rather than returning a silent success.
+        print("no engine was measured", file=sys.stderr)
+        return 2
     return 0
 
 
