@@ -1524,6 +1524,35 @@ fn a_commit_does_not_change_the_comparison_corpus_with_the_search_it_scores() {
     );
 }
 
+/// The harness does not come back under the directory it was renamed out of.
+///
+/// `tools/engram-bench` was the harness's home until it moved to
+/// `tools/memory-bench`. The name was the reason for the move: the directory was
+/// named for Engram while the harness measures Leteo against Engram,
+/// basic-memory, the reference MCP memory server, mem0, claude-mem, Graphiti and
+/// Letta, so whoever wanted the other engines' benchmarks could not find them.
+/// The corpus guard above asserts its path exists and `tests/crate_contents.rs`
+/// names the new path in a literal, so restoring the old directory would leave
+/// files nothing reads while every path guard still passed.
+///
+/// `symlink_metadata` rather than `exists`: the rename's first slice left four
+/// symlinks pointing into the new directory, and `exists` answers `false` for a
+/// symlink whose target is gone — the shape a partial restore takes. What this
+/// watches is the directory, not the string: released CHANGELOG entries and the
+/// page's generated blocks keep the old name where they quote what shipped or
+/// what a run printed at the commit beside it.
+#[test]
+fn the_harness_does_not_come_back_under_its_old_directory() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let old = "tools/engram-bench";
+    assert!(
+        root.join(old).symlink_metadata().is_err(),
+        "`{old}` is on disk again, as a file, a directory or a symlink. The harness \
+         lives in `tools/memory-bench`, and the old directory is the name the move \
+         removed; move whatever was added back into `tools/memory-bench` instead."
+    );
+}
+
 /// The commit a change is measured against, or `None` when git cannot name one.
 ///
 /// CI names the pull request's target branch in `GITHUB_BASE_REF`; a push or a
