@@ -103,15 +103,18 @@ def of_kind(engine, kind):
 def engines_table(engines):
     """Every engine of the tier, measured or not, with the reason when not.
 
-    A skipped engine appears here and nowhere below: the tables that carry
-    numbers hold only engines that produced some.
+    An engine that was not measured appears here and nowhere below: the tables
+    that carry numbers hold only engines that produced some. `skipped` and
+    `failed` are different faults -- a missing prerequisite against a crash after
+    it started -- and the page names which.
     """
     lines = ["| engine | version | run date | status |", "|---|---|---|---|"]
     for e in engines:
         if e["status"] == "measured":
             lines.append(f"| {e['label']} | {e['version']} | {e['date']} | measured |")
         else:
-            lines.append(f"| {e['label']} | {e['version'] or '—'} | {e['date']} | **not measured:** {e['reason']} |")
+            why = "failed" if e["status"] == "failed" else "not measured"
+            lines.append(f"| {e['label']} | {e['version'] or '—'} | {e['date']} | **{why}:** {e['reason']} |")
     return "\n".join(lines)
 
 

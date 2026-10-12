@@ -51,7 +51,10 @@ def run_one(cls, state, members, date):
     except Skipped as e:
         entry.update(status="skipped", reason=str(e), rows=[], no_answer=[])
     except Exception as e:  # noqa: BLE001 - any engine fault is named, never scored
-        entry.update(status="skipped", reason=f"could not run: {type(e).__name__}: {e}", rows=[], no_answer=[])
+        # A crash is not a missing prerequisite. `skipped` says the engine could
+        # not start, and a run that started and then faulted has to be readable
+        # as that on the page rather than as a skip with a long reason.
+        entry.update(status="failed", reason=f"could not run: {type(e).__name__}: {e}", rows=[], no_answer=[])
     finally:
         adapter.close()
     return entry
