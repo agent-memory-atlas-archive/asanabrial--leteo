@@ -61,7 +61,11 @@ def engines_table(engines):
                 status += f"; **stopped:** {e['failed']}"
             lines.append(f"| {e['label']} | {e['version']} | {models_cell(e)} | {e['date']} | {passes_cell(e)} | {status} |")
         else:
-            lines.append(f"| {e['label']} | {e['version'] or '—'} | — | {e['date']} | — | **not measured:** {e['reason']} |")
+            # `failed` and `skipped` are different faults, as on the deterministic
+            # table: a run that started and then crashed must not read as an engine
+            # whose prerequisite was absent.
+            why = "failed" if e["status"] == "failed" else "not measured"
+            lines.append(f"| {e['label']} | {e['version'] or '—'} | — | {e['date']} | — | **{why}:** {e['reason']} |")
     return "\n".join(lines)
 
 

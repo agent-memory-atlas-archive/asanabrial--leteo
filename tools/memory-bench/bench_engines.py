@@ -39,22 +39,40 @@ def measure(adapter, members):
     return rows, na
 
 
+def engine_entry(cls, date, required, **extra):
+    """The card an engine's result is recorded on, before it is measured."""
+    return dict(name=cls.name, label=cls.label, date=date, required=required, status="measured",
+                reason="", version="", rows=[], no_answer=[], **extra)
+
+
+def ending(e):
+    """The status and the fault an exception leaves an engine's run in.
+
+    A `Skipped` is a prerequisite that is absent and anything else is a run that
+    started and then faulted; `skipped` and `failed` must not be read as the same
+    thing. One rule, so the deterministic tier and the LLM tier cannot drift on
+    what the same exception means.
+    """
+    if isinstance(e, Skipped):
+        return "skipped", str(e)
+    return "failed", f"{type(e).__name__}: {e}"
+
+
 def run_one(cls, state, members, date):
     adapter = cls(state)
-    entry = dict(name=adapter.name, label=adapter.label, date=date, required=adapter.required,
-                 status="measured", reason="", version="", rows=[], no_answer=[])
+    entry = engine_entry(cls, date, adapter.required)
     try:
         adapter.check()
         entry["version"] = adapter.version()
         adapter.load(members)
         entry["rows"], entry["no_answer"] = measure(adapter, members)
-    except Skipped as e:
-        entry.update(status="skipped", reason=str(e), rows=[], no_answer=[])
     except Exception as e:  # noqa: BLE001 - any engine fault is named, never scored
-        # A crash is not a missing prerequisite. `skipped` says the engine could
+        # A crash is not a missing prerequisite: `skipped` says the engine could
         # not start, and a run that started and then faulted has to be readable
         # as that on the page rather than as a skip with a long reason.
-        entry.update(status="failed", reason=f"could not run: {type(e).__name__}: {e}", rows=[], no_answer=[])
+        status, detail = ending(e)
+        entry.update(status=status, reason=detail if status == "skipped" else f"could not run: {detail}",
+                     rows=[], no_answer=[])
     finally:
         adapter.close()
     return entry
@@ -78,9 +96,8 @@ def run_llm(cls, state, members, date, passes):
     that completed are kept and the fault is named, because a second attempt at
     something that just failed would spend the same hours to learn the same thing.
     """
-    entry = dict(name=cls.name, label=cls.label, date=date, required=False, status="measured", reason="",
-                 version="", rows=[], no_answer=[], passes=[], failed="", models={}, planned=passes)
-    skipped = ""
+    entry = engine_entry(cls, date, False, passes=[], failed="", models={}, planned=passes)
+    failure = None
     for k in range(1, passes + 1):
         adapter = cls(os.path.join(state, f"pass-{k}"))
         try:
@@ -98,16 +115,17 @@ def run_llm(cls, state, members, date, passes):
             loaded = time.time() - started
             rows, na = measure(adapter, members)
             entry["passes"].append(dict(rows=rows, no_answer=na, load_seconds=round(loaded), notes=adapter.notes))
-        except Skipped as e:
-            entry["failed"], skipped = f"pass {k}: {e}", str(e)
-            break
         except Exception as e:  # noqa: BLE001 - any engine fault is named, never scored
-            entry["failed"] = f"pass {k}: {type(e).__name__}: {e}"
+            status, detail = ending(e)
+            failure = status, detail
+            entry["failed"] = f"pass {k}: {detail}"
             break
         finally:
             adapter.close()
     if not entry["passes"]:
-        entry.update(status="skipped", reason=skipped or f"could not run: {entry['failed']}")
+        status, detail = failure or ("skipped", "")
+        entry.update(status=status,
+                     reason=detail if status == "skipped" else f"could not run: {entry['failed']}")
     return entry
 
 

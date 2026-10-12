@@ -301,6 +301,14 @@ class Page(unittest.TestCase):
         self.assertIn("**not measured:** the Docker daemon is not reachable", text)
         self.assertNotIn("Graphiti | ", llm_report.results_table([engine("mem0", [[1]])]))
 
+    def test_a_crashed_engine_is_failed_and_not_read_as_a_missing_prerequisite(self):
+        crashed = dict(label="Graphiti", status="failed", reason="could not run: pass 1: RuntimeError: no episode finished",
+                       version="", date="2026-01-01", passes=[], models={}, planned=3,
+                       failed="pass 1: RuntimeError: no episode finished")
+        text = llm_report.engines_table([crashed])
+        self.assertIn("**failed:** could not run: pass 1: RuntimeError: no episode finished", text)
+        self.assertNotIn("not measured", text)
+
     def test_a_run_that_stopped_part_way_keeps_its_passes_and_says_why(self):
         e = engine("mem0", [[1]], planned=3)
         e["failed"] = "pass 2: RuntimeError: worker exited"
@@ -369,7 +377,7 @@ class DiskWatchdog(unittest.TestCase):
             e = bench_engines.run_llm(Passes().cls("ok"), tempfile.gettempdir(), [], "2026-01-01", 3)
         finally:
             bench_engines.shutil.disk_usage = saved
-        self.assertEqual((e["status"], e["passes"]), ("skipped", []))
+        self.assertEqual((e["status"], e["passes"]), ("failed", []))
         self.assertIn("stopped before pass 1", e["reason"])
 
 
@@ -388,6 +396,8 @@ class Passes(unittest.TestCase):
 
             def load(self, members):
                 A.calls += 1
+                if behaviour == "first-fails" and A.calls == 1:
+                    raise RuntimeError("store unreadable")
                 if behaviour == "second-fails" and A.calls == 2:
                     raise RuntimeError("store unreadable")
 
@@ -414,6 +424,11 @@ class Passes(unittest.TestCase):
         e = self.run_it("ok")
         self.assertEqual((e["status"], len(e["passes"]), e["planned"]), ("measured", 3, 3))
         self.assertEqual([(len(p["rows"]), len(p["no_answer"])) for p in e["passes"]], [(1, 1)] * 3)
+
+    def test_a_fault_in_the_first_pass_is_failed_not_a_skip(self):
+        e = self.run_it("first-fails")
+        self.assertEqual((e["status"], e["passes"]), ("failed", []))
+        self.assertIn("could not run: pass 1: RuntimeError: store unreadable", e["reason"])
 
     def test_a_fault_in_a_later_pass_keeps_the_earlier_ones_and_stops(self):
         e = self.run_it("second-fails")
