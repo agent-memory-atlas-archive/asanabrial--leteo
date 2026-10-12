@@ -5,9 +5,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use thiserror::Error;
 
-use crate::sync::Manifest;
-
-use super::cloudstore::{MutationEntry, StoredMutation};
+use crate::sync::{Manifest, MutationEntry, StoredMutation};
 
 const MAX_RESPONSE_BYTES: u64 = crate::sync::MAX_UNCOMPRESSED_CHUNK_BYTES;
 

@@ -56,7 +56,7 @@ impl Stemmer {
 /// English is absent on purpose: `porter` already indexes every memory, and a
 /// row's English stems are those. Galician is absent because it has no Snowball
 /// algorithm at all, and borrowing one was measured and declined; the set that
-/// measured it and `search.md` §16 record why. The other eleven languages the
+/// measured it records why. The other eleven languages the
 /// setting offers each have an arm: Spanish, Portuguese, French, German,
 /// Italian, Romanian, Dutch and Swedish come from `rust-stemmers`, and Catalan,
 /// Basque and Polish, which it does not carry, come from

@@ -3,8 +3,16 @@
 //! constant that holds it. This keeps their copies from drifting: a script
 //! looking for stale text would count every binary as one that never started and
 //! delete a model file the binary had chosen to keep.
+//!
+//! The scripts matching the constant is only half of it. Nothing here ran the
+//! binary, so the `eprintln!` could be deleted and every test would still pass —
+//! the flows in `check_install.sh` accept the report's `model_removed` line too —
+//! and the marker could just as easily start being printed by the dry-run
+//! preview. `the_binary_prints_the_marker_when_it_removes_and_not_when_it_previews`
+//! runs both, which is the only thing that holds the marker to what it promises.
 
 use std::path::Path;
+use std::process::Command;
 
 fn marker_lines_in(script: &str) -> Vec<String> {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -76,4 +84,74 @@ fn the_uninstallers_recognise_a_line_of_the_report_the_binary_prints() {
             "{script} does not match the report's model_removed line"
         );
     }
+}
+
+/// `uninstall --yes` prints the marker and the preview does not.
+///
+/// The line has to be the first thing the run says: it is what a script reads to
+/// tell a binary that started from one that failed to exec, and a binary that
+/// printed it after judging a model file could have deleted one the run would
+/// have kept. The two runs together are the point — a test that only ran `--yes`
+/// would not notice the marker creeping into the preview, and one that only
+/// compared the scripts with the constant would not notice the `eprintln!` going
+/// away.
+#[test]
+fn the_binary_prints_the_marker_when_it_removes_and_not_when_it_previews() {
+    let temp = tempfile::tempdir().expect("a temporary directory");
+    let home = temp.path().join("home");
+    let data = temp.path().join("data");
+    std::fs::create_dir_all(&home).expect("create the temporary home");
+    std::fs::create_dir_all(&data).expect("create the temporary data directory");
+
+    // A copy, because `uninstall --yes` removes the program that is running:
+    // pointed at the built binary it would take `target/debug/leteo` out from
+    // under every other test in the same run.
+    let binary = temp
+        .path()
+        .join(format!("leteo{}", std::env::consts::EXE_SUFFIX));
+    std::fs::copy(env!("CARGO_BIN_EXE_leteo"), &binary).expect("copy the binary");
+
+    let run = |yes: bool| {
+        let mut command = Command::new(&binary);
+        command.arg("uninstall");
+        if yes {
+            command.arg("--yes");
+        }
+        // The home is temporary as well, and the variables that can point the
+        // agent paths or the model somewhere else are taken out: the removal
+        // walks every agent's configuration and judges the model files, and a
+        // test must not edit the ones this machine is using.
+        command.env("HOME", &home);
+        command.env("LETEO_DATA_DIR", &data);
+        command.env_remove("LETEO_MODEL_DIR");
+        command.env_remove("XDG_CONFIG_HOME");
+        command.env_remove("CLAUDE_CONFIG_DIR");
+        command.env_remove("DSH_HOME");
+        command.output().expect("run the binary")
+    };
+
+    let preview = run(false);
+    // The positive control comes before the negative one: the preview prints no
+    // marker, and a run that failed before printing anything would satisfy that
+    // on its own. Its report is what says the run reached the end.
+    let report: serde_json::Value =
+        serde_json::from_slice(&preview.stdout).expect("the preview prints its report");
+    assert_eq!(
+        report["dry_run"],
+        serde_json::json!(true),
+        "the preview did not report a dry run: {report}"
+    );
+    let stderr = String::from_utf8_lossy(&preview.stderr);
+    assert!(
+        !stderr.contains(leteo::setup::UNINSTALL_STARTED),
+        "the dry run printed the line the scripts read as a started binary: {stderr}"
+    );
+
+    let removal = run(true);
+    let stderr = String::from_utf8_lossy(&removal.stderr);
+    assert_eq!(
+        stderr.lines().next(),
+        Some(leteo::setup::UNINSTALL_STARTED),
+        "the marker is not the first line the uninstall printed: {stderr}"
+    );
 }

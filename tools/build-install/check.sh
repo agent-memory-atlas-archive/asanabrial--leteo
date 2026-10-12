@@ -1,5 +1,5 @@
 #!/bin/sh
-# Does build-install do what openspec/specs/cli.md section 17 says it does?
+# Does build-install do what its README says it does?
 #
 #   sh tools/build-install/check.sh
 #

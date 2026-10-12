@@ -26,8 +26,7 @@ compute at query time. Three changes, all made by `build_model.py`:
    quality.
 
 Why this model and not a distilled one, and what it does and does not cover —
-including Basque, which it was not trained on — is argued with its numbers in
-[`openspec/specs/search.md`](../../openspec/specs/search.md) §15.
+including Basque, which it was not trained on — is not argued here.
 
 ## Reproducing the weights
 

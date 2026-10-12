@@ -31,7 +31,6 @@ include = [
     "/build.rs",
     "/src/**",
     "/migrations/**",
-    "/openspec/**",
     "/plugin/**",
     "/tests/**",
     # Not source, but read by the tests that ship: the two plugin marketplaces, the
@@ -88,9 +87,23 @@ pkg-fmt = "zip"
 # rather than a copy of it that has drifted.
 measure = []
 
+# The cloud *server*, and nothing else. Off by default: the client — `autosync`
+# and `leteo cloud sync/status/enroll/config/health` — is in every build, while
+# `leteo cloud serve`, `leteo cloud admin` and the PostgreSQL store behind them
+# are for whoever hosts a peer.
+#
+# What it buys, measured on this tree. A default `cargo tree -e normal` drops
+# from 821 lines and 321 unique packages to 672 and 280: `axum`, `sqlx` and
+# `hmac` and their transitive trees leave a binary that never listens on a
+# port. `subtle` does not leave it, and that is not the feature failing — the
+# client's own HTTPS reaches it through `rustls`, so the tree held it before
+# this feature existed. What the feature removes is the server's direct use of
+# it, beside the whole PostgreSQL stack.
+cloud-server = ["dep:axum", "dep:hmac", "dep:sqlx", "dep:subtle"]
+
 [dependencies]
 anyhow = "1.0.100"
-axum = "0.8.9"
+axum = { version = "0.8.9", optional = true }
 base64 = "0.23.0"
 chrono = { version = "0.4.42", features = ["serde"] }
 clap = { version = "4.6.4", features = ["derive", "env"] }
@@ -99,21 +112,22 @@ directories = "6.0.0"
 flate2 = "1.1.5"
 futures-util = { version = "0.3.33", default-features = false, features = ["std", "async-await"] }
 hex = "0.4.3"
-hmac = "0.13.0"
+hmac = { version = "0.13.0", optional = true }
 # The semantic search stage: a static embedding model, which is a table lookup
 # and an average, so this is the whole of "in-process inference" — no ONNX, no
 # native runtime, no network, no shell-out.
 #
-# `default-features = false` is the point. The defaults pull `hf-hub` and
-# `ureq`, a second HTTP client for downloading from Hugging Face, which is not
-# where the model comes from (`leteo model install` fetches it with the `reqwest`
-# already here), and `onig`, a C regex library for a tokenizer that
-# `fancy-regex` serves in pure Rust. `local-only` is the feature that says so.
-# Measured: the linker keeps this dependency and its tokenizer only where something
-# loads the model, so the release binary is 15,680,176 bytes without it and
-# 15,730,544 with the install path alone; the model is a file beside the binary and
-# adds nothing to it. `openspec/specs/search.md` §15 has the account.
-model2vec-rs = { version = "0.3.0", default-features = false, features = ["fancy-regex", "local-only"] }
+# `safetensors` reads the int8 table without copying it out of the form it is
+# stored in; `tokenizers` turns a text into the ids that index it. `tokenizers`
+# is deliberately not at its defaults: they pull `onig`, a C regex library, where
+# `fancy-regex` serves the same thing in pure Rust, and the three features named
+# are the ones the previous reader selected, kept so the compiled tokenizer is
+# the one the floors were measured on.
+#
+# `model2vec-rs`, which this reader replaced, is a dev-dependency now: it is the
+# reference the equivalence test reads and nothing the release binary links.
+safetensors = "0.5.3"
+tokenizers = { version = "0.21.4", default-features = false, features = ["fancy-regex", "progressbar", "esaxx_fast"] }
 rand = "0.10.2"
 ratatui = "0.30.2"
 regex = "1.12.2"
@@ -139,8 +153,8 @@ sha2 = "0.11.0"
 # languages already index, and the benchmark's floors are held to the stems
 # `rust-stemmers` produces. See `stemming::algorithm`.
 snowball_stemmers_rs = "1.0.1"
-sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "tls-rustls-ring", "postgres", "json", "chrono", "uuid"] }
-subtle = "2.6.1"
+sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "tls-rustls-ring", "postgres", "json", "chrono", "uuid"], optional = true }
+subtle = { version = "2.6.1", optional = true }
 thiserror = "2.0.17"
 tokio = { version = "1.53.1", features = ["full"] }
 tracing = "0.1.44"
@@ -148,6 +162,18 @@ tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
 
 [dev-dependencies]
 assert_cmd = "2.1.1"
+# The reader the semantic stage replaced, kept as the reference its equivalence
+# test reads: the same texts embedded by both readers must agree bit for bit.
+# It is not a dependency of the release binary, so the f32 table it expands is
+# not compiled into the product — only into the test that proves the two agree.
+model2vec-rs = { version = "0.3.0", default-features = false, features = ["fancy-regex", "local-only"] }
+# The client's own tests stand up a mock server to exercise the bounded read and
+# the paging loop (`src/cloud/remote.rs`, `src/cloud/autosync.rs`), and the
+# server's integration tests drive the router in-process. The feature gates the
+# product's copy, not the tests', so the dev-dependency is unconditional — which
+# is also why `cargo tree -e normal`, which excludes dev-dependencies, still
+# shows a default build without it.
+axum = "0.8.9"
 # The integration guard for the hook spool has to hold a real write lock while
 # the binary tries to open the store, and only a second SQLite connection can
 # do that. The same version and features the crate itself links, so this is the

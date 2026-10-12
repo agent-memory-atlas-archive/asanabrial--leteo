@@ -21,6 +21,12 @@ fn store() -> (TempDir, Store) {
         &crate::settings::Settings {
             interface: Some(crate::settings::Interface::English),
             voice_language: None,
+            // Most of what the hooks are asked about here is a line Sardi says,
+            // and the default voice no longer says those — an unset voice is the
+            // reminder alone. The fixture is the loud Sardi so a test about a
+            // greeting gets one; a test about what the default does writes its
+            // own settings over this.
+            voice: crate::settings::Voice::All,
             ..crate::settings::Settings::default()
         },
     )
@@ -117,6 +123,82 @@ fn the_voice_setting_decides_which_lines_a_hook_shows() {
             "reminder at {voice:?}"
         );
     }
+}
+
+#[test]
+fn a_store_with_no_voice_setting_keeps_the_reminder_and_says_nothing_else() {
+    // The default used to be `all`, which put a report line in front of the
+    // person on every prompt — for everybody who never opened the settings. The
+    // reminder is the one line that does work, so an unset voice keeps it and
+    // drops the rest. The fixture pins `all` for the other tests here, so this
+    // one builds its own store.
+    use crate::settings::{self, Settings, Voice};
+
+    let temp = TempDir::new().unwrap();
+    let mut store = Store::open(StoreConfig::new(temp.path().join("default-voice.db"))).unwrap();
+    // A file with no `voice` at all, which is what an older Leteo wrote and what
+    // somebody hand-editing leaves behind. The field falls back to its default.
+    std::fs::write(settings::path_in(temp.path()), r#"{"interface":"english"}"#).unwrap();
+
+    run(&mut store, HookEvent::SessionStart, &input(temp.path())).unwrap();
+    store
+        .add_observation(memory("Something worth a greeting", "body"))
+        .unwrap();
+
+    // A session opening is a report, and the default voice does not report.
+    let opened = run(&mut store, HookEvent::SessionStart, &input(temp.path())).unwrap();
+    assert!(
+        opened.system_message.is_none(),
+        "an unset voice says nothing at a session opening: {:?}",
+        opened.system_message
+    );
+
+    // Nor does a prompt that names a memory: the hint is a report too.
+    let mut asking = input(temp.path());
+    asking.prompt = "Something worth a greeting".to_owned();
+    let plain = run(&mut store, HookEvent::UserPromptSubmit, &asking).unwrap();
+    assert!(
+        plain.system_message.is_none(),
+        "an unset voice says nothing on a plain prompt: {:?}",
+        plain.system_message
+    );
+
+    // The reminder is not a report and still arrives once the project has gone
+    // quiet.
+    let aged = rusqlite::Connection::open(store.database_path()).unwrap();
+    aged.execute(
+        "UPDATE sessions SET started_at = datetime('now', '-200 minutes')",
+        [],
+    )
+    .unwrap();
+    aged.execute(
+        "UPDATE observations SET created_at = datetime('now', '-200 minutes')",
+        [],
+    )
+    .unwrap();
+    let _ = std::fs::remove_file(nudge_state_path(&store, "agent-session").unwrap());
+    let prompted = run(&mut store, HookEvent::UserPromptSubmit, &input(temp.path())).unwrap();
+    assert!(
+        prompted.system_message.is_some(),
+        "the reminder survives an unset voice"
+    );
+    assert_eq!(settings::load(temp.path()).voice, Voice::Reminders);
+
+    // A file that names `all` keeps the reports, which is what a settings file
+    // written before this change says.
+    settings::save(
+        temp.path(),
+        &Settings {
+            voice: Voice::All,
+            ..Settings::default()
+        },
+    )
+    .unwrap();
+    let loud = run(&mut store, HookEvent::SessionStart, &input(temp.path())).unwrap();
+    assert!(
+        loud.system_message.is_some(),
+        "a file that names `all` still gets the reports"
+    );
 }
 
 #[test]
@@ -1002,35 +1084,6 @@ fn the_pairs_handed_over_are_the_ones_that_have_waited_longest() {
     );
 }
 
-/// The spec says how many pairs an opening hands over, and the code hands over
-/// that many.
-///
-/// Shaped after `the_skill_promises_the_preview_length_the_code_cuts_at`, for
-/// the same reason and against a different document. `hooks.md` §13 is where
-/// somebody reads what an opening block contains before touching this code, and
-/// a number changed here without the sentence leaves them planning against a
-/// size the code stopped using.
-#[test]
-fn the_spec_publishes_the_number_of_pairs_the_opening_hands_over() {
-    let spelled = match crate::hooks::context::VERDICT_HANDOVER {
-        2 => "two oldest",
-        3 => "three oldest",
-        4 => "four oldest",
-        5 => "five oldest",
-        other => panic!(
-            "an opening now hands over {other} pairs; spell it out here and in \
-             openspec/specs/hooks.md §13"
-        ),
-    };
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("openspec/specs/hooks.md");
-    let text = std::fs::read_to_string(&path)
-        .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
-    assert!(
-        text.contains(spelled),
-        "hooks.md has to say the opening carries the {spelled} pairs"
-    );
-}
-
 #[test]
 fn a_memory_deleted_since_still_leaves_a_pair_worth_closing() {
     // The claim this replaces was false, and the test that asserted it made
@@ -1179,6 +1232,9 @@ fn the_hook_speaks_in_the_voices_language_rather_than_the_screens() {
             &crate::settings::Settings {
                 interface: Some(crate::settings::Interface::Spanish),
                 voice_language,
+                // The greeting this test reads is a report line, so the voice
+                // has to be the loud one rather than the new default.
+                voice: crate::settings::Voice::All,
                 ..crate::settings::Settings::default()
             },
         )
@@ -1510,6 +1566,33 @@ fn a_renamed_project_is_recognised_however_the_path_was_spelled() {
         1,
         "the memory did not follow the rename: {outcome:?}"
     );
+}
+
+/// The fold moves memories between projects on the word of a recorded
+/// directory, so a relative one must not authorise it: `.` resolved against the
+/// hook's own directory and read as "recorded here".
+#[test]
+fn a_relative_recorded_directory_does_not_authorise_the_fold() {
+    let temp = TempDir::new().unwrap();
+    let mut store = Store::open(StoreConfig::new(temp.path().join("hooks.db"))).unwrap();
+    let here = std::env::current_dir().unwrap();
+    let legacy = crate::memory::normalize::project(&here.file_name().unwrap().to_string_lossy());
+    store
+        .create_session("old", &legacy, "C:/placeholder")
+        .unwrap();
+    store
+        .connection()
+        .execute("UPDATE sessions SET directory = '.' WHERE id = 'old'", [])
+        .unwrap();
+
+    let mut outcome = HookOutcome::default();
+    migrate_directory_project(&mut store, &here, "renamed", &mut outcome);
+
+    assert!(
+        store.session_directories("renamed").unwrap().is_empty(),
+        "the legacy project was folded into another on a relative directory: {outcome:?}"
+    );
+    assert_eq!(store.session_directories(&legacy).unwrap(), vec!["."]);
 }
 
 #[test]
@@ -2217,6 +2300,9 @@ fn a_capture_the_store_refuses_says_what_happened_and_what_to_do() {
         temp.path(),
         &crate::settings::Settings {
             interface: Some(crate::settings::Interface::English),
+            // The line this test reads is a capture report, which the new
+            // default voice does not say.
+            voice: crate::settings::Voice::All,
             ..crate::settings::Settings::default()
         },
     )
@@ -2395,6 +2481,29 @@ fn a_capture_that_meets_a_held_store_is_kept_once_it_is_free() {
     );
 }
 
+/// A spooled capture can name a session that does not exist yet, and replay
+/// creates it from the entry. An entry written by a build that recorded `.`
+/// must not bring the relative directory back.
+#[test]
+fn a_replayed_spool_entry_does_not_record_a_relative_directory() {
+    let (_temp, mut store) = store();
+    let data_dir = store.data_dir().to_path_buf();
+    let capture = PassiveCapture {
+        session_id: "late-session".to_owned(),
+        project: "hook-project".to_owned(),
+        content: "## Key Learnings:
+1. A relative directory is never recorded"
+            .to_owned(),
+        source: "subagent-stop".to_owned(),
+    };
+    spool::spool(&data_dir, "SubagentStop", &capture, ".").unwrap();
+
+    let drained = spool::drain(&mut store, Instant::now() + Duration::from_secs(5));
+
+    assert_eq!(drained.stored, 1, "{drained:?}");
+    assert_eq!(store.get_session("late-session").unwrap().directory, "");
+}
+
 /// A capture drained twice is stored once.
 ///
 /// The drain removes an entry it replayed, so a second drain of the same text
@@ -2449,9 +2558,14 @@ fn a_spooled_capture_drained_twice_is_stored_once() {
 
 /// Two drainers take different entries rather than both replaying one.
 ///
-/// A claim is a rename, which is atomic, so the number of entries taken across
-/// two drains is the number of entries there were. Reading each entry in place
-/// instead would have both drainers replay all of them.
+/// A claim is a rename, which is atomic, so no entry is replayed by both.
+/// Reading each entry in place instead would have both drainers replay all of
+/// them. Raw claims cannot prove it: a drainer that finds the store busy
+/// renames its entry back and stops, and the other may claim it again, which
+/// made this test count 9 claims of 8 entries on a Windows runner (#257). Nor
+/// can `stored`, because the store keeps a replayed learning once however
+/// often it is replayed. Claims net of entries handed back can, once a final
+/// drain has taken whatever a busy drainer put back.
 #[test]
 fn two_drainers_claim_each_entry_once() {
     let (temp, mut store) = store();
@@ -2479,23 +2593,36 @@ fn two_drainers_claim_each_entry_once() {
         let database = database.clone();
         move || {
             let mut store = Store::open(StoreConfig::new(&database)).unwrap();
-            spool::drain(&mut store, deadline).claimed
+            spool::drain(&mut store, deadline)
         }
     });
     let second = std::thread::spawn({
         let database = database.clone();
         move || {
             let mut store = Store::open(StoreConfig::new(&database)).unwrap();
-            spool::drain(&mut store, deadline).claimed
+            spool::drain(&mut store, deadline)
         }
     });
-    let claimed = first.join().unwrap() + second.join().unwrap();
+    let mut store = Store::open(StoreConfig::new(&database)).unwrap();
+    let mut reports = vec![first.join().unwrap(), second.join().unwrap()];
+    reports.push(spool::drain(
+        &mut store,
+        Instant::now() + Duration::from_secs(10),
+    ));
     assert_eq!(
-        claimed, count,
-        "each entry is claimed by exactly one drainer"
+        reports.last().unwrap().remaining,
+        0,
+        "the spool drains completely: {reports:?}"
+    );
+    let replayed: usize = reports
+        .iter()
+        .map(|report| report.claimed - report.returned)
+        .sum();
+    assert_eq!(
+        replayed, count,
+        "each entry is replayed by exactly one drainer: {reports:?}"
     );
 
-    let store = Store::open(StoreConfig::new(&database)).unwrap();
     assert_eq!(
         store
             .recent_observations(Some("hook-project"), Some(50), true)
@@ -2944,7 +3071,7 @@ fn the_capture_ceiling_fits_inside_the_deadline_the_agent_allows() {
 /// A conversation as long as the longest one measured is never handed the same
 /// memory twice.
 ///
-/// The per-prompt hint promises exactly this — `hooks.md` §9 — and what makes
+/// The per-prompt hint promises exactly this — and what makes
 /// it true is a list of what this conversation has already been shown, written
 /// to disk on every prompt. That list is capped, as it must be, and the cap was
 /// 128: sized against sessions of 45 prompts, which was the longest this store

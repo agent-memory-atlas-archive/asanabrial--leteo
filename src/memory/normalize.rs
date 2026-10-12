@@ -95,8 +95,8 @@ fn last_path_segment(value: &str) -> &str {
 /// The scopes a memory can carry, with the default first.
 ///
 /// One list, because it was five: four tool parameters and the skill all said
-/// "project or personal" while this door accepted a third. `memory-model.md`
-/// §11 has named three all along, so an agent reading any of those five was
+/// "project or personal" while this door accepted a third. Three were
+/// named all along, so an agent reading any of those five was
 /// being told about part of a vocabulary — the shape that had
 /// `mem_capture_passive` advertising two of twelve languages, and the reason
 /// that guard exists.

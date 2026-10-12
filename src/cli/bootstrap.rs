@@ -121,7 +121,7 @@ impl BackgroundBackfill {
 /// write lock, and doing that on a request's thread would be a latency nobody
 /// could explain from the outside.
 ///
-/// It never loads the model. The load is the one cost `search.md` §15 states in
+/// It never loads the model. The load is the one cost the semantic stage pays in
 /// memory, and a session that never searches has no reason to pay it: this waits
 /// until a search or a save has brought the model up, then drains what needs a
 /// vector. `backfill_step` returns zero both when it is caught up and when the

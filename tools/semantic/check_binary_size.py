@@ -10,8 +10,7 @@ the code was written on. The same source is 21,052,600 bytes on ubuntu-latest an
 set 20,000,000, and failed on Linux. 24,000,000 bytes, decimal, is the Linux size
 and a margin of 2.9 MB (14%) for toolchain drift and for the dependencies that
 will be added. It is about the room a new tokenizer or HTTP stack takes; a
-dependency of that size should have to say so here. `openspec/specs/search.md`
-§15 states the measurement.
+dependency of that size should have to say so here.
 
 usage: check_binary_size.py <path-to-leteo>
 """

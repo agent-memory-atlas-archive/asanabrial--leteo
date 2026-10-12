@@ -11,6 +11,10 @@ fn leteo(database: &Path) -> Command {
     // listens on, so no test reaches the network.
     command.env_remove("LETEO_MODEL_DIR");
     command.env("LETEO_MODEL_URL", "http://127.0.0.1:9");
+    // A suite run from inside a Pi session inherits the marker the hook guard
+    // reads, and every hook test would then be answered with nothing.
+    command.env_remove("PI_CODING_AGENT");
+    command.env_remove("LETEO_HOOK_CLIENT");
     command
 }
 
@@ -2282,4 +2286,184 @@ fn model_install_from_a_copy_installs_what_verifies_and_refuses_what_does_not() 
         std::fs::read(temp.path().join("data/model/model.safetensors")).unwrap(),
         good
     );
+}
+
+/// Runs `leteo save` from a working directory that has been removed under it,
+/// which is how `std::env::current_dir()` genuinely fails — no hook, the real
+/// binary. `sh` enters the directory and removes it before exec'ing, so the
+/// child inherits a cwd that `getcwd` can no longer name.
+#[cfg(unix)]
+fn save_from_a_removed_directory(database: &Path, extra: &[&str]) -> std::process::Output {
+    let gone = tempfile::tempdir().expect("create the directory to remove");
+    let gone_path = gone.path().to_path_buf();
+    let binary = assert_cmd::cargo::cargo_bin("leteo");
+    let output = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(
+            r#"cd "$GONE" && rmdir "$GONE" && exec "$LETEO" --database "$DB" save "A title" "A body" "$@""#,
+        )
+        .arg("sh")
+        .args(extra)
+        .env("GONE", &gone_path)
+        .env("LETEO", binary)
+        .env("DB", database)
+        .env_remove("LETEO_PROJECT")
+        .env_remove("LETEO_DATA_DIR")
+        .env("LETEO_DATABASE", database)
+        .env_remove("LETEO_MODEL_DIR")
+        .env("LETEO_MODEL_URL", "http://127.0.0.1:9")
+        .output()
+        .expect("run leteo");
+    // The directory is already gone; keep `TempDir`'s drop from complaining.
+    std::mem::forget(gone);
+    output
+}
+
+#[cfg(unix)]
+#[test]
+fn a_save_from_an_unreadable_working_directory_is_refused_and_records_nothing() {
+    let temp = tempfile::tempdir().expect("create CLI test directory");
+    let database = temp.path().join("leteo-cli.db");
+
+    let output = save_from_a_removed_directory(&database, &[]);
+
+    assert!(!output.status.success(), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("failed to resolve current directory"),
+        "the detection error is what the caller is told: {stderr}"
+    );
+    let connection = rusqlite::Connection::open(&database).expect("open the temporary store");
+    let count = |table: &str| -> i64 {
+        connection
+            .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                row.get(0)
+            })
+            .expect("count rows")
+    };
+    assert_eq!(count("sessions"), 0, "no session was filed under `unknown`");
+    assert_eq!(count("observations"), 0);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_save_naming_its_project_from_an_unreadable_working_directory_records_no_directory() {
+    let temp = tempfile::tempdir().expect("create CLI test directory");
+    let database = temp.path().join("leteo-cli.db");
+
+    let output = save_from_a_removed_directory(&database, &["--project", "chosen"]);
+
+    assert!(output.status.success(), "{output:?}");
+    let connection = rusqlite::Connection::open(&database).expect("open the temporary store");
+    let (project, directory): (String, String) = connection
+        .query_row("SELECT project, directory FROM sessions", [], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })
+        .expect("exactly one session");
+    assert_eq!(project, "chosen");
+    assert_eq!(directory, "", "an empty directory, never `.`");
+}
+
+/// Pi runs Claude models through pi-claude-bridge, which loads the user's Claude
+/// Code settings, so the Claude Code hooks fire inside a Pi session that the Pi
+/// package already registered. Registering it twice puts two sessions in the
+/// store for one conversation.
+///
+/// Pi marks its child processes with `PI_CODING_AGENT`, and Claude Code's hooks
+/// are plain `leteo hook <event>` commands, so the binary is where the marker
+/// can be read. It cannot tell Claude Code's call from the Pi package's own,
+/// which inherits the same marker and runs the same command; the package names
+/// itself with `LETEO_HOOK_CLIENT=pi` and is the one caller let through.
+#[test]
+fn every_hook_does_nothing_inside_pi_unless_the_pi_package_is_the_caller() {
+    for event in [
+        "session-start",
+        "post-compaction",
+        "user-prompt-submit",
+        "subagent-stop",
+        "session-stop",
+    ] {
+        let temp = tempfile::tempdir().expect("create CLI test directory");
+        let database = temp.path().join("leteo-pi-guard.db");
+        let payload = json!({
+            "session_id": "pi-guard-session",
+            "cwd": temp.path().to_string_lossy(),
+            "project": "pi-guard",
+            "prompt": "a prompt long enough to be kept",
+            "stdout": "## Key Learnings:\n1. The guard must not run for the Pi package\n",
+        })
+        .to_string();
+
+        let silenced = run_json(
+            leteo(&database)
+                .env("PI_CODING_AGENT", "true")
+                .arg("hook")
+                .arg(event)
+                .write_stdin(payload.clone()),
+        );
+        assert_eq!(silenced, json!({}), "{event} under Pi");
+        assert!(
+            !database.exists(),
+            "{event} under Pi must not even open the store"
+        );
+
+        let pi_package = run_json(
+            leteo(&database)
+                .env("PI_CODING_AGENT", "true")
+                .env("LETEO_HOOK_CLIENT", "pi")
+                .arg("hook")
+                .arg(event)
+                .arg("--verbose")
+                .write_stdin(payload),
+        );
+        assert_eq!(
+            pi_package["session_id"],
+            json!("pi-guard-session"),
+            "{event} from the Pi package runs"
+        );
+        assert!(
+            database.exists(),
+            "{event} from the Pi package uses the store"
+        );
+    }
+}
+
+/// The Pi package files a compaction summary with `leteo save`, and the summary
+/// is text a model wrote. One that opens with `-` or `--project=other` is a
+/// positional once the options come first and `--` ends them, and is read as an
+/// option otherwise, which files it under another project or refuses the call.
+#[test]
+fn save_takes_a_title_and_content_that_start_like_options_after_a_separator() {
+    let temp = tempfile::tempdir().expect("create CLI test directory");
+    let database = temp.path().join("leteo-save-dash.db");
+    run_json(
+        leteo(&database)
+            .arg("session-start")
+            .arg("pi-session")
+            .arg("--project")
+            .arg("real-project")
+            .arg("--directory")
+            .arg(temp.path()),
+    );
+
+    let saved = run_json(
+        leteo(&database)
+            .arg("save")
+            .args(["--type", "session_summary", "--session", "pi-session", "--"])
+            .arg("--project=other")
+            .arg("- fixed the bug"),
+    );
+    let saved = &saved["observation"];
+    assert_eq!(saved["title"], json!("--project=other"));
+    assert_eq!(saved["content"], json!("- fixed the bug"));
+    assert_eq!(saved["type"], json!("session_summary"));
+    assert_eq!(saved["project"], json!("real-project"));
+
+    leteo(&database)
+        .arg("save")
+        .args(["--type", "session_summary", "--session", "pi-session"])
+        .arg("--project=other")
+        .arg("- fixed the bug")
+        .assert()
+        .failure();
 }

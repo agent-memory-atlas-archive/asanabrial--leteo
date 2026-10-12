@@ -185,7 +185,7 @@ const OBSERVATION_VERSION_COLUMNS: &str = "revision, title, content, replaced_at
 ///
 /// Applied on every insert by `store::observations::snapshot_observation_version_tx`,
 /// which both the local write path and the replicated one call, so the number
-/// governs both. Published in [`memory-model.md`](../../openspec/specs/memory-model.md).
+/// governs both.
 pub(crate) const OBSERVATION_VERSION_RETENTION: usize = 20;
 
 /// The narrowings a listing query applies, and the values they bind.

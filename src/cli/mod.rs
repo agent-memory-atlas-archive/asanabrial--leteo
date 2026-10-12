@@ -233,6 +233,7 @@ pub async fn run(cli: Cli) -> Result<()> {
             }
             return Ok(());
         }
+        #[cfg(feature = "cloud-server")]
         Command::Cloud {
             command: CloudCommand::Serve,
         } => {
@@ -265,6 +266,7 @@ pub async fn run(cli: Cli) -> Result<()> {
             print_json(&remote.health().await?)?;
             return Ok(());
         }
+        #[cfg(feature = "cloud-server")]
         Command::Cloud {
             command: CloudCommand::Admin { command },
         } => {
@@ -362,6 +364,23 @@ pub async fn run(cli: Cli) -> Result<()> {
             return Ok(());
         }
         _ => {}
+    }
+    // Inside Pi the hook has nothing to do, and must not open the store to find
+    // that out. The payload is drained so the agent writing it is not left with
+    // a closed pipe.
+    if let Command::Hook { .. } = &cli.command
+        && crate::hooks::defers_to_pi(
+            std::env::var(crate::hooks::PI_HOST_VARIABLE)
+                .ok()
+                .as_deref(),
+            std::env::var(crate::hooks::HOOK_CLIENT_VARIABLE)
+                .ok()
+                .as_deref(),
+        )
+    {
+        let _ = std::io::copy(&mut std::io::stdin(), &mut std::io::sink());
+        println!("{{}}");
+        return Ok(());
     }
     let mut config = store_config(&cli)?;
     // A hook gives up before the agent that launched it does. The number is on
@@ -922,19 +941,33 @@ pub async fn run(cli: Cli) -> Result<()> {
             )?)?;
         }
         Command::Stats => print_json(&store.stats()?)?,
-        Command::Serve => {
+        Command::Serve { bind } => {
             let autosync = start_background_autosync(&config, &cloud_config_path)?;
+            // The API answers whether or not replication is configured; the
+            // loop beside it runs only when it is. The note is what the old
+            // hard error carried — somebody running `serve` for replication
+            // should not get an API and no replication in silence.
             if !autosync.is_running() {
-                anyhow::bail!(
-                    "cloud replication is not configured; run `leteo cloud config set` first"
+                eprintln!(
+                    "leteo serve: cloud replication is not configured, so only the HTTP API is \
+                     running; run `leteo cloud config set` to replicate as well"
                 );
             }
             let backfill = start_background_backfill(&config)?;
-            // Nothing else to do on this thread: replication runs on its own,
-            // and Ctrl-C is how it ends.
-            tokio::signal::ctrl_c().await?;
+            // The API, replication and the backfill all run on their own; this
+            // thread waits on either the server ending or Ctrl-C.
+            let served = crate::mcp::run_http_with_options(
+                Arc::new(Mutex::new(store)),
+                crate::mcp::McpOptions::default(),
+                &bind,
+            );
+            let outcome = tokio::select! {
+                result = served => result,
+                _ = tokio::signal::ctrl_c() => Ok(()),
+            };
             autosync.shutdown().await;
             let _ = tokio::task::spawn_blocking(move || backfill.shutdown()).await;
+            outcome?;
         }
         Command::Mcp { tools, project } => {
             let autosync = start_background_autosync(&config, &cloud_config_path)?;
@@ -1300,6 +1333,7 @@ async fn run_conflicts(store: &mut Store, command: ConflictsCommand) -> Result<(
 ///
 /// These commands operate on PostgreSQL directly, like `cloud serve`, so they
 /// read the same environment configuration and never touch the local store.
+#[cfg(feature = "cloud-server")]
 async fn run_cloud_admin(command: &CloudAdminCommand) -> Result<()> {
     let config = crate::cloud::CloudConfig::from_env();
     if config.database_url.trim().is_empty() {
@@ -1410,6 +1444,7 @@ async fn run_cloud_admin(command: &CloudAdminCommand) -> Result<()> {
 }
 
 /// Accepts a numeric principal identifier or a display name.
+#[cfg(feature = "cloud-server")]
 async fn resolve_principal(store: &crate::cloud::CloudStore, principal: &str) -> Result<i64> {
     if let Ok(id) = principal.trim().parse::<i64>() {
         return Ok(id);

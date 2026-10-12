@@ -21,7 +21,7 @@ use futures_util::StreamExt;
 use super::{Directory, MODEL_FILES, REPOSITORY_MODEL_DIR, inspect, sha256_hex};
 
 /// The environment variable that replaces [`release_base`], for a mirror or a
-/// test. Documented in `cli.md`.
+/// test.
 pub const RELEASE_URL_ENV: &str = "LETEO_MODEL_URL";
 
 /// How long the whole install may take, all three files together.

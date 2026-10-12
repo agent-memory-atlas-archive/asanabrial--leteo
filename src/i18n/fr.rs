@@ -21,6 +21,7 @@ pub const SCREENS: Screens = Screens {
     voice_reminders: "seulement le rappel d'enregistrer",
     voice_quiet: "rien, pas même le rappel d'enregistrer",
     interface_question: "Dans quelle langue Leteo doit-il vous parler ?",
+    machine_translation: "traduction automatique",
     interface_hint_first: "  Les écrans de Leteo : les panneaux, les menus, l'aide et cette page.",
     interface_hint_second: "  Ce que dit {name} et la langue des mémoires se règlent à part.",
     voice_language_question: "Dans quelle langue doit parler {name} ?",

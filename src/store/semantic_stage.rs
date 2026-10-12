@@ -4,15 +4,14 @@
 //! lives here is how the store keeps a vector for each memory, how it decides
 //! one is out of date, and how the stage reads them back under exactly the
 //! visibility every other stage keeps. When it runs, and what it does with the
-//! answer, is `search_limited`'s business and `search.md` §15's.
+//! answer, is `search_limited`'s business.
 
 use std::collections::BTreeMap;
 use std::time::Duration;
 
 use super::search::{Candidate, FUSION_CONSTANT, visible_observations};
 use super::*;
-use crate::semantic;
-use model2vec_rs::model::StaticModel;
+use crate::semantic::{self, SemanticModel};
 
 /// What a vector was computed from, written as SQL over `observations o`.
 ///
@@ -54,7 +53,7 @@ pub(super) type StageError = Box<dyn std::error::Error + Send + Sync>;
 /// held at once are this many memories whatever the store holds: at most
 /// 256 titles and 4,096-character bodies, about a megabyte, plus the vectors of
 /// the same 256 (a kilobyte each). The model's own memory is separate and is
-/// stated once in `search.md` §15. A store that cannot be written is the
+/// not counted here. A store that cannot be written is the
 /// exception, because the vectors made for the question are held until it is
 /// answered: a kilobyte per memory in scope, which is what the rows would have
 /// cost on disk.
@@ -216,7 +215,7 @@ impl Store {
     ///
     /// The denominator is the visibility the scan itself uses — live and not
     /// superseded — session summaries included, because a query that names the
-    /// type reads them (§15 of `search.md`). So the number is the fraction of
+    /// type reads them. So the number is the fraction of
     /// the store the stage can see, not the fraction of every row that holds a
     /// vector. `doctor` reports it, and `(covered, total)` is what lets it say
     /// "every one" without a second query.
@@ -256,7 +255,7 @@ impl Store {
     /// the backfill's next step makes it again.
     fn embed_and_keep(
         &self,
-        model: &StaticModel,
+        model: &SemanticModel,
         stale: Vec<(i64, String)>,
     ) -> Result<usize, StageError> {
         if stale.is_empty() {
@@ -315,7 +314,7 @@ impl Store {
     /// step reaches.
     ///
     /// Session summaries are included. The stage leaves them out of an ordinary
-    /// answer, but a query that names the type reads them (§15 of `search.md`),
+    /// answer, but a query that names the type reads them,
     /// so a vector for one is read rather than wasted.
     fn stale_any(&self, budget: usize) -> Result<Vec<(i64, String)>, StageError> {
         let visible = visible_observations(1, 2, 3);

@@ -123,8 +123,7 @@ believable.
 
 `--rerank` prints the shipped ordering beside the same statement with the Engram
 pin/recency/stability factor as its sort key, over the same draws. The factor is
-not adopted; the measurement that rejected it is in
-[`openspec/specs/search.md`](../openspec/specs/search.md) §2.
+not adopted.
 
 ### The trap, which has now caught two attempts
 
@@ -181,7 +180,7 @@ and *lost* on precision, 20% against 23%. That is the right instrument for this
 question and this is not it. Settling it needs questions somebody actually
 asked, which is why `mem_save` now records the prompt a memory answers.
 
-## `engram-bench` — a floor under search quality, and a head-to-head on held-out data
+## `engram-bench` — a floor under search quality, and a comparison on held-out data
 
 The ratchet's corpus is 178 synthetic memories in two projects and 117 queries of
 seven kinds — paraphrase, short, Spanish, partial word, typo, several words, a
@@ -226,7 +225,10 @@ not gated: it does not transfer between SQLite builds, ranking does.
 
 `floors.json` is the only place the numbers live. Floors are the measured MRR
 rounded down to three decimals; ceilings are the measured bytes rounded up to
-the next hundred, and the one ceiling on empty answers is the measured count,
+the next hundred and then by one more hundred, so a ceiling leaves between one
+and two hundred bytes of room — smaller than any change worth catching, larger
+than a word added to a hint or a field reordered, which are not regressions. The
+one ceiling on empty answers is the measured count,
 which can only fall. Since the semantic stage the kinds it can help — `spanish`,
 `paraphrase`, `multiword` — are measured with it on. When a run prints `RAISE?` a kind is two points or more above
 its floor. To raise floors after an improvement, or to move them on purpose,
@@ -245,15 +247,24 @@ each kind came back empty for, beside its MRR: a question answered wrongly and a
 question not answered both score zero, and an agent is told different things by the
 two.
 
-The second use is the comparison with Engram, on a **held-out** corpus:
-`tools/engram-bench/comparison_corpus.py` is a different corpus from the one the
-ratchet gates on, so the ratchet cannot tune against the corpus that measures it.
-It is saved into a fresh Engram store through Engram's own CLI, a copy of that
-store is adopted with `leteo import --from-engram`, and both engines are asked the
-same queries through their own MCP `mem_search`. Ids survive adoption, so one
-answer key serves both.
+The second use is the comparison with other memory engines, on a **held-out**
+corpus: `tools/engram-bench/comparison_corpus.py` is a different corpus from the
+one the ratchet gates on, so the ratchet cannot tune against the corpus that
+measures it. Each engine is an adapter in `adapters.py` behind one interface: it
+starts isolated under `BENCH_STATE`, so no run reaches a real store, writes the
+corpus through the engine's own write path and is asked the same queries at the
+same limit through its own search path. A hit maps to a corpus memory by the id,
+path or name we set where the engine keeps one, otherwise by a content rule that
+is the same for every engine, and a hit that maps to nothing is counted as
+unmappable. Engram keeps its `engram save` loader and Leteo adopts a copy of that
+store with `leteo import --from-engram`, so ids survive and Engram's and Leteo's
+numbers stay comparable with earlier runs. The deterministic tier adds
+basic-memory (run through `uvx`, as an external process only: it is AGPL-3.0) and
+`@modelcontextprotocol/server-memory` (through `npx`), both pinned to an exact
+version in `adapters.py`. An engine whose binary, package runner or service is
+missing is skipped with a named reason and has no row.
 
-One command runs the load and both benchmarks and rewrites the comparison page
+One command runs the load and the benchmarks and rewrites the comparison page
 from what it measured:
 
 ```bash
@@ -261,12 +272,32 @@ cargo build --release
 LETEO_BIN=target/release/leteo python3 tools/engram-bench/compare.py
 ```
 
-It regenerates [`docs/comparison-with-engram.md`](../docs/comparison-with-engram.md),
-which carries the measured Engram version, the Leteo commit and the per-kind
-numbers. The numbers live there rather than here, where they were dated prose
-and drifted; the individual scripts (`load_engram.py`, `load_leteo.sh`,
-`bench_search.py`, `bench_any.py`, `bench_cost.py`) still run on their own, and
-`compare.py` skips a step it cannot run and says so.
+It regenerates [`docs/comparison.md`](../docs/comparison.md), which carries each
+engine's measured version, the run date, the Leteo commit and the per-kind
+numbers. The numbers live there rather than here, where they were dated prose and
+drifted; the individual scripts (`bench_engines.py` for the head-to-head,
+`load_engram.py`, `load_leteo.sh`, `bench_search.py`, `bench_any.py`,
+`bench_cost.py`) still run on their own, and `compare.py` skips a step it cannot
+run and says so. `python3 -m unittest discover -s tools/engram-bench -p
+'test_*.py'` checks the hit mapping, the isolation and the skip handling.
+
+`compare.py --tier llm` is the one opt-in flag for the engines that need a local
+model, and it is never run by CI. It measures mem0 (two rows, `infer=False` and
+`infer=True`), claude-mem and Graphiti MCP on a local Ollama and nothing else,
+loads each engine from an empty store `--passes` times (three by default) and
+rewrites only the LLM section of the page, with every figure as a mean and the
+lowest and highest pass, the models and their digests, and the pass count. It
+needs Ollama with `qwen2.5:7b` and `nomic-embed-text` (or the models named in
+`BENCH_LLM_MODEL` and `BENCH_EMBED_MODEL`), `uv`, `npm`, `node`, `bun` and Docker;
+whatever is missing skips that engine with the reason. Two engines are too
+heavy for a default run and are listed as not measured, with the reason measured
+on the machine that produced the page, unless opted in: `BENCH_MEM0_INFER=1` for
+mem0 with `infer=True` and `BENCH_GRAPHITI=1` for Graphiti. Each pass first checks
+for 8 GiB of free disk and a run that would leave less stops. Letta is listed and skipped
+with its reason. Graphiti's FalkorDB runs in a throwaway container named
+`leteo-bench-<pid>-…` on a random loopback port, with no volume, removed when the
+run ends. Adding an engine is a class in `llm_tier.py` and an entry in `LLM`; the
+pure logic is checked by `test_llm_tier.py` and needs none of the services.
 
 `bench_cost.py` needs an Engram source checkout because Engram's
 session-start hook is a shell script in its tree, not part of its binary.

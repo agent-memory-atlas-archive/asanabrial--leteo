@@ -35,6 +35,16 @@ Every archive and image that carries the model carries this notice and the full
 text of the Apache License, Version 2.0, which is in LICENSES/Apache-2.0.txt; the
 source and the crate hold it too.
 
+The reader that turns a text into a vector reproduces the behaviour of the
+MIT-licensed model2vec-rs crate, by Thomas van Dongen, Stéphan Tulkens and
+contributors (https://github.com/MinishLab/model2vec-rs): the median token length
+that turns a token budget into a character cut, the character cut applied before
+tokenizing, dropping the unknown token from the ids, and mean pooling with its
+normalisation. The arithmetic differs — Leteo pools over the int8 table as
+stored rather than expanding it to f32 — and a test requires the two readers to
+agree bit for bit. model2vec-rs is a dev-dependency, read by that test and not
+linked into the released binary.
+
 Rust dependency notices and source links are generated in
 THIRD_PARTY_LICENSES.html from Cargo.lock. Leteo does not modify the MPL-2.0
 dependency sources distributed through crates.io.

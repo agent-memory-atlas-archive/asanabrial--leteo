@@ -7,8 +7,7 @@
   <a href="#install">Install</a> &bull;
   <a href="#what-it-feels-like">How it works</a> &bull;
   <a href="#what-you-type">Commands</a> &bull;
-  <a href="#languages">Languages</a> &bull;
-  <a href="openspec/">Specs</a>
+  <a href="#languages">Languages</a>
 </p>
 
 <p align="center">
@@ -282,6 +281,16 @@ somebody else's switch: ZCode runs configuration-file hooks only while
 `hooks.enabled` is true in `~/.zcode/cli/config.json`, which starts off, and
 enabling the plugin is what enables the plugin's hooks.
 
+Pi takes Leteo as a package. `leteo setup pi` writes
+[`plugin/pi`](plugin/pi) under Pi's agent directory (`PI_CODING_AGENT_DIR`, or
+`~/.pi/agent`), where it is listed in `settings.json`, and takes out the `leteo`
+entry an earlier setup left in `mcp.json`. The package opens and closes the
+session, keeps your prompts and the Key Learnings of what tools return, saves
+the compaction summary, appends the memory protocol to the system prompt, and
+registers `leteo mcp` as an MCP server itself, with its tools exposed directly.
+An entry in `mcp.json` would override that registration by name, which is why
+setup no longer writes one.
+
 ## Uninstall
 
 ```powershell
@@ -338,6 +347,30 @@ Its name in the [MCP Registry](https://registry.modelcontextprotocol.io) is
 publishes. The line is written out rather than hidden in a comment because that
 is what the registry reads to believe this repository owns the crate, and
 crates.io strips HTML comments when it renders this file.
+
+## HTTP
+
+For a script or a plugin that already speaks HTTP, `leteo serve` opens the same
+tools on the loopback — no MCP client, and no process per call:
+
+```powershell
+leteo serve
+```
+
+`GET /tools` names the endpoints, `GET /health` says it is up, and
+`POST /tools/<name>` takes that tool's arguments as its JSON body — the same
+name and the same arguments the MCP tool takes, so there is one vocabulary to
+learn:
+
+```powershell
+curl -s http://127.0.0.1:7437/tools/mem_save -d '{"title":"A decision","content":"what and why","type":"decision"}'
+```
+
+It is the same store and the same rules as the MCP and CLI paths, because it is
+the same handler: a save over HTTP is indexed, normalised and queued for
+replication exactly as one from an agent. It binds the loopback by default;
+`--bind 0.0.0.0:7437` exposes it to the network and the log says so, because the
+store holds everything the agent has remembered.
 
 ## What you type
 
@@ -446,7 +479,8 @@ languages — English, español, português, français, Deutsch, italiano, româ
 català, galego, euskara, Nederlands, polski, svenska — deliberately the same
 thirteen offered for memories, from the same table. Left unset it follows the
 machine's locale, so a Spanish computer gets a Spanish dashboard without being
-asked.
+asked. Romanian was translated by a machine rather than written by somebody who
+speaks it, and the menu that offers it says so; the other twelve were not.
 
 **`voice_language`** is what Sardi speaks, and it is separate because those
 lines are written *into your agent's conversation* rather than onto Leteo's
@@ -472,7 +506,7 @@ setting being read past.
 | `interface` | one of the thirteen above | follow the machine's locale |
 | `voice_language` | one of the thirteen above | follow `interface` |
 | `language` | free text | the language of each conversation |
-| `voice` | `all`, `reminders`, `quiet` | `all` |
+| `voice` | `all`, `reminders`, `quiet` | `reminders` |
 | `context_size` | `slim`, `full`, `deep` | `full` |
 | `semantic_search` | `true`, `false` | `true` |
 
@@ -481,13 +515,16 @@ and read back forgivingly, because this is a file people type into: the English
 name, the ISO code and the spelling without the accent all work.
 
 `voice` is how much of its own work Sardi says out loud — everything, the save
-reminder alone, or nothing. `context_size` is how many memories a session opens
-with: twenty, fifty or eighty, for a small context window or for a store that
+reminder alone, or nothing. It is `reminders` unless you say otherwise: a report
+line on every prompt is noise nobody asked for, and the reminder is the line that
+does the work, so `all` is what brings the reports back. `context_size` is how
+many memories a session opens with: twenty, fifty or eighty, for a small context
+window or for a store that
 matters more than the budget. `semantic_search` is whether a search the words
 cannot answer goes on to look by meaning, in all thirteen languages, with a model
 that ships beside the binary and never touches a network when you search; results
 found that way are marked `semantic`. Turn it off if the memory it holds while it
-runs (stated in [`search.md`](openspec/specs/search.md) §15) is too much, or if you
+runs is too much, or if you
 want only answers that contain your words.
 
 Two of the six are flags as well, because changing them should not mean
@@ -522,7 +559,7 @@ flag, so it is safe to paste.
 `status` contacts nothing at all: it reports this machine's own view — what is
 enrolled, how many changes are waiting and since when, and whether the last
 attempt failed and with what. `sync` runs one cycle now, and `leteo serve` keeps
-running them in the background until interrupted:
+running them in the background — beside the HTTP API — until interrupted:
 
 ```powershell
 leteo cloud health
@@ -532,9 +569,7 @@ leteo serve
 ```
 
 Not to be confused with `leteo cloud serve`, which is the other end — the server
-itself, which you only run if you are hosting one. That side, with its Compose
-stack, managed tokens and project grants, is in
-[`openspec/specs/replication.md`](openspec/specs/replication.md).
+itself, which you only run if you are hosting one.
 
 ## Coming From Engram
 
@@ -542,9 +577,9 @@ Leteo is an independent Rust product derived from the workflow and MIT-licensed
 implementation of Gentleman Programming's Engram. It is not affiliated with or
 endorsed by that project, and promises no drop-in CLI compatibility.
 
-A measured comparison — the same synthetic corpus saved into both engines, the
-same queries asked of each engine's own `mem_search` — is in
-[`docs/comparison-with-engram.md`](docs/comparison-with-engram.md).
+A measured comparison — the same synthetic corpus saved into each engine through
+its own write path, the same queries asked of its own search — is in
+[`docs/comparison.md`](docs/comparison.md).
 
 It reads an Engram database directly, so moving across is a copy. The first
 reports what it would adopt and writes nothing; the second carries it out, and
@@ -588,20 +623,6 @@ Contributors — human or agent — should read [`AGENTS.md`](AGENTS.md) first.
 
 ## Documentation
 
-This file is the user-facing guide. What the system *guarantees*, and why, is in
-[`openspec/`](openspec/) — one document per capability, cross-linked:
-
-| Document | Covers |
-| -------- | ------ |
-| [`project.md`](openspec/project.md) | what Leteo is, the crate layout, the system-wide invariants |
-| [`specs/memory-model.md`](openspec/specs/memory-model.md) | what a memory is, its types, review windows, normalisation |
-| [`specs/search.md`](openspec/specs/search.md) | matching, ranking, the three stages, the narrowings |
-| [`specs/store-and-schema.md`](openspec/specs/store-and-schema.md) | the database, migrations, `doctor` and its repairs |
-| [`specs/mcp-tools.md`](openspec/specs/mcp-tools.md) | the MCP surface and the shape of its replies |
-| [`specs/hooks.md`](openspec/specs/hooks.md) | the five lifecycle events and their time budgets |
-| [`specs/cli.md`](openspec/specs/cli.md) | the command line and what its answers explain |
-| [`specs/replication.md`](openspec/specs/replication.md) | the optional PostgreSQL peer |
-
 Longer write-ups of individual measurements live in [`docs/`](docs/). The first
 is [*there was nothing worth tuning*](docs/nothing-worth-tuning.md): the third
 search stage answers questions belonging to another project 90.2% of the time,
@@ -616,10 +637,11 @@ still gets it wrong three times out of three, and six of eleven sampled memories
 from the opening block turn out to be recoverable from the repository anyway —
 code, specs, tests and the git history together.
 
-The third is [*Leteo against Engram, measured*](docs/comparison-with-engram.md):
-the same synthetic corpus saved into both engines, the same queries asked of each
-engine's own `mem_search`, and the numbers one run produced — generated from the
-harness so they cannot drift, with the measured Engram version beside them.
+The third is [*Leteo against other memory engines, measured*](docs/comparison.md):
+the same synthetic corpus saved into Engram and two other engines as well as
+Leteo, the same queries asked of each engine's own search, and the numbers one run
+produced — generated from the harness so they cannot drift, with each engine's
+measured version beside it.
 
 ## Environment
 
@@ -688,6 +710,17 @@ of this applies to a normal installation.
 | `LETEO_CLOUD_PORT` | Cloud port; defaults to `8080` |
 | `LETEO_CLOUD_MAX_POOL` | PostgreSQL connection-pool limit |
 | `LETEO_CLOUD_MAX_PUSH_BYTES` | Maximum cloud push body size |
+
+**Browsing what the server holds.** Sign in at `/dashboard/login` with an admin
+token and `/dashboard` links to a read-only browse: the projects, each
+project's sessions and memories, and a search over memory titles, content and
+topic keys. It is server-rendered, edits nothing, and shows the current state of
+the log, so a deleted memory does not appear. Being an admin lets you sign in
+but is not a pass to every project: the browse shows only the projects your
+token holds a grant on (all of them for a `*` grant), and asking for any other
+project by name is refused with 403. Lists are cut at 200 projects, 100
+sessions, 100 memories or 50 search matches, and the page says when it was cut.
+Administering users, grants and tokens is not part of it.
 
 ## License And Attribution
 

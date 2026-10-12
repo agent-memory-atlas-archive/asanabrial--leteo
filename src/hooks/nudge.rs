@@ -210,7 +210,7 @@ const _: () = assert!(LONGEST_CONVERSATION_PROMPTS >= LONGEST_CONVERSATION_MEASU
 /// the bound has to cover a whole conversation, or the promise it exists for
 /// stops holding. Past it the oldest ids fall off and become eligible again, so
 /// the hint offers the same memory a second time in the same conversation,
-/// which is the one thing `hooks.md` §9 says it never does.
+/// which is the one thing it promises never to do.
 ///
 /// It was 128, sized against sessions of 45 prompts, which was the longest this
 /// store held when it was written. It now holds one of 351 — three memories a

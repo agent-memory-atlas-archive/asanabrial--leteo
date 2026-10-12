@@ -24,7 +24,15 @@ COPY src ./src
 # something this repository's history can show, and CI now builds this image on
 # every pull request.
 COPY migrations ./migrations
-RUN cargo build --release --locked --bin leteo
+# `leteo setup pi` writes the Pi package from copies `include_str!`d out of
+# these two files, so they are a build input like the migrations. Without them
+# the build fails at `src/setup/pi_package.rs` with "couldn't read
+# src/setup/../../plugin/pi/package.json", as the first CI run of #269 did.
+COPY plugin/pi/package.json plugin/pi/leteo.ts ./plugin/pi/
+# The cloud server lives behind `cloud-server`, off by default so an ordinary
+# installation compiles no PostgreSQL and no HTTP framework. This image is the
+# one build that turns it on.
+RUN cargo build --release --locked --features cloud-server --bin leteo
 
 FROM debian:bookworm-slim AS runtime
 

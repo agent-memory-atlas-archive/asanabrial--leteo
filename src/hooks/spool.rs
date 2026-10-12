@@ -31,16 +31,15 @@ use crate::{
 /// How many entries the spool holds before the oldest are dropped.
 ///
 /// Without a bound a store busy for a long time fills the directory, and each
-/// entry is the whole text of a subagent's turn. Published in `hooks.md` §22
-/// and read by the tests beside this, so the number that is applied is the
-/// number that is named.
+/// entry is the whole text of a subagent's turn. Read by the tests beside
+/// this, so the number that is applied is the number that is named.
 pub const SPOOL_CAP: usize = 1_000;
 
 /// Days after which an entry is dropped without being replayed.
 ///
 /// Past this the capture is not worth keeping: a subagent's learnings belong to
 /// the conversation that produced them, and replaying one a week later files it
-/// into a store that has moved on. Published with the cap in `hooks.md` §22.
+/// into a store that has moved on.
 pub const SPOOL_RETENTION_DAYS: i64 = 7;
 
 const RETENTION_MILLIS: i64 = SPOOL_RETENTION_DAYS * 24 * 60 * 60 * 1_000;
@@ -95,9 +94,16 @@ pub struct Pending {
 /// What one drain did.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct DrainReport {
-    /// Entries this drain took by renaming, and therefore replayed. The count
-    /// is what says two drainers never take the same entry.
+    /// Entries this drain took by renaming. An entry it renamed back because
+    /// the store was busy is counted here and may be claimed again by another
+    /// drain, so across drains this can exceed the entries there were.
     pub claimed: usize,
+    /// Claimed entries renamed back because the store was busy, for a later
+    /// drain to take again. `claimed - returned` is what this drain replayed,
+    /// and across drains it is what says no entry was replayed twice: the
+    /// store keeps a replayed learning once whoever replays it, so `stored`
+    /// cannot say it.
+    pub returned: usize,
     /// Learnings that reached the store across those entries.
     pub stored: usize,
     /// Entries removed because replay failed for a reason a retry cannot mend.
@@ -200,6 +206,7 @@ pub(crate) fn drain(store: &mut Store, deadline: Instant) -> DrainReport {
             Ok(_) => {}
             Err(error) if error.is_busy() => {
                 let _ = fs::rename(&claimed, &path);
+                report.returned += 1;
                 break;
             }
             Err(_) => {
@@ -217,6 +224,7 @@ pub(crate) fn drain(store: &mut Store, deadline: Instant) -> DrainReport {
                 // Put the name back, so the next drain finds the entry where it
                 // left it rather than in a claimed file nothing looks at.
                 let _ = fs::rename(&claimed, &path);
+                report.returned += 1;
                 break;
             }
             Err(_) => {
@@ -246,7 +254,7 @@ pub(crate) fn pending(dir: &Path) -> Pending {
 
 /// An age in the largest unit that still reads as one.
 ///
-/// The same shape `hooks.md` §8 gives the save reminder, and for the same
+/// The same shape the save reminder gives an age, and for the same
 /// reason: "259200 seconds" is a number nobody converts, and the doctor line is
 /// read by a person deciding whether to run the repair.
 pub(crate) fn describe_age(age: Duration) -> String {

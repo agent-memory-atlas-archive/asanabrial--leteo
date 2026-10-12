@@ -1,35 +1,11 @@
 # Working on Leteo
 
 Local-first persistent memory for coding agents: one Rust binary over one SQLite
-database. Read [`openspec/project.md`](openspec/project.md) first — it says what
-the crate is and how it is laid out.
+database.
 
 **Everything written into this repository is in English** — code, comments,
-commit messages, tests, and the documents under `openspec/` — whatever language
+commit messages, tests, and documents — whatever language
 the conversation about it happens in.
-
-## Keep `openspec/` current
-
-`openspec/` is the written half of this project: one file per capability, saying
-what the system guarantees and why. It is maintained as part of the work, not
-after it.
-
-- **A change to a promise and its spec edit belong in the same commit.** A
-  commit that leaves a spec describing behaviour the code no longer has is worse
-  than no documentation, because a reader will believe the wrong one.
-- **Keep it structured.** Each spec has the same five sections — Purpose,
-  Behaviour, Invariants, Where it lives, Related — and the requirements under
-  Behaviour are numbered so they can be cited (`search.md §3`). Numbers are
-  stable; a requirement that stops holding is rewritten in place, never silently
-  renumbered.
-- **Keep it related.** Every file ends with links to its neighbours, so any file
-  is a way in to all of them. A fact that belongs in two specs lives in one and
-  is linked from the other — stated twice, it will be edited once.
-- **Keep it readable.** A spec longer than one sitting is two specs.
-
-[`openspec/README.md`](openspec/README.md) lists exactly which kinds of change
-require a spec edit. Read it before adding a tool, a command, a flag, a
-`doctor` check, a migration, an output field, or a default.
 
 ## Building and testing
 
@@ -61,8 +37,8 @@ it skips `tests/`, which is where the surface-level guards live.
     One exception, licensed and written down rather than left to look like the
     defect: a *released* migration may freeze a copy of what it needs, because it
     must give every database the same answer whenever it happens to run.
-    `openspec/specs/memory-model.md` records the two there are — migration 18's
-    frozen table and the baseline's three SQL literals.
+    There are two: migration 18's frozen table and the baseline's three SQL
+    literals.
 4. **A limit that is published is the limit that is applied.**
 5. **Say what could not be done.** An empty answer, a busy store, a check that
    could not run — each says which it is. Reporting the nearest named state
@@ -115,8 +91,7 @@ Append-only. A released migration is never edited — databases that already ran
 it will not run it again. Add a new file, bump `SCHEMA_VERSION`, and rebuild the
 full-text indexes if the migration rewrote a column one of them carries — a
 migration that touches only a column no full-text index carries, as 18 does with
-`review_after`, does not need to. See
-[`openspec/specs/store-and-schema.md`](openspec/specs/store-and-schema.md).
+`review_after`, does not need to.
 
 ## Attribution
 

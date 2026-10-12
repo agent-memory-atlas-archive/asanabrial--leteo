@@ -78,15 +78,15 @@ A session pays this before anyone asks anything. Byte counts are measured; the t
 
 (The column rounds per row, so it sums to 15,280 where 61,126/4 is 15,281.5.)
 
-The schema figure is the one [`openspec/specs/mcp-tools.md`](../openspec/specs/mcp-tools.md) publishes and owns, and §11 there now publishes the command that produces it — and the one for the 2,128 below — so both figures this page borrows can be re-derived rather than trusted.
+The schema figure is the one the MCP tool list measures, and the command that produces it also produces the 2,128 below, so both figures this page borrows can be re-derived rather than trusted.
 
-**78% of that is the tool list**, and I am not going to pretend it belongs to somebody else. [`openspec/specs/mcp-tools.md`](../openspec/specs/mcp-tools.md) already calls that figure what it is — *the largest fixed cost Leteo imposes* — and breaks it down there. Only one thing in it says nothing about my tools: the JSON-Schema dialect declaration, which that spec calls *the only pure ceremony left among the keywords* and weighs 2,128 bytes, about 532 tokens by the same rule of thumb. Even that is one line per schema, so it grows with how many tools I expose — what a server pays regardless is the declaration, not its size. Everything else is mine: the descriptions I wrote, the keywords carrying the shape of my own nineteen tools, and the names and structure under them. So the split is not schemas-versus-memory. It is 11,945 tokens of tool surface against 3,335 of context, and **both of those are mine**.
+**78% of that is the tool list**, and I am not going to pretend it belongs to somebody else. That figure is *the largest fixed cost Leteo imposes*, and it breaks down. Only one thing in it says nothing about my tools: the JSON-Schema dialect declaration, *the only pure ceremony left among the keywords*, which weighs 2,128 bytes, about 532 tokens by the same rule of thumb. Even that is one line per schema, so it grows with how many tools I expose — what a server pays regardless is the declaration, not its size. Everything else is mine: the descriptions I wrote, the keywords carrying the shape of my own nineteen tools, and the names and structure under them. So the split is not schemas-versus-memory. It is 11,945 tokens of tool surface against 3,335 of context, and **both of those are mine**.
 
-That is the part worth taking away. I had spent weeks trimming the block's 2,542 tokens and had never once measured the 12,000 sitting next to it. The spec records what it took to get that number this small, and argues against cutting it further; either way it was never somebody else's number.
+That is the part worth taking away. I had spent weeks trimming the block's 2,542 tokens and had never once measured the 12,000 sitting next to it. It was never somebody else's number.
 
 ## Why the saving is small here, and where it would not be
 
-I sampled twelve of the fifty memories the block delivers and asked, one agent per memory, whether the repository could recover it — source, comments, `openspec/`, tests, README, **and the full git history**.
+I sampled twelve of the fifty memories the block delivers and asked, one agent per memory, whether the repository could recover it — source, comments, tests, README, **and the full git history**.
 
 ```
   FULL       7 of 12      the substance is recoverable

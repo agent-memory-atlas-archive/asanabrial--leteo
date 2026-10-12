@@ -5,7 +5,7 @@
         -> quantised to int8 with model2vec's own routine
         -> its WordPiece vocabulary pruned to the pieces Leteo's languages use
 
-and writes the three files `model2vec-rs` needs to <out-dir>:
+and writes the three files the binary reads to <out-dir>:
 config.json, model.safetensors, tokenizer.json.gz.
 
 The tokenizer is 843 KB of one-line JSON that nobody reviews, so it is stored as
@@ -114,6 +114,9 @@ def technical_text() -> list[str]:
             return False
         return (
             (path.startswith("src/") and path.endswith(".rs"))
+            # openspec/ is gone from the working tree but present at TECH_COMMIT,
+            # and the shipped model was trained with it; dropping this clause
+            # would make a rebuild train on a different corpus.
             or (path.startswith("openspec/") and path.endswith(".md"))
             or (path.startswith("docs/") and path.endswith(".md"))
             or (path.startswith("tools/") and path.endswith((".py", ".rs")))

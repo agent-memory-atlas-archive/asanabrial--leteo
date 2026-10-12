@@ -39,6 +39,11 @@ COPY src ./src
 # the header describes, and it is why that image is built here on every pull
 # request rather than only at release time.
 COPY migrations ./migrations
+# `leteo setup pi` writes the Pi package from copies `include_str!`d out of
+# these two files, so they are a build input like the migrations. Without them
+# the build fails at `src/setup/pi_package.rs` with "couldn't read
+# src/setup/../../plugin/pi/package.json", as the first CI run of #269 did.
+COPY plugin/pi/package.json plugin/pi/leteo.ts ./plugin/pi/
 RUN cargo build --release --locked --bin leteo
 
 FROM debian:bookworm-slim AS runtime
