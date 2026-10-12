@@ -375,9 +375,18 @@ class Mem0Adapter(LLMAdapter):
                 continue
             merged += sum(e in ("UPDATE", "DELETE") for e in events)
             self.keymap[m["key"]] = m["key"]
+        # Every row reports stored against sent. Without extraction a write that
+        # returned no events is a memory mem0 dropped, and the count says so on
+        # the row rather than leaving it to read as an ordinary search miss; with
+        # extraction the same count is the memories the model kept a fact from,
+        # and the drops are facts it chose not to write.
+        stored = len(self.keymap)
         if self.infer:
-            self.notes.append(f"{len(self.keymap)} of {len(members)} memories produced at least one stored fact"
+            self.notes.append(f"{stored} of {len(members)} memories produced at least one stored fact"
                               + (f"; {merged} extraction events updated or deleted an earlier fact" if merged else ""))
+        else:
+            self.notes.append(f"{stored} of {len(members)} memories were stored"
+                              + (f"; {empty} write{'' if empty == 1 else 's'} returned no events" if empty else ""))
         if not self.keymap:
             raise RuntimeError("mem0 stored nothing")
 

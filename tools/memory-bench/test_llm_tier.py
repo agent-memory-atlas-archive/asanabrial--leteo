@@ -166,6 +166,12 @@ class Mem0Provenance(unittest.TestCase):
         a.load(self.MEMBERS)
         return a
 
+    def verbatim(self, events):
+        a = llm_tier.Mem0VerbatimAdapter(tempfile.gettempdir())
+        a._servers["w"] = FakeWorker(events)
+        a.load(self.MEMBERS)
+        return a
+
     def test_a_memory_the_model_extracted_nothing_from_has_no_provenance(self):
         a = self.adapter({"a": ["ADD"], "b": [], "c": ["ADD", "ADD"]})
         self.assertEqual(a.map_hit(llm_tier.Hit("a", "x"), self.MEMBERS), "a")
@@ -174,6 +180,14 @@ class Mem0Provenance(unittest.TestCase):
     def test_the_count_of_memories_that_were_not_stored_is_on_the_row(self):
         a = self.adapter({"a": ["ADD"], "b": [], "c": ["UPDATE"]})
         self.assertTrue(any("2 of 3 memories" in n and "1 extraction events updated" in n for n in a.notes), a.notes)
+
+    def test_a_row_without_extraction_still_names_the_writes_that_were_dropped(self):
+        a = self.verbatim({"a": ["ADD"], "b": [], "c": ["ADD"]})
+        self.assertTrue(any("2 of 3 memories were stored" in n and "1 write returned no events" in n for n in a.notes), a.notes)
+
+    def test_a_row_that_stored_everything_names_no_drop(self):
+        a = self.verbatim({"a": ["ADD"], "b": ["ADD"], "c": ["ADD"]})
+        self.assertTrue(any("3 of 3 memories were stored" in n and "returned no events" not in n for n in a.notes), a.notes)
 
     def test_a_store_that_kept_nothing_is_a_fault_not_a_row(self):
         with self.assertRaises(RuntimeError):
