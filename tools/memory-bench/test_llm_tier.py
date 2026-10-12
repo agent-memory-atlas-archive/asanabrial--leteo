@@ -276,6 +276,22 @@ class Spread(unittest.TestCase):
         self.assertIn("| e | 2 of 3 |", llm_report.results_table([engine("e", [[1], [1]], planned=3)]))
         self.assertIn("| e | 3 |", llm_report.results_table([engine("e", [[1], [1], [1]])]))
 
+    def test_each_rows_of_n_denominators_are_its_own_engines(self):
+        # Two engines of different sizes: neither denominator may be taken from
+        # the other engine's row.
+        a = engine("a", [[1]])
+        b = engine("b", [[1, 1]], planned=1)
+        b["passes"][0]["no_answer"] = [dict(n=0)] * 7
+
+        def row(label):
+            return next(line for line in llm_report.results_table([a, b]).splitlines()
+                        if line.startswith(f"| {label} |"))
+
+        self.assertIn("of 1", row("a"))
+        self.assertIn("of 4", row("a"))
+        self.assertIn("of 2", row("b"))
+        self.assertIn("of 7", row("b"))
+
 
 class Page(unittest.TestCase):
     def test_an_engine_that_was_not_measured_is_listed_with_its_reason_and_has_no_numbers(self):
