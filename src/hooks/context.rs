@@ -17,25 +17,25 @@ pub(super) const RECALL_LIMIT: usize = 3;
 
 /// Memories worth putting in front of this prompt, or nothing at all.
 ///
-/// Nothing at all about one prompt in five, by design and by measurement.
-/// Against 277 prompts on a real store, labelled without leaking the future —
-/// the memories saved earlier in the same session, which existed when the hint
-/// would have spoken — it speaks on 81% and names something from that session
-/// on 22%, better than one time in four when it speaks at all.
+/// Silent on a little over half of the prompts that had nothing to add, and
+/// that is the most the bar buys.
 ///
-/// The label is a stand-in and it undercounts: a session touches several
-/// subjects, and a hint that brings back something genuinely useful from a
-/// different session is scored here as a miss. What it is good for is
-/// comparing two ways of choosing, since none of them can see the session or
-/// the clock.
+/// Against 170 prompts a person labelled by hand, replayed through the shipped
+/// hook against a store cut back to each prompt's time, it is silent on 56 of
+/// the 100 labelled as needing nothing and names a labelled memory on 30 of the
+/// 70 that had one. A stricter bar is quieter and loses those faster; the
+/// alternatives that were measured and refused are with the numbers in
+/// `Store::prompt_matches`.
 ///
-/// What the choosing is: a relevance floor relative to the median of the
-/// candidates, and it is not the same floor on both sides. The session opened
-/// with an index of the project's most recent memories, so naming one of those
-/// again only repeats what the agent is already holding, while naming an older
-/// one is the only way it hears of that memory at all — see
-/// `Store::worth_naming`. That asymmetry is worth ten points of accuracy over
-/// one floor for everything.
+/// The label is a stand-in and it undercounts: a hint that brings back
+/// something genuinely useful that nobody labelled is scored here as a miss.
+/// What it is good for is comparing two ways of choosing, since none of them
+/// can see the session or the clock.
+///
+/// What the choosing is: one relevance floor relative to the median of the
+/// candidates, `RECALL_MARGIN`, the same for every memory. It used to be looser
+/// for a memory outside the session's opening block, and that looser bar was
+/// worth thirty-three prompts of silence for one hit.
 ///
 /// Most of what is still missed is missed by full-text search rather than by
 /// the threshold: a third of the failures are a question asked in Spanish

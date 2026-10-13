@@ -81,6 +81,18 @@ All notable changes to Leteo are documented in this file.
 
 ### Changed
 
+- **The per-prompt hint is quieter, and no longer tells the agent to read.**
+  One relevance bar of 1.6 times the median now decides every candidate; the
+  looser 1.2 bar for memories outside the session's opening block is gone. On
+  170 prompts labelled by hand, replayed through the hook against a store cut
+  back to each prompt's time, the hint is silent on 56 of the 100 that needed
+  nothing instead of 23, names a labelled memory on 30 of 70 instead of 31, and
+  spends 8,004 tokens over all 170 prompts instead of 16,102. Its first line no
+  longer orders a `mem_get_observation`; it says the lines match the prompt's
+  words and can be ignored. A cosine gate from the local embedding model, and a
+  grid and a fitted scorer over several signals, were measured and none kept 30
+  named at 80 silent, so the bar stays a plain margin (#198).
+
 - **Breaking: `mem_search` and `mem_save` reply with less.** A `mem_search`
   result no longer carries `sync_id`, `session_id` or `rank` (no tool takes a
   sync_id, and the order of `results` already is the rank), and names its
