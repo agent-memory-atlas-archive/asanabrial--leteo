@@ -1329,7 +1329,9 @@ impl From<Prompt> for PromptLineOutput {
             // is fetched deliberately, the opening blob is spent whether or not
             // it is read. What they are not allowed to be is unbounded.
             content: normalize::truncate_content(value.content, PREVIEW_BYTES),
-            created_at: value.created_at,
+            // To the minute, as the markdown block prints it: the seconds are
+            // bytes on every prompt and nothing an agent acts on.
+            created_at: normalize::to_the_minute(&value.created_at).to_owned(),
         }
     }
 }
@@ -1492,7 +1494,7 @@ impl From<SessionSummary> for SessionSummaryOutput {
         Self {
             id: value.id,
             project: value.project,
-            last_activity: value.last_activity,
+            last_activity: normalize::to_the_minute(&value.last_activity).to_owned(),
             ended_at: value.ended_at,
             // Cut like every other preview this surface sends, and for the
             // same reason its sibling above is.

@@ -8,11 +8,11 @@ use std::collections::BTreeMap;
 
 use crate::memory::model::{Caveat, Observation, Prompt, SessionSummary};
 
-/// How many of the most recent memories are handed over with their content.
+/// How many of the most recent memories `mem_context` hands over with their
+/// content.
 ///
-/// The rest arrive as titles. Five is about one screenful of real detail:
-/// enough to carry on from where the last session stopped, and not so much that
-/// a conversation opens with a wall of text nobody asked for.
+/// The rest arrive as titles. The markdown opening block no longer previews
+/// any: it is titles only, and the reason is in `render_context`.
 pub(crate) const DETAILED: usize = 5;
 
 // How many memories an opening context names is no longer a constant. It began
@@ -49,19 +49,6 @@ pub(crate) const SESSION_LINE_CHARS: usize = 320;
 /// rather than one. Cutting here is the point — 18% of prompts are cut at this
 /// bound and that is 18% of pasted files not spent on an opening block.
 pub(crate) const PROMPT_LINE_CHARS: usize = 200;
-
-/// How much of a memory the previewed entries open with.
-///
-/// Not the same cut as the MCP tools make: `PREVIEW_BYTES` is 400 there,
-/// because a tool result is fetched deliberately and pays for itself, while
-/// this blob is spent on every session whether or not it is read. The two are
-/// allowed to differ; what is not allowed is for either to drift silently.
-///
-/// The skill promises this number to agents in words — it tells them to assume
-/// the answer is past the cut and to fetch by `#id` — so a change here is a
-/// change to a published promise. `the_skill_promises_the_preview_length_the_code_cuts_at`
-/// holds the two together.
-pub(crate) const CONTEXT_PREVIEW_CHARS: usize = 300;
 
 /// Gathers a session's opening context and renders it.
 ///
@@ -165,7 +152,10 @@ pub fn assemble_counted(
         pinned_omitted,
         &observations,
         &caveats,
-        budget_bytes,
+        Frame {
+            project,
+            budget_bytes,
+        },
     ))
 }
 
@@ -173,7 +163,7 @@ pub fn assemble_counted(
 ///
 /// From the setting, because three surfaces build this same context and two of
 /// them asked. `leteo context` used a constant twenty while the session-start
-/// hook and `mem_context` both read `context_size`, whose default is fifty —
+/// hook and `mem_context` both read `context_size`, whose default is thirty —
 /// so on an untouched installation the terminal showed 40% of what the agent
 /// was handed, and `leteo setup --context deep` moved one of them and not the
 /// other. Twenty was Slim's number, which is why nobody noticed: the two agreed
@@ -257,6 +247,19 @@ fn goal_of(summary: &str) -> String {
     truncate(goal, SESSION_LINE_CHARS)
 }
 
+/// What frames a block rather than fills it: where it is scoped, and how large
+/// it may be.
+///
+/// Together because they arrive together and `format_context` was at the
+/// argument count clippy stops at.
+#[derive(Clone, Copy)]
+pub struct Frame<'a> {
+    /// The project the block is scoped to. Lines of that project do not name
+    /// it; with none, every line does.
+    pub project: Option<&'a str>,
+    pub budget_bytes: usize,
+}
+
 /// Renders the opening context.
 ///
 /// `caveats` is what the relation graph says about the memories being listed,
@@ -269,7 +272,7 @@ pub fn format_context(
     pinned_omitted: usize,
     observations: &[Observation],
     caveats: &BTreeMap<String, Vec<Caveat>>,
-    budget_bytes: usize,
+    frame: Frame,
 ) -> String {
     format_context_counted(
         sessions,
@@ -278,7 +281,7 @@ pub fn format_context(
         pinned_omitted,
         observations,
         caveats,
-        budget_bytes,
+        frame,
     )
     .0
 }
@@ -296,20 +299,24 @@ pub fn format_context_counted(
     pinned_omitted: usize,
     observations: &[Observation],
     caveats: &BTreeMap<String, Vec<Caveat>>,
-    budget_bytes: usize,
+    frame: Frame,
 ) -> (String, usize) {
+    let Frame {
+        project,
+        budget_bytes,
+    } = frame;
     if sessions.is_empty() && prompts.is_empty() && pinned.is_empty() && observations.is_empty() {
         return (String::new(), 0);
     }
 
-    let detailed = DETAILED.min(observations.len());
     let mut shown = Shown {
         sessions: sessions.len(),
         prompts: prompts.len(),
         pinned: pinned.len(),
-        detailed: (0..detailed).collect(),
-        listed: (detailed..observations.len()).collect(),
+        listed: (0..observations.len()).collect(),
     };
+    // The spelling the sessions carry, which `recent_sessions` narrowed by.
+    let own_project = project.map(crate::memory::normalize::project);
     let sections = Sections {
         sessions,
         prompts,
@@ -317,6 +324,7 @@ pub fn format_context_counted(
         pinned_omitted,
         observations,
         caveats,
+        own_project: own_project.as_deref(),
     };
     // Render, and when the block is over budget drop the least important thing
     // still in it and render again. Dropping one item at a time rather than
@@ -325,7 +333,7 @@ pub fn format_context_counted(
     loop {
         let rendered = render_context(&sections, &shown, budget_bytes);
         if rendered.len() <= budget_bytes || !shown.drop_one() {
-            let named = shown.pinned + shown.detailed.len() + shown.listed.len();
+            let named = shown.pinned + shown.listed.len();
             return (rendered, named);
         }
     }
@@ -335,9 +343,8 @@ pub fn format_context_counted(
 ///
 /// The newest memories are the ones the work is likely continuing from, so a
 /// block that has to lose something loses it from the oldest end and from the
-/// least informative section first: the title-only entries behind the detailed
-/// window go before the detailed previews, those before the prompts, those
-/// before the sessions, and the pinned memories last — a pin is a deliberate
+/// least informative section first: the remembered titles go before the
+/// prompts, those before the sessions, and the pinned memories last — a pin is a deliberate
 /// act, and dropping one in silence is the failure `pinned_omitted` exists to
 /// prevent.
 #[derive(Default)]
@@ -345,8 +352,6 @@ struct Shown {
     sessions: usize,
     prompts: usize,
     pinned: usize,
-    /// Indices into `observations`, newest first, shown with their content.
-    detailed: Vec<usize>,
     /// Indices into `observations`, newest first, shown as a title only.
     listed: Vec<usize>,
 }
@@ -355,9 +360,6 @@ impl Shown {
     /// Drops one item, the least important the block still carries.
     fn drop_one(&mut self) -> bool {
         if self.listed.pop().is_some() {
-            return true;
-        }
-        if self.detailed.pop().is_some() {
             return true;
         }
         if self.prompts > 0 {
@@ -384,6 +386,8 @@ struct Sections<'a> {
     pinned_omitted: usize,
     observations: &'a [Observation],
     caveats: &'a BTreeMap<String, Vec<Caveat>>,
+    /// The project the block is scoped to, as the store spells it.
+    own_project: Option<&'a str>,
 }
 
 /// Renders the block the current [`Shown`] allows, and says what it left out.
@@ -395,6 +399,7 @@ fn render_context(sections: &Sections, shown: &Shown, budget_bytes: usize) -> St
         pinned_omitted,
         observations,
         caveats,
+        own_project,
     } = *sections;
     let mut context = String::from("## Memory from Previous Sessions\n\n");
     if shown.sessions > 0 {
@@ -415,12 +420,24 @@ fn render_context(sections: &Sections, shown: &Shown, budget_bytes: usize) -> St
             // memory twenty minutes earlier, 148 of them since July, while the
             // 08-05 line held two. An agent reading the dates concluded the
             // material was a week old and the freshest line was the stalest.
+            //
+            // Neither the project nor the count is printed where it carries
+            // nothing: a block scoped to one project said that project's name
+            // on every line, and `[N observations]` is a number nobody
+            // chooses a session by — the summary is what says what it was
+            // for. Measured on a copy of a real store, the two were about a
+            // tenth of the sessions section. A block with no project of its
+            // own lists several, and there the name is what tells them apart.
+            let project = match own_project {
+                Some(own) if own == session.project => String::new(),
+                _ => format!(
+                    "**{}** ",
+                    crate::memory::normalize::one_line(&session.project)
+                ),
+            };
             context.push_str(&format!(
-                "- **{}** ({}){} [{} observations]\n",
-                crate::memory::normalize::one_line(&session.project),
-                session.last_activity,
-                summary,
-                session.observation_count
+                "- {project}({}){summary}\n",
+                crate::memory::normalize::to_the_minute(&session.last_activity),
             ));
         }
         context.push('\n');
@@ -430,7 +447,7 @@ fn render_context(sections: &Sections, shown: &Shown, budget_bytes: usize) -> St
         for prompt in &prompts[..shown.prompts] {
             context.push_str(&format!(
                 "- {}: {}\n",
-                prompt.created_at,
+                crate::memory::normalize::to_the_minute(&prompt.created_at),
                 truncate(&prompt.content, PROMPT_LINE_CHARS)
             ));
         }
@@ -440,11 +457,10 @@ fn render_context(sections: &Sections, shown: &Shown, budget_bytes: usize) -> St
         context.push_str("### Pinned\n");
         for observation in &pinned[..shown.pinned] {
             context.push_str(&format!(
-                "- #{} [{}] **{}**: {}\n",
+                "- #{} [{}] {}\n",
                 observation.id,
                 observation.kind,
-                truncate(&observation.title, TITLE_CHARS),
-                truncate(&observation.content, CONTEXT_PREVIEW_CHARS)
+                truncate(&observation.title, TITLE_CHARS)
             ));
             push_caveats(&mut context, caveats, &observation.sync_id);
         }
@@ -459,44 +475,21 @@ fn render_context(sections: &Sections, shown: &Shown, budget_bytes: usize) -> St
         }
         context.push('\n');
     }
-    if !shown.detailed.is_empty() {
-        // The newest few in full, everything behind them as an index.
-        //
-        // Three hundred characters per memory is the shape this was inherited
-        // with, and on a real store it spent about eighteen hundred tokens
-        // reciting twenty-nine memories in full before anybody had asked a
-        // question. Almost none of that content gets read: what an agent needs
-        // up front is to know *what* is remembered, and it can pull any of it
-        // with `mem_get_observation` the moment one looks relevant.
-        //
-        // So the recent handful keep their content — those are the ones the
-        // work is likely continuing from — and the rest become one line each.
-        // That buys far more memories for far fewer tokens, which is the whole
-        // point: an index of fifty beats a recital of twenty.
-        //
-        // The heading says these are previews, because they do not look like
-        // previews. Measured over 2417 memories of this store: 92% of the
-        // names, paths, numbers and error strings — the part the skill asks to
-        // spend freely on — falls past the first three hundred characters, and
-        // the median memory runs to 1969. An agent that answers from what is
-        // here is answering from the opening of a page.
-        context.push_str(
-            "### Recent Observations — previews; read one in full with mem_get_observation\n",
-        );
-        for &index in &shown.detailed {
-            let observation = &observations[index];
-            context.push_str(&format!(
-                "- #{} [{}] **{}**: {}\n",
-                observation.id,
-                observation.kind,
-                truncate(&observation.title, TITLE_CHARS),
-                truncate(&observation.content, CONTEXT_PREVIEW_CHARS)
-            ));
-            push_caveats(&mut context, caveats, &observation.sync_id);
-        }
-        context.push('\n');
-    }
     if !shown.listed.is_empty() {
+        // An index, with no content under any of it, pinned memories included.
+        //
+        // The newest five used to open with their first three hundred
+        // characters, and on a real store that was about eighteen hundred
+        // tokens of recital before anybody had asked anything. Almost none of
+        // it is read: what an agent needs up front is to know *what* is
+        // remembered, and it pulls any of it with `mem_get_observation` once
+        // one looks relevant. And a preview is a poor thing to answer from -
+        // measured over 2417 memories of that store, 92% of the names, paths,
+        // numbers and error strings fall past the first three hundred
+        // characters and the median memory runs to 1969 - so a title that says
+        // "fetch me" is more honest than a page that merely opens.
+        //
+        // The room goes to more titles instead; see `ContextSize`.
         context.push_str("### Also remembered — fetch with mem_get_observation\n");
         for &index in &shown.listed {
             let observation = &observations[index];
@@ -510,7 +503,7 @@ fn render_context(sections: &Sections, shown: &Shown, budget_bytes: usize) -> St
         }
         context.push('\n');
     }
-    let omitted_memories = observations.len() - shown.detailed.len() - shown.listed.len();
+    let omitted_memories = observations.len() - shown.listed.len();
     let omitted_pinned = pinned.len() - shown.pinned;
     let omitted_prompts = prompts.len() - shown.prompts;
     let omitted_sessions = sessions.len() - shown.sessions;
@@ -543,15 +536,6 @@ fn render_context(sections: &Sections, shown: &Shown, budget_bytes: usize) -> St
 /// warning nobody reads. The title of the other memory comes along: "this was
 /// overturned" without saying by what leaves the agent knowing only that it
 /// cannot trust what it just read.
-/// A title as a list prints it: one line, and short enough to sit on one.
-///
-/// The two surfaces that hand memories to an agent both print titles, and both
-/// print the title of a *second* memory beside a caveat. This is the shape
-/// they agree on; `normalize::one_line` is where the reason lives.
-pub fn one_line_title(value: &str) -> String {
-    truncate(value, TITLE_CHARS)
-}
-
 fn push_caveats(context: &mut String, caveats: &BTreeMap<String, Vec<Caveat>>, sync_id: &str) {
     for caveat in caveats.get(sync_id).into_iter().flatten() {
         context.push_str(&format!(
@@ -561,6 +545,17 @@ fn push_caveats(context: &mut String, caveats: &BTreeMap<String, Vec<Caveat>>, s
             truncate(&caveat.other_title, TITLE_CHARS)
         ));
     }
+}
+
+/// A title as a list prints it: one line, and short enough to sit on one.
+///
+/// Every surface that hands memories to an agent prints titles, and prints the
+/// title of a *second* memory beside a caveat. This is the one rule they share,
+/// so the block, the per-prompt hint and the handover cannot disagree about how
+/// long a title may be; `normalize::one_line` is where the reason for folding
+/// lives.
+pub fn one_line_title(value: &str) -> String {
+    truncate(value, TITLE_CHARS)
 }
 
 /// A preview, on one line, of at most `max_chars`.
@@ -725,7 +720,10 @@ mod tests {
             0,
             &memories,
             &BTreeMap::new(),
-            usize::MAX,
+            Frame {
+                project: None,
+                budget_bytes: usize::MAX,
+            },
         );
         assert!(context.contains("Ship the pagination work"), "{context}");
         assert!(!context.contains("## Goal"), "{context}");
@@ -752,17 +750,170 @@ mod tests {
             0,
             &[],
             &BTreeMap::new(),
-            usize::MAX,
+            Frame {
+                project: None,
+                budget_bytes: usize::MAX,
+            },
         );
 
         assert!(
-            context.contains("2026-08-04 18:20:00"),
+            context.contains("(2026-08-04 18:20)"),
             "the date must be the one the ordering uses: {context}"
         );
         assert!(
-            !context.contains("2026-07-30 10:00:00"),
+            !context.contains("2026-07-30 10:00"),
             "the opening date says the material is older than it is: {context}"
         );
+    }
+
+    /// Trimming a line's metadata must not change what the block selects.
+    ///
+    /// Compared against the store's own selection rather than against a
+    /// snapshot of the old text: every memory, session and prompt the store
+    /// hands the block has to be on a line of it, in the order the store gave
+    /// them, and nothing the store did not hand it may appear.
+    #[test]
+    fn dropping_line_metadata_leaves_the_selection_alone() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut store =
+            crate::store::Store::open(crate::store::StoreConfig::new(temp.path().join("c.db")))
+                .unwrap();
+        for (session, project) in [("a1", "alpha"), ("a2", "alpha"), ("b1", "beta")] {
+            store.create_session(session, project, "C:/repo").unwrap();
+            for n in 0..3 {
+                store
+                    .add_observation(crate::memory::model::AddObservation {
+                        session_id: session.to_owned(),
+                        kind: "decision".to_owned(),
+                        title: format!("Memory {session}-{n}"),
+                        content: format!("body {session}-{n}"),
+                        tool_name: None,
+                        project: Some(project.to_owned()),
+                        scope: "project".to_owned(),
+                        topic_key: None,
+                        prompt_sync_id: None,
+                    })
+                    .unwrap();
+            }
+            store
+                .add_prompt(crate::memory::model::AddPrompt {
+                    session_id: session.to_owned(),
+                    content: format!("prompt of {session}"),
+                    project: Some(project.to_owned()),
+                })
+                .unwrap();
+        }
+
+        for scope in [Some("alpha"), None] {
+            let block = assemble(&store, scope, None, 30, usize::MAX).unwrap();
+            let sessions = store.recent_sessions(scope, Some(RECENT_SESSIONS)).unwrap();
+            let lines = |heading: &str| -> Vec<String> {
+                block
+                    .split("\n\n")
+                    .find(|section| section.starts_with(heading))
+                    .map(|section| section.lines().skip(1).map(str::to_owned).collect())
+                    .unwrap_or_default()
+            };
+
+            let listed = lines("### Recent Sessions");
+            assert_eq!(listed.len(), sessions.len(), "{block}");
+            for (line, session) in listed.iter().zip(&sessions) {
+                let minute = crate::memory::normalize::to_the_minute(&session.last_activity);
+                assert!(line.contains(&format!("({minute})")), "{line}");
+                assert!(!line.contains("observations]"), "{line}");
+                // Its own project is the block's heading, not a thing to say
+                // forty times; any other project is the only way to tell the
+                // lines apart.
+                assert_eq!(
+                    line.contains(&format!("**{}**", session.project)),
+                    scope.is_none(),
+                    "{line}"
+                );
+            }
+
+            let prompts = store
+                .recent_distinct_prompts(scope, Some(RECENT_PROMPTS))
+                .unwrap();
+            let listed = lines("### Recent User Prompts");
+            assert_eq!(listed.len(), prompts.len(), "{block}");
+            for (line, prompt) in listed.iter().zip(&prompts) {
+                let minute = crate::memory::normalize::to_the_minute(&prompt.created_at);
+                assert_eq!(line, &format!("- {minute}: {}", prompt.content));
+            }
+
+            let mut expected: Vec<i64> = store
+                .pinned_observations(scope, None, 30)
+                .unwrap()
+                .0
+                .iter()
+                .map(|observation| observation.id)
+                .collect();
+            expected.extend(
+                store
+                    .recent_memories(scope, None, 30)
+                    .unwrap()
+                    .iter()
+                    .map(|observation| observation.id),
+            );
+            let shown: Vec<i64> = block
+                .lines()
+                .filter_map(|line| line.strip_prefix("- #"))
+                .filter_map(|rest| rest.split(' ').next()?.parse().ok())
+                .collect();
+            assert_eq!(shown, expected, "{block}");
+        }
+    }
+
+    /// A smaller default names the same memories, fewer of them.
+    ///
+    /// Thirty is the first thirty of what fifty was, in the same order, and the
+    /// pinned ones lead in both. Compared by id against the store's own
+    /// selection at the larger count, so a change to the order or to what is
+    /// skipped shows up here and not only in the count.
+    #[test]
+    fn the_default_size_names_the_first_of_what_a_larger_one_named() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut store =
+            crate::store::Store::open(crate::store::StoreConfig::new(temp.path().join("c.db")))
+                .unwrap();
+        store.create_session("s1", "leteo", "C:/repo").unwrap();
+        let mut ids = Vec::new();
+        for n in 0..70 {
+            ids.push(
+                store
+                    .add_observation(crate::memory::model::AddObservation {
+                        session_id: "s1".to_owned(),
+                        kind: "decision".to_owned(),
+                        title: format!("Memory {n}"),
+                        content: format!("body {n}"),
+                        tool_name: None,
+                        project: Some("leteo".to_owned()),
+                        scope: "project".to_owned(),
+                        topic_key: None,
+                        prompt_sync_id: None,
+                    })
+                    .unwrap()
+                    .observation
+                    .id,
+            );
+        }
+        store.pin_observation(ids[3], None).unwrap();
+
+        let named = |memories: usize| -> Vec<i64> {
+            assemble(&store, Some("leteo"), None, memories, usize::MAX)
+                .unwrap()
+                .lines()
+                .filter_map(|line| line.strip_prefix("- #"))
+                .filter_map(|rest| rest.split(' ').next()?.parse().ok())
+                .collect()
+        };
+        let default = crate::settings::ContextSize::default().memories();
+        let larger = named(50);
+        let smaller = named(default);
+
+        assert_eq!(smaller.len(), default + 1, "thirty and the pin on top");
+        assert_eq!(smaller[0], ids[3], "the pin leads");
+        assert_eq!(smaller[..], larger[..smaller.len()]);
     }
 
     /// The two line budgets are two decisions, not one number twice.
@@ -848,49 +999,52 @@ mod tests {
     }
 
     #[test]
-    fn only_the_newest_memories_arrive_with_their_content() {
-        // The rest are titles. Handing over fifty memories in full would spend
-        // most of a session's context reciting things nobody asked about, and
-        // an agent that wants one of them can fetch it.
-        let observations: Vec<Observation> = (1..=50)
+    fn no_memory_arrives_with_its_content_and_every_one_can_be_asked_for() {
+        // The block is an index. Handing over memories in full would spend most
+        // of a session's context reciting things nobody asked about, and an
+        // agent that wants one of them can fetch it by the number on its line.
+        let mut observations: Vec<Observation> = (1..=50)
             .map(|n| observation(n, &format!("Memory {n:02}")))
             .collect();
+        for observation in &mut observations {
+            observation.content = format!("BODY-OF-{}", observation.id).repeat(40);
+        }
+        let mut pinned = observation(51, "Pinned memory");
+        pinned.pinned = true;
+        pinned.content = "BODY-OF-51".repeat(40);
         let context = format_context(
             &[],
             &[],
-            &[],
+            std::slice::from_ref(&pinned),
             0,
             &observations,
             &BTreeMap::new(),
-            usize::MAX,
+            Frame {
+                project: None,
+                budget_bytes: usize::MAX,
+            },
         );
 
-        assert_eq!(
-            context.matches("[decision] **").count(),
-            DETAILED,
-            "only the newest few carry content"
-        );
-        // Both shapes carry the number. The ones with content are the ones
-        // somebody is most likely to want more of, and they were the only ones
-        // that could not be asked for.
         assert!(
-            context.contains("- #1 [decision] **Memory 01**:"),
+            !context.contains("BODY-OF"),
+            "a memory's content reached the opening block: {context}"
+        );
+        assert!(!context.contains("**"), "{context}");
+        assert!(
+            context.contains("- #51 [decision] Pinned memory"),
             "{context}"
         );
+        assert!(context.contains("- #1 [decision] Memory 01"), "{context}");
         assert!(context.contains("- #50 [decision] Memory 50"), "{context}");
         assert!(
             context.contains("mem_get_observation"),
             "the index has to say how to read one of them: {context}"
         );
-
-        // And the whole thing stays inside a budget. Fifty memories as an index
-        // has to cost less than twenty did as a recital — that trade is the
-        // entire point, and a later change that quietly undoes it would give
-        // back the tokens without giving back the reach.
-        let recital = 20 * CONTEXT_PREVIEW_CHARS;
+        // Fifty titles and a pin cost less than the twenty previews of three
+        // hundred characters that used to be the head of this block.
         assert!(
-            context.len() < recital,
-            "fifty indexed memories cost {} characters; twenty recited cost {recital}",
+            context.len() < 20 * 300,
+            "fifty-one titles cost {} characters",
             context.len()
         );
     }
@@ -971,11 +1125,11 @@ mod tests {
 
     #[test]
     fn every_memory_the_context_names_can_be_asked_for_by_number() {
-        // The entries shown with their content are cut at three hundred
-        // characters, and they were the only ones without an id — so the ones
-        // a reader is most likely to want more of were the ones it could not
-        // ask for. An A/B run caught it: the answer sat at character 337 of a
-        // 2177-character memory and the model answered without it.
+        // The entries that carried a preview were once the only ones without an
+        // id - so the ones a reader was most likely to want more of were the
+        // ones it could not ask for. An A/B run caught it: the answer sat at
+        // character 337 of a 2177-character memory and the model answered
+        // without it. Every entry is a title now, and each still has its number.
         let temp = tempfile::tempdir().unwrap();
         let mut store =
             crate::store::Store::open(crate::store::StoreConfig::new(temp.path().join("c.db")))
@@ -1011,40 +1165,55 @@ mod tests {
             );
         }
         assert!(
-            context.contains("..."),
-            "a body was cut, and the cut has to be visible"
+            !context.contains("xxxx"),
+            "no body reaches the block, so nothing is cut in it: {context}"
         );
     }
 
-    /// The skill promises agents this preview length in words, and the code
-    /// cuts at it.
+    /// The skill promises agents a block of titles, and the code renders one.
     ///
     /// The promise is load-bearing rather than decorative: the skill tells
-    /// agents to assume the answer lies past the cut and to fetch the whole
-    /// memory by `#id` instead of answering from what they can already see.
-    /// Changing the constant without the sentence leaves that advice calibrated
-    /// to a number the code stopped using, and nothing else would notice.
+    /// agents to assume the answer is not in what they were handed and to
+    /// fetch the whole memory by `#id`. It used to say the newest few open with
+    /// their first three hundred characters; the block carries no content now,
+    /// and a skill still describing previews would have agents look for text
+    /// that is not there and trust the little of it that is.
     #[test]
-    fn the_skill_promises_the_preview_length_the_code_cuts_at() {
-        let spelled = match CONTEXT_PREVIEW_CHARS {
-            200 => "two hundred",
-            300 => "three hundred",
-            400 => "four hundred",
-            500 => "five hundred",
-            other => panic!(
-                "the context preview is now {other} characters; spell it out here and in both SKILL.md files"
-            ),
-        };
+    fn the_skill_promises_titles_and_the_block_carries_nothing_else() {
+        let mut memory = observation(1, "A title");
+        memory.content = "a body that must not appear".to_owned();
+        let context = format_context(
+            &[],
+            &[],
+            &[],
+            0,
+            std::slice::from_ref(&memory),
+            &BTreeMap::new(),
+            Frame {
+                project: None,
+                budget_bytes: usize::MAX,
+            },
+        );
+        assert!(
+            !context.contains("a body that must not appear"),
+            "{context}"
+        );
+
         for skill in [
             "plugin/claude-code/skills/memory/SKILL.md",
             "plugin/codex/skills/memory/SKILL.md",
+            "plugin/zcode/skills/memory/SKILL.md",
         ] {
             let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(skill);
             let text = std::fs::read_to_string(&path)
                 .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
             assert!(
-                text.contains(spelled),
-                "{skill} has to tell agents the context opens with the first {spelled} characters"
+                text.contains("is a title alone"),
+                "{skill} has to tell agents every entry of the opening block is a title alone"
+            );
+            assert!(
+                !text.contains("three hundred"),
+                "{skill} still promises a preview the block no longer carries"
             );
         }
     }
@@ -1090,20 +1259,15 @@ mod tests {
         }
     }
     #[test]
-    fn a_preview_is_one_line_however_many_the_memory_has() {
+    fn a_body_cannot_put_structure_into_the_block() {
         // The context is a list an agent reads: one line per memory, each
-        // starting with its id. A preview is three hundred characters cut out
-        // of a body written for a person — blank lines, bullets, headings —
-        // and dropped in whole, so one memory became a list item, a blank line
-        // that ends the list, and a paragraph of body text hanging at the top
-        // level directly above the *next* memory's line.
-        //
-        // Read off a real store: five memories rendered as eighteen physical
-        // lines. The harm is not the shape but the attribution — an agent has
-        // no way to tell that stray paragraph belongs to the entry above it
-        // rather than the one below, and a body carrying `- ` or `###` in its
-        // first three hundred characters injects an entry or a section heading
-        // that no memory owns.
+        // starting with its id. A body is written for a person - blank lines,
+        // bullets, headings - and when a cut of it went into the list, one
+        // memory became a list item, a blank line that ends the list, and a
+        // paragraph hanging at the top level above the *next* memory's line.
+        // Read off a real store, five memories rendered as eighteen physical
+        // lines. No body reaches the block now, so what is asserted is that
+        // none of its structure does either.
         let temp = tempfile::tempdir().unwrap();
         let mut store =
             crate::store::Store::open(crate::store::StoreConfig::new(temp.path().join("p.db")))
@@ -1136,9 +1300,9 @@ And the tests could not see it, because a small store scores near zero."
             .lines()
             .find(|line| line.starts_with("- #1 "))
             .expect("the memory is listed");
-        assert!(
-            entry.contains("thrown away for scoring too well"),
-            "the preview is cut across lines: {entry}"
+        assert_eq!(
+            entry, "- #1 [bugfix] The floor was compared the wrong way round",
+            "the line is the id, the kind and the title"
         );
         // And nothing the body carried is now standing on its own. A heading
         // from inside a memory ends the section for whoever reads it — this
@@ -1156,25 +1320,23 @@ And the tests could not see it, because a small store scores near zero."
         }
     }
     #[test]
-    fn the_two_sections_that_carry_a_preview_cut_their_title_like_every_other_line() {
+    fn the_pinned_section_and_the_index_cut_their_title_like_every_other_line() {
         // The block promises that every line of the block is cut at a bound
-        // somebody measured, and names the title bound first. Of the four places
-        // in this file that print a title, two kept that promise — the `Also
+        // somebody measured, and names the title bound first. Of the places in
+        // this file that print a title, two kept that promise — the `Also
         // remembered` index and the title of the second memory named beside a
-        // caveat — and the two that also print a *content* preview did not. They
-        // passed the title through `one_line`, which folds whitespace and cuts
-        // nothing, so the only ceiling left on it was `max_observation_length`:
-        // fifty thousand bytes, the same cap a memory's body gets.
+        // caveat — and the `Pinned` section and the section of newest memories
+        // did not. They passed the title through `one_line`, which folds
+        // whitespace and cuts nothing, so the only ceiling left on it was
+        // `max_observation_length`: fifty thousand bytes, the same cap a
+        // memory's body gets. The newest-memories section is gone, its
+        // previews with it; the pinned line is the one left to drive.
         //
-        // The census is worth stating exactly, because an earlier version of
-        // this comment counted `one_line_title` as one of the sites that kept
-        // the promise and it prints nothing: no production path calls it, only
-        // `a_caveat_in_the_hint_prints_one_short_line`, which is a guard for
-        // the hint that never runs the hint. Two blind reviewers caught that
-        // independently. Three genuine sites are still unbounded and are not in
-        // this file — `src/hooks/context.rs:105`, `:112` and `:310` — so a
-        // reader auditing "every place a title is printed" should start there
-        // rather than believe this block is the whole surface.
+        // The three sites outside this file - the per-prompt hint, the title
+        // of the other memory in a hint caveat, and the verdict handover, all
+        // in `src/hooks/context.rs` - were unbounded the same way and now go
+        // through `one_line_title`, with a test each in `src/hooks/tests.rs`.
+        // `one_line_title` is the one rule for how long a printed title may be.
         //
         // Nothing had fallen in when this was fixed. Measured over a copy of a
         // real store, the two sections rendered 89 title lines across 27
@@ -1213,24 +1375,21 @@ And the tests could not see it, because a small store scores near zero."
                 .unwrap();
         }
         // One of the two pinned, so the same assembly renders a `### Pinned`
-        // line and a `### Recent Observations` line and both are checked.
+        // line and an `### Also remembered` line and both are checked.
         store.pin_observation(1, None).unwrap();
 
         let context = assemble(&store, Some("leteo"), None, 10, usize::MAX).unwrap();
-        let previewed: Vec<&str> = context
+        let titled: Vec<&str> = context
             .lines()
-            .filter(|line| line.starts_with("- #") && line.contains("**"))
+            .filter(|line| line.starts_with("- #"))
             .collect();
         assert_eq!(
-            previewed.len(),
+            titled.len(),
             2,
-            "expected one pinned line and one detailed line: {context}"
+            "expected one pinned line and one remembered line: {context}"
         );
-        for line in previewed {
-            let title = line
-                .split("**")
-                .nth(1)
-                .expect("the title is the part between the asterisks");
+        for line in titled {
+            let title = line.split_once("] ").expect("the title follows the kind").1;
             assert!(
                 title.chars().count() <= TITLE_CHARS,
                 "a title reached the block uncut at {} characters: {line}",
