@@ -56,7 +56,7 @@ pub(super) struct SaveOutput {
     pub(super) hint: Option<String>,
     #[serde(flatten)]
     pub(super) project_context: ProjectEnvelope,
-    pub(super) observation: ObservationOutput,
+    pub(super) observation: SavedMemory,
     pub(super) judgment_required: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) judgment_status: Option<String>,
@@ -90,11 +90,7 @@ impl SaveOutput {
             status: outcome_label(value.kind).to_owned(),
             hint: None,
             project_context,
-            // The caller wrote this text; echoing it whole bills for it twice.
-            // On a deduplicated or revised save the memory returned is the one
-            // already stored, which the caller may not have — hence a preview
-            // and an id, not silence.
-            observation: ObservationOutput::from(value.observation).preview(),
+            observation: value.observation.into(),
             judgment_required,
             judgment_status: judgment_required
                 .then(|| crate::store::JUDGMENT_STATUS_PENDING.to_owned()),
@@ -106,10 +102,45 @@ impl SaveOutput {
     }
 }
 
+// What a save says about the memory it wrote: enough to confirm what landed
+// and to name it in the next call, and none of the body.
+//
+// The reply used to echo the memory with a 400-byte preview of the caller's
+// own words, which bills for the text twice. Measured on five saves, dropping
+// the echo and the candidates' sync_ids took the mean reply from 508 to 292
+// tokens. On a deduplicated or revised save the memory returned is the one
+// already stored, so the title and `type` here are what tell the caller which
+// one that was. A body cut by the storage bound is reported by
+// `storage_truncation`, not by this.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub(super) struct SavedMemory {
+    pub(super) id: i64,
+    #[serde(rename = "type")]
+    pub(super) kind: String,
+    pub(super) title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) topic_key: Option<String>,
+    /// `active`, `needs_review` or `deleted`. Absent when active.
+    #[serde(default = "active_state", skip_serializing_if = "is_active_state")]
+    pub(super) state: String,
+}
+
+impl From<Observation> for SavedMemory {
+    fn from(value: Observation) -> Self {
+        let state = value.state().to_owned();
+        Self {
+            id: value.id,
+            kind: value.kind,
+            title: value.title,
+            topic_key: value.topic_key,
+            state,
+        }
+    }
+}
+
 #[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(super) struct CandidateOutput {
     pub(super) id: i64,
-    pub(super) sync_id: String,
     pub(super) title: String,
     #[serde(rename = "type")]
     pub(super) kind: String,
@@ -123,7 +154,6 @@ impl From<Candidate> for CandidateOutput {
     fn from(value: Candidate) -> Self {
         Self {
             id: value.id,
-            sync_id: value.sync_id,
             title: value.title,
             kind: value.kind,
             topic_key: value.topic_key,

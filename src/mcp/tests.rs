@@ -380,6 +380,17 @@ fn applies_tool_defaults() {
     assert_eq!(manual_session_id("leteo"), "manual-save-leteo");
 }
 
+/// The prompt a saved memory is linked to, read from the store: the save reply
+/// no longer carries the record, only its identity.
+fn stored_prompt(server: &LeteoMcpServer, id: i64) -> Option<String> {
+    server
+        .lock_store()
+        .unwrap()
+        .get_observation(id)
+        .unwrap()
+        .prompt_sync_id
+}
+
 fn test_server(options: McpOptions) -> (tempfile::TempDir, LeteoMcpServer) {
     let temp = tempfile::tempdir().unwrap();
     let store = Store::open(crate::store::StoreConfig::new(temp.path().join("mcp.db"))).unwrap();
@@ -510,7 +521,6 @@ fn every_listing_previews_not_just_search_and_context() {
             ))
             .unwrap()
             .0;
-        assert!(saved.observation.content_truncated);
         ids.push(saved.observation.id);
     }
 
@@ -1421,7 +1431,7 @@ fn a_save_records_the_prompt_this_process_is_answering() {
             .unwrap(),
         ))
         .unwrap();
-    assert_eq!(orphan.0.observation.prompt_sync_id, None);
+    assert_eq!(stored_prompt(&server, orphan.0.observation.id), None);
 
     let prompt = server
         .mem_save_prompt(Parameters(
@@ -1445,7 +1455,7 @@ fn a_save_records_the_prompt_this_process_is_answering() {
         ))
         .unwrap();
     assert_eq!(
-        linked.0.observation.prompt_sync_id.as_deref(),
+        stored_prompt(&server, linked.0.observation.id).as_deref(),
         Some(prompt_sync_id.as_str()),
         "a save should record the request it answered"
     );
@@ -1461,7 +1471,7 @@ fn a_save_records_the_prompt_this_process_is_answering() {
             .unwrap(),
         ))
         .unwrap();
-    assert_eq!(automated.0.observation.prompt_sync_id, None);
+    assert_eq!(stored_prompt(&server, automated.0.observation.id), None);
 
     {
         let mut store = server.lock_store().unwrap();
@@ -1480,7 +1490,8 @@ fn a_save_records_the_prompt_this_process_is_answering() {
         ))
         .unwrap();
     assert_eq!(
-        other.0.observation.prompt_sync_id, None,
+        stored_prompt(&server, other.0.observation.id),
+        None,
         "a prompt from one session must not attach to another"
     );
 }
@@ -2206,7 +2217,8 @@ fn a_memory_saved_without_a_session_still_records_the_question() {
         .unwrap()
         .0;
     assert_eq!(
-        stale.observation.prompt_sync_id, None,
+        stored_prompt(&server, stale.observation.id),
+        None,
         "a memory was hung on a question from another day"
     );
 }
@@ -2670,9 +2682,9 @@ fn the_server_instructions_fit_the_limit_a_client_will_deliver() {
     );
 }
 
-#[test]
-fn saving_the_same_memory_again_asks_no_new_questions() {
-    let (_temp, server) = test_server(McpOptions::default());
+/// Enough neighbours that a new memory about the passive capture hash is asked
+/// about its likeliest ones, as a real store would.
+fn seed_candidate_fillers(server: &LeteoMcpServer) {
     {
         let mut store = server.lock_store().unwrap();
         store
@@ -2719,6 +2731,12 @@ fn saving_the_same_memory_again_asks_no_new_questions() {
                 .unwrap();
         }
     }
+}
+
+#[test]
+fn saving_the_same_memory_again_asks_no_new_questions() {
+    let (_temp, server) = test_server(McpOptions::default());
+    seed_candidate_fillers(&server);
 
     let save = |title: &str| {
         server
@@ -2751,7 +2769,7 @@ fn saving_the_same_memory_again_asks_no_new_questions() {
         .connection()
         .query_row(
             "SELECT COUNT(*) FROM memory_relations WHERE source_id = ?1",
-            [&first.observation.sync_id],
+            [&store.get_observation(first.observation.id).unwrap().sync_id],
             |row| row.get(0),
         )
         .unwrap();
@@ -5671,6 +5689,7 @@ fn a_memory_is_attributed_to_a_question_or_to_none() {
             .unwrap()
             .0
             .observation
+            .id
     };
 
     let asked_in_a = ask("a", "por que la busqueda ensancha");
@@ -5679,7 +5698,7 @@ fn a_memory_is_attributed_to_a_question_or_to_none() {
         "content": "el cuerpo", "type": "discovery",
     }));
     assert_eq!(
-        answered.prompt_sync_id.as_deref(),
+        stored_prompt(&server, answered).as_deref(),
         Some(asked_in_a.as_str()),
         "a memory saved answering a question says which"
     );
@@ -5688,7 +5707,8 @@ fn a_memory_is_attributed_to_a_question_or_to_none() {
         "session_id": "b", "title": "Otra cosa", "content": "otro cuerpo", "type": "discovery",
     }));
     assert_eq!(
-        elsewhere.prompt_sync_id, None,
+        stored_prompt(&server, elsewhere),
+        None,
         "a memory in another conversation must not borrow its question"
     );
 
@@ -5696,14 +5716,14 @@ fn a_memory_is_attributed_to_a_question_or_to_none() {
         "session_id": "a", "title": "Automatica", "content": "sin pregunta detras",
         "type": "discovery", "capture_prompt": false,
     }));
-    assert_eq!(unattributed.prompt_sync_id, None);
+    assert_eq!(stored_prompt(&server, unattributed), None);
 
     let asked_loose = ask("a", "una pregunta reciente del proyecto");
     let bucketed = save(json!({
         "title": "Sin sesion", "content": "guardada en el cubo del proyecto", "type": "discovery",
     }));
     assert_eq!(
-        bucketed.prompt_sync_id.as_deref(),
+        stored_prompt(&server, bucketed).as_deref(),
         Some(asked_loose.as_str()),
         "a session-less save may answer the project's last question"
     );
@@ -5722,7 +5742,8 @@ fn a_memory_is_attributed_to_a_question_or_to_none() {
         "title": "Sin sesion y tarde", "content": "otro cuerpo", "type": "discovery",
     }));
     assert_eq!(
-        stale.prompt_sync_id, None,
+        stored_prompt(&server, stale),
+        None,
         "a question asked two days ago is not what this memory answers"
     );
 }
@@ -6956,20 +6977,30 @@ fn a_scope_leteo_does_not_know_is_refiled_and_the_reply_says_so() {
         saved
     };
 
+    let stored_scope = |id: i64| {
+        server
+            .lock_store()
+            .unwrap()
+            .get_observation(id)
+            .unwrap()
+            .scope
+    };
+
     let both_known = save(&server, "Both known", "decision", "personal");
-    assert_eq!(both_known.observation.scope, "personal");
+    assert_eq!(stored_scope(both_known.observation.id), "personal");
     assert!(both_known.hint.is_none(), "{:?}", both_known.hint);
 
     // An unknown type folds onto a documented one and is filed quietly; the
     // scope is the value that is replaced, so it is the one that is said.
     let odd_kind = save(&server, "Odd kind", "implementation", "personal");
     assert_eq!(odd_kind.observation.kind, "discovery");
-    assert_eq!(odd_kind.observation.scope, "personal");
+    assert_eq!(stored_scope(odd_kind.observation.id), "personal");
     assert!(odd_kind.hint.is_none(), "{:?}", odd_kind.hint);
 
     let odd_scope = save(&server, "Odd scope", "decision", "personnal");
     assert_eq!(
-        odd_scope.observation.scope, "project",
+        stored_scope(odd_scope.observation.id),
+        "project",
         "the value asked for is gone, which is why this has to be said"
     );
     let hint = odd_scope.hint.unwrap_or_default();
@@ -7688,4 +7719,117 @@ fn getting_one_memory_still_carries_the_whole_record() {
     for kept in ["sync_id", "session_id", "scope", "project"] {
         assert!(observation.get(kept).is_some(), "{kept} is gone: {payload}");
     }
+}
+
+#[test]
+fn a_save_reply_names_the_memory_without_repeating_it() {
+    let (_temp, server) = test_server(McpOptions::default());
+    seed_candidate_fillers(&server);
+    let save = |value: serde_json::Value| {
+        let Json(saved) = server
+            .mem_save(Parameters(serde_json::from_value(value).unwrap()))
+            .unwrap();
+        serde_json::to_value(saved).unwrap()
+    };
+
+    let first = save(json!({
+        "title": "The passive capture hash was taken before the redaction ran",
+        "content": "The duplicate check therefore never matched what the store kept.",
+        "topic_key": "capture/hash",
+        "type": "discovery",
+        "project": "leteo",
+    }));
+    let observation = first["observation"].as_object().unwrap();
+    assert!(observation["id"].is_i64());
+    assert_eq!(observation["type"], "discovery");
+    assert_eq!(
+        observation["title"],
+        "The passive capture hash was taken before the redaction ran"
+    );
+    assert_eq!(observation["topic_key"], "capture/hash");
+    let mut keys: Vec<&str> = observation.keys().map(String::as_str).collect();
+    keys.sort_unstable();
+    assert_eq!(keys, ["id", "title", "topic_key", "type"], "{first}");
+
+    let second = save(json!({
+        "title": "The passive capture hash was taken before redaction",
+        "content": "The duplicate check therefore never matched what the store kept.",
+        "project": "leteo",
+    }));
+    let candidates = second["candidates"].as_array().unwrap();
+    assert!(!candidates.is_empty(), "{second}");
+    for candidate in candidates {
+        assert!(candidate.get("sync_id").is_none(), "{candidate}");
+        assert!(candidate["judgment_id"].is_string());
+    }
+}
+
+#[test]
+fn a_candidate_from_a_trimmed_save_reply_can_still_be_judged() {
+    let (_temp, server) = test_server(McpOptions::default());
+    seed_candidate_fillers(&server);
+    let save = |title: &str| {
+        let Json(saved) = server
+            .mem_save(Parameters(
+                serde_json::from_value(json!({
+                    "title": title,
+                    "content": "The duplicate check therefore never matched what the store kept.",
+                    "project": "leteo",
+                }))
+                .unwrap(),
+            ))
+            .unwrap();
+        saved
+    };
+    save("The passive capture hash was taken before the redaction ran");
+    let second = save("The passive capture hash was taken before redaction");
+    assert!(second.judgment_required);
+    let judgment_id = second
+        .judgment_id
+        .clone()
+        .expect("a save with candidates names the first to judge");
+    assert_eq!(
+        Some(&judgment_id),
+        second.candidates.first().map(|c| &c.judgment_id)
+    );
+
+    let Json(judged) = server
+        .mem_judge(Parameters(
+            serde_json::from_value(json!({
+                "judgment_id": judgment_id, "relation": "related",
+            }))
+            .unwrap(),
+        ))
+        .expect("the id from the reply is the one the store knows");
+    assert_eq!(judged.relation.judgment_status, "judged");
+}
+
+#[test]
+fn a_save_reply_says_when_the_memory_it_names_is_not_active() {
+    let (_temp, server) = test_server(McpOptions::default());
+    let Json(saved) = server
+        .mem_save(Parameters(
+            serde_json::from_value(json!({
+                "title": "An ordinary memory",
+                "content": "nothing unusual about it",
+                "project": "leteo",
+            }))
+            .unwrap(),
+        ))
+        .unwrap();
+    assert_eq!(saved.observation.state, "active");
+    assert!(
+        serde_json::to_value(&saved).unwrap()["observation"]
+            .get("state")
+            .is_none(),
+        "absent when active"
+    );
+    let named = SavedMemory {
+        state: "needs_review".to_owned(),
+        ..saved.observation
+    };
+    assert_eq!(
+        serde_json::to_value(named).unwrap()["state"],
+        "needs_review"
+    );
 }

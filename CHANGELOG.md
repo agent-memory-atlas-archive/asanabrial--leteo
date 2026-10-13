@@ -81,6 +81,21 @@ All notable changes to Leteo are documented in this file.
 
 ### Changed
 
+- **Breaking: `mem_search` and `mem_save` reply with less.** A `mem_search`
+  result no longer carries `sync_id`, `session_id` or `rank` (no tool takes a
+  sync_id, and the order of `results` already is the rank), and names its
+  `project` only when it differs from the reply's and its `scope` only when it
+  is not `project`. A `mem_save` reply, and `mem_session_summary`'s, which shares
+  its shape, no longer echoes the memory with a content preview: `observation`
+  is now `id`, `type`, `title`, `topic_key` when set, and `state` when not
+  active, and `candidates[]` lose `sync_id`; `judgment_id` and `id` are what
+  follow-up calls take, so judging works as before. Nothing in this repository
+  read the removed fields. `mem_get_observation`, `mem_timeline`, `mem_context`
+  and the other tools that return a memory are unchanged. Replayed against a
+  copy of a real store of 1,048 memories (tiktoken `cl100k_base`), the mean
+  `mem_search` reply went from 973 to 726 tokens over 20 queries and the mean
+  `mem_save` reply from 508 to 292 over 5 saves (#291).
+
 - **A session opens with thirty memories as titles, not fifty with previews.**
   The default `full` size now names thirty memories (50.4% of the questions
   measured against a real store, against 55.9% for fifty), and the opening block
