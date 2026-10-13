@@ -1021,6 +1021,7 @@ impl SearchOutput {
     ) -> Self {
         let widened = value.iter().any(|result| result.partial);
         let by_meaning = value.iter().any(|result| result.semantic);
+        let envelope_project = project_context.project.clone();
         let results: Vec<SearchResultOutput> = value
             .into_iter()
             .map(|result| {
@@ -1028,10 +1029,14 @@ impl SearchOutput {
                     .get(&result.observation.sync_id)
                     .cloned()
                     .unwrap_or_default();
-                let mut out: SearchResultOutput = result.into();
-                out.observation = out.observation.preview();
-                out.observation.caveats = said.into_iter().map(Into::into).collect();
-                out
+                let (partial, semantic) = (result.partial, result.semantic);
+                let mut observation = ObservationOutput::from(result.observation).preview();
+                observation.caveats = said.into_iter().map(Into::into).collect();
+                SearchResultOutput {
+                    observation: SearchHit::new(observation, &envelope_project),
+                    partial,
+                    semantic,
+                }
             })
             .collect();
         // At most one line of advice, and the one that changes what to do next.
@@ -1074,8 +1079,7 @@ impl SearchOutput {
 #[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(super) struct SearchResultOutput {
     #[serde(flatten)]
-    pub(super) observation: ObservationOutput,
-    pub(super) rank: f64,
+    pub(super) observation: SearchHit,
     /// Present only on a memory that matched some of the words rather than all
     /// of them, so a widened answer can be read row by row.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -1086,13 +1090,83 @@ pub(super) struct SearchResultOutput {
     pub(super) semantic: bool,
 }
 
-impl From<SearchResult> for SearchResultOutput {
-    fn from(value: SearchResult) -> Self {
+// A memory as a search result shows it: `ObservationOutput` without what an
+// agent cannot act on from a hit.
+//
+// A separate type rather than optional fields on `ObservationOutput`, because
+// that one is the shape of eight other tools and a `mem_get_observation` is
+// where a caller goes for the whole record. `sync_id` is taken by no tool's
+// input, `session_id` is mostly `manual-save-<project>`, and the order of
+// `results` already carries the rank, whose raw BM25 or fused score means
+// nothing to a reader. `project` and `scope` are sent only when they say
+// something the reply does not already: the envelope names the project, and
+// `project` is the default scope.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub(super) struct SearchHit {
+    pub(super) id: i64,
+    #[serde(rename = "type")]
+    pub(super) kind: String,
+    pub(super) title: String,
+    pub(super) content: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) tool_name: Option<String>,
+    /// Present only when the memory is from a project other than the reply's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) project: Option<String>,
+    /// Present only when the scope is not `project`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) scope: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) topic_key: Option<String>,
+    #[serde(default = "once", skip_serializing_if = "is_once")]
+    pub(super) revision_count: i64,
+    #[serde(default = "once", skip_serializing_if = "is_once")]
+    pub(super) duplicate_count: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) last_seen_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) review_after: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) prompt_sync_id: Option<String>,
+    /// `active`, `needs_review` or `deleted`. Absent when active.
+    #[serde(default = "active_state", skip_serializing_if = "is_active_state")]
+    pub(super) state: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(super) pinned: bool,
+    pub(super) created_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) updated_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) deleted_at: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(super) content_truncated: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) caveats: Vec<CaveatOutput>,
+}
+
+impl SearchHit {
+    fn new(value: ObservationOutput, envelope_project: &str) -> Self {
         Self {
-            observation: value.observation.into(),
-            rank: value.rank,
-            partial: value.partial,
-            semantic: value.semantic,
+            id: value.id,
+            kind: value.kind,
+            title: value.title,
+            content: value.content,
+            tool_name: value.tool_name,
+            project: value.project.filter(|project| project != envelope_project),
+            scope: Some(value.scope).filter(|scope| scope != "project"),
+            topic_key: value.topic_key,
+            revision_count: value.revision_count,
+            duplicate_count: value.duplicate_count,
+            last_seen_at: value.last_seen_at,
+            review_after: value.review_after,
+            prompt_sync_id: value.prompt_sync_id,
+            state: value.state,
+            pinned: value.pinned,
+            created_at: value.created_at,
+            updated_at: value.updated_at,
+            deleted_at: value.deleted_at,
+            content_truncated: value.content_truncated,
+            caveats: value.caveats,
         }
     }
 }
@@ -1102,7 +1176,7 @@ pub(super) struct ObservationResultOutput {
     /// The memory, carrying whatever the graph says against it.
     ///
     /// The caveats used to sit beside this rather than on it, and that is one
-    /// place too many. `mem_search` flattens [`ObservationOutput`], so a
+    /// place too many. `mem_search` flattens `ObservationOutput`, so a
     /// superseded memory comes back with `caveats` among its own fields;
     /// `mem_context` puts them on each listed memory the same way. Here they
     /// were a sibling of `observation`, so an agent that saw the warning in a

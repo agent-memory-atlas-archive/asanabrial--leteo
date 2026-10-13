@@ -3295,17 +3295,27 @@ fn a_search_that_names_no_project_does_not_answer_from_the_others() {
     let narrowed = search(json!({ "query": "retry budget" }));
     assert_eq!(narrowed.count, 1, "{:?}", narrowed.results);
     assert_eq!(
-        narrowed.results[0].observation.project.as_deref(),
-        Some("leteo")
+        narrowed.results[0].observation.project, None,
+        "the envelope already names the project"
     );
+    assert_eq!(narrowed.project_context.project, "leteo");
 
     let widened = search(json!({ "query": "retry budget", "all_projects": true }));
     assert_eq!(widened.count, 2, "{:?}", widened.results);
     let asked_for = search(json!({ "query": "retry budget", "project": "another-thing" }));
     assert_eq!(asked_for.count, 1);
+    assert_eq!(asked_for.project_context.project, "another-thing");
+    assert_eq!(asked_for.results[0].observation.project, None);
+    let mut named = widened
+        .results
+        .iter()
+        .filter_map(|hit| hit.observation.project.as_deref())
+        .collect::<Vec<_>>();
+    named.sort_unstable();
     assert_eq!(
-        asked_for.results[0].observation.project.as_deref(),
-        Some("another-thing")
+        named,
+        ["another-thing", "leteo"],
+        "an answer across projects has no project of its own, so each result names its own"
     );
 }
 
@@ -7559,4 +7569,123 @@ fn mem_context_says_when_a_byte_limit_cannot_be_met() {
         answer.memories_omitted > 0,
         "everything droppable was dropped trying: {answer:?}"
     );
+}
+
+fn seeded_for_trimmed_replies() -> (tempfile::TempDir, LeteoMcpServer) {
+    let (temp, server) = test_server(McpOptions::default());
+    {
+        let mut store = server.lock_store().unwrap();
+        for project in ["leteo", "another-thing"] {
+            store
+                .create_session(project, project, &format!("C:/{project}"))
+                .unwrap();
+        }
+        for (project, scope, title) in [
+            ("leteo", "project", "The retry budget is three"),
+            ("leteo", "personal", "My retry budget habit"),
+            ("another-thing", "project", "The retry budget elsewhere"),
+        ] {
+            store
+                .add_observation(AddObservation {
+                    session_id: project.to_owned(),
+                    kind: "decision".to_owned(),
+                    title: title.to_owned(),
+                    content: "attempts before giving up".to_owned(),
+                    tool_name: None,
+                    project: Some(project.to_owned()),
+                    scope: scope.to_owned(),
+                    topic_key: None,
+                    prompt_sync_id: None,
+                })
+                .unwrap();
+        }
+    }
+    (temp, server)
+}
+
+fn search_payload(server: &LeteoMcpServer, value: serde_json::Value) -> serde_json::Value {
+    let Json(found) = server
+        .mem_search(Parameters(serde_json::from_value(value).unwrap()))
+        .unwrap();
+    serde_json::to_value(found).unwrap()
+}
+
+#[test]
+fn a_search_result_carries_no_internal_id_and_no_score() {
+    let (_temp, server) = seeded_for_trimmed_replies();
+    let payload = search_payload(&server, json!({ "query": "retry budget" }));
+    let results = payload["results"].as_array().unwrap();
+    assert!(!results.is_empty(), "{payload}");
+    for result in results {
+        for gone in ["sync_id", "session_id", "rank"] {
+            assert!(result.get(gone).is_none(), "{gone} is back: {result}");
+        }
+        assert!(
+            result["id"].is_i64(),
+            "the id is what every follow-up takes"
+        );
+    }
+}
+
+#[test]
+fn a_search_result_names_its_project_only_when_the_reply_does_not() {
+    let (_temp, server) = seeded_for_trimmed_replies();
+
+    let own = search_payload(&server, json!({ "query": "retry budget" }));
+    assert_eq!(own["project"], "leteo");
+    for result in own["results"].as_array().unwrap() {
+        assert!(
+            result.get("project").is_none(),
+            "the envelope already says leteo: {result}"
+        );
+    }
+
+    let everywhere = search_payload(
+        &server,
+        json!({ "query": "retry budget", "all_projects": true }),
+    );
+    let other = everywhere["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|result| result["title"] == "The retry budget elsewhere")
+        .expect("the other project's memory is found");
+    assert_eq!(other["project"], "another-thing");
+}
+
+#[test]
+fn a_search_result_names_its_scope_only_when_it_is_not_project() {
+    let (_temp, server) = seeded_for_trimmed_replies();
+    let payload = search_payload(&server, json!({ "query": "retry budget" }));
+    for result in payload["results"].as_array().unwrap() {
+        match result["title"].as_str().unwrap() {
+            "My retry budget habit" => assert_eq!(result["scope"], "personal", "{result}"),
+            _ => assert!(result.get("scope").is_none(), "{result}"),
+        }
+    }
+    assert!(
+        payload["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|result| result["title"] == "My retry budget habit"),
+        "the personal memory was not found: {payload}"
+    );
+}
+
+#[test]
+fn getting_one_memory_still_carries_the_whole_record() {
+    let (_temp, server) = seeded_for_trimmed_replies();
+    let found = search_payload(&server, json!({ "query": "retry budget" }));
+    let id = found["results"][0]["id"].as_i64().unwrap();
+    let Json(whole) = server
+        .mem_get_observation(Parameters(
+            serde_json::from_value(json!({ "id": id })).unwrap(),
+        ))
+        .unwrap();
+    let payload = serde_json::to_value(whole).unwrap();
+    let observation = &payload["observation"];
+    for kept in ["sync_id", "session_id", "scope", "project"] {
+        assert!(observation.get(kept).is_some(), "{kept} is gone: {payload}");
+    }
 }
