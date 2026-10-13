@@ -1642,6 +1642,9 @@ fn context_includes_recent_sessions_and_prompts() {
     assert_eq!(context.sessions[0].observation_count, 1);
     assert_eq!(context.prompts.len(), 1);
     assert_eq!(context.prompts[0].content, "What did we decide?");
+    // Minutes, as the markdown block prints them: `YYYY-MM-DD HH:MM`.
+    assert_eq!(context.sessions[0].last_activity.len(), 16);
+    assert_eq!(context.prompts[0].created_at.len(), 16);
 }
 
 #[test]

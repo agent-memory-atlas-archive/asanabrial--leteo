@@ -165,7 +165,10 @@ pub fn assemble_counted(
         pinned_omitted,
         &observations,
         &caveats,
-        budget_bytes,
+        Frame {
+            project,
+            budget_bytes,
+        },
     ))
 }
 
@@ -257,6 +260,19 @@ fn goal_of(summary: &str) -> String {
     truncate(goal, SESSION_LINE_CHARS)
 }
 
+/// What frames a block rather than fills it: where it is scoped, and how large
+/// it may be.
+///
+/// Together because they arrive together and `format_context` was at the
+/// argument count clippy stops at.
+#[derive(Clone, Copy)]
+pub struct Frame<'a> {
+    /// The project the block is scoped to. Lines of that project do not name
+    /// it; with none, every line does.
+    pub project: Option<&'a str>,
+    pub budget_bytes: usize,
+}
+
 /// Renders the opening context.
 ///
 /// `caveats` is what the relation graph says about the memories being listed,
@@ -269,7 +285,7 @@ pub fn format_context(
     pinned_omitted: usize,
     observations: &[Observation],
     caveats: &BTreeMap<String, Vec<Caveat>>,
-    budget_bytes: usize,
+    frame: Frame,
 ) -> String {
     format_context_counted(
         sessions,
@@ -278,7 +294,7 @@ pub fn format_context(
         pinned_omitted,
         observations,
         caveats,
-        budget_bytes,
+        frame,
     )
     .0
 }
@@ -296,8 +312,12 @@ pub fn format_context_counted(
     pinned_omitted: usize,
     observations: &[Observation],
     caveats: &BTreeMap<String, Vec<Caveat>>,
-    budget_bytes: usize,
+    frame: Frame,
 ) -> (String, usize) {
+    let Frame {
+        project,
+        budget_bytes,
+    } = frame;
     if sessions.is_empty() && prompts.is_empty() && pinned.is_empty() && observations.is_empty() {
         return (String::new(), 0);
     }
@@ -310,6 +330,8 @@ pub fn format_context_counted(
         detailed: (0..detailed).collect(),
         listed: (detailed..observations.len()).collect(),
     };
+    // The spelling the sessions carry, which `recent_sessions` narrowed by.
+    let own_project = project.map(crate::memory::normalize::project);
     let sections = Sections {
         sessions,
         prompts,
@@ -317,6 +339,7 @@ pub fn format_context_counted(
         pinned_omitted,
         observations,
         caveats,
+        own_project: own_project.as_deref(),
     };
     // Render, and when the block is over budget drop the least important thing
     // still in it and render again. Dropping one item at a time rather than
@@ -384,6 +407,8 @@ struct Sections<'a> {
     pinned_omitted: usize,
     observations: &'a [Observation],
     caveats: &'a BTreeMap<String, Vec<Caveat>>,
+    /// The project the block is scoped to, as the store spells it.
+    own_project: Option<&'a str>,
 }
 
 /// Renders the block the current [`Shown`] allows, and says what it left out.
@@ -395,6 +420,7 @@ fn render_context(sections: &Sections, shown: &Shown, budget_bytes: usize) -> St
         pinned_omitted,
         observations,
         caveats,
+        own_project,
     } = *sections;
     let mut context = String::from("## Memory from Previous Sessions\n\n");
     if shown.sessions > 0 {
@@ -415,12 +441,24 @@ fn render_context(sections: &Sections, shown: &Shown, budget_bytes: usize) -> St
             // memory twenty minutes earlier, 148 of them since July, while the
             // 08-05 line held two. An agent reading the dates concluded the
             // material was a week old and the freshest line was the stalest.
+            //
+            // Neither the project nor the count is printed where it carries
+            // nothing: a block scoped to one project said that project's name
+            // on every line, and `[N observations]` is a number nobody
+            // chooses a session by — the summary is what says what it was
+            // for. Measured on a copy of a real store, the two were about a
+            // tenth of the sessions section. A block with no project of its
+            // own lists several, and there the name is what tells them apart.
+            let project = match own_project {
+                Some(own) if own == session.project => String::new(),
+                _ => format!(
+                    "**{}** ",
+                    crate::memory::normalize::one_line(&session.project)
+                ),
+            };
             context.push_str(&format!(
-                "- **{}** ({}){} [{} observations]\n",
-                crate::memory::normalize::one_line(&session.project),
-                session.last_activity,
-                summary,
-                session.observation_count
+                "- {project}({}){summary}\n",
+                crate::memory::normalize::to_the_minute(&session.last_activity),
             ));
         }
         context.push('\n');
@@ -430,7 +468,7 @@ fn render_context(sections: &Sections, shown: &Shown, budget_bytes: usize) -> St
         for prompt in &prompts[..shown.prompts] {
             context.push_str(&format!(
                 "- {}: {}\n",
-                prompt.created_at,
+                crate::memory::normalize::to_the_minute(&prompt.created_at),
                 truncate(&prompt.content, PROMPT_LINE_CHARS)
             ));
         }
@@ -725,7 +763,10 @@ mod tests {
             0,
             &memories,
             &BTreeMap::new(),
-            usize::MAX,
+            Frame {
+                project: None,
+                budget_bytes: usize::MAX,
+            },
         );
         assert!(context.contains("Ship the pagination work"), "{context}");
         assert!(!context.contains("## Goal"), "{context}");
@@ -752,17 +793,118 @@ mod tests {
             0,
             &[],
             &BTreeMap::new(),
-            usize::MAX,
+            Frame {
+                project: None,
+                budget_bytes: usize::MAX,
+            },
         );
 
         assert!(
-            context.contains("2026-08-04 18:20:00"),
+            context.contains("(2026-08-04 18:20)"),
             "the date must be the one the ordering uses: {context}"
         );
         assert!(
-            !context.contains("2026-07-30 10:00:00"),
+            !context.contains("2026-07-30 10:00"),
             "the opening date says the material is older than it is: {context}"
         );
+    }
+
+    /// Trimming a line's metadata must not change what the block selects.
+    ///
+    /// Compared against the store's own selection rather than against a
+    /// snapshot of the old text: every memory, session and prompt the store
+    /// hands the block has to be on a line of it, in the order the store gave
+    /// them, and nothing the store did not hand it may appear.
+    #[test]
+    fn dropping_line_metadata_leaves_the_selection_alone() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut store =
+            crate::store::Store::open(crate::store::StoreConfig::new(temp.path().join("c.db")))
+                .unwrap();
+        for (session, project) in [("a1", "alpha"), ("a2", "alpha"), ("b1", "beta")] {
+            store.create_session(session, project, "C:/repo").unwrap();
+            for n in 0..3 {
+                store
+                    .add_observation(crate::memory::model::AddObservation {
+                        session_id: session.to_owned(),
+                        kind: "decision".to_owned(),
+                        title: format!("Memory {session}-{n}"),
+                        content: format!("body {session}-{n}"),
+                        tool_name: None,
+                        project: Some(project.to_owned()),
+                        scope: "project".to_owned(),
+                        topic_key: None,
+                        prompt_sync_id: None,
+                    })
+                    .unwrap();
+            }
+            store
+                .add_prompt(crate::memory::model::AddPrompt {
+                    session_id: session.to_owned(),
+                    content: format!("prompt of {session}"),
+                    project: Some(project.to_owned()),
+                })
+                .unwrap();
+        }
+
+        for scope in [Some("alpha"), None] {
+            let block = assemble(&store, scope, None, 30, usize::MAX).unwrap();
+            let sessions = store.recent_sessions(scope, Some(RECENT_SESSIONS)).unwrap();
+            let lines = |heading: &str| -> Vec<String> {
+                block
+                    .split("\n\n")
+                    .find(|section| section.starts_with(heading))
+                    .map(|section| section.lines().skip(1).map(str::to_owned).collect())
+                    .unwrap_or_default()
+            };
+
+            let listed = lines("### Recent Sessions");
+            assert_eq!(listed.len(), sessions.len(), "{block}");
+            for (line, session) in listed.iter().zip(&sessions) {
+                let minute = crate::memory::normalize::to_the_minute(&session.last_activity);
+                assert!(line.contains(&format!("({minute})")), "{line}");
+                assert!(!line.contains("observations]"), "{line}");
+                // Its own project is the block's heading, not a thing to say
+                // forty times; any other project is the only way to tell the
+                // lines apart.
+                assert_eq!(
+                    line.contains(&format!("**{}**", session.project)),
+                    scope.is_none(),
+                    "{line}"
+                );
+            }
+
+            let prompts = store
+                .recent_distinct_prompts(scope, Some(RECENT_PROMPTS))
+                .unwrap();
+            let listed = lines("### Recent User Prompts");
+            assert_eq!(listed.len(), prompts.len(), "{block}");
+            for (line, prompt) in listed.iter().zip(&prompts) {
+                let minute = crate::memory::normalize::to_the_minute(&prompt.created_at);
+                assert_eq!(line, &format!("- {minute}: {}", prompt.content));
+            }
+
+            let mut expected: Vec<i64> = store
+                .pinned_observations(scope, None, 30)
+                .unwrap()
+                .0
+                .iter()
+                .map(|observation| observation.id)
+                .collect();
+            expected.extend(
+                store
+                    .recent_memories(scope, None, 30)
+                    .unwrap()
+                    .iter()
+                    .map(|observation| observation.id),
+            );
+            let shown: Vec<i64> = block
+                .lines()
+                .filter_map(|line| line.strip_prefix("- #"))
+                .filter_map(|rest| rest.split(' ').next()?.parse().ok())
+                .collect();
+            assert_eq!(shown, expected, "{block}");
+        }
     }
 
     /// The two line budgets are two decisions, not one number twice.
@@ -862,7 +1004,10 @@ mod tests {
             0,
             &observations,
             &BTreeMap::new(),
-            usize::MAX,
+            Frame {
+                project: None,
+                budget_bytes: usize::MAX,
+            },
         );
 
         assert_eq!(

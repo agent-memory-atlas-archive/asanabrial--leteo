@@ -32,11 +32,43 @@ static MARKDOWN_CODE: LazyLock<Regex> =
 static MARKDOWN_ITALIC: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\*([^*]+)\*").expect("italic regex is valid"));
 
+/// A timestamp as an agent reads it: to the minute.
+///
+/// The store keeps seconds and the opening block printed them, nine bytes a
+/// line on every session and prompt that nobody can act on — what separates
+/// two entries is the day and the hour. Anything not shaped like
+/// `YYYY-MM-DD HH:MM:SS` or its `T` form is returned as it came rather than
+/// cut blind.
+pub fn to_the_minute(value: &str) -> &str {
+    match value.as_bytes() {
+        [
+            _,
+            _,
+            _,
+            _,
+            b'-',
+            _,
+            _,
+            b'-',
+            _,
+            _,
+            b' ' | b'T',
+            _,
+            _,
+            b':',
+            _,
+            _,
+            ..,
+        ] => value.get(..16).unwrap_or(value),
+        _ => value,
+    }
+}
+
 /// A project name, as the store spells it.
 ///
 /// Folded to one line for the reason [`one_line`] gives about titles, and it
 /// is the same hole: the opening context prints the project of every recent
-/// session into a bullet — `- **{project}** ({date}) [{n} observations]` —
+/// session into a bullet — `- **{project}** ({date}): {summary}` —
 /// and `mem_session_start` accepts a name from an agent, because creating a
 /// project is what that tool is for. A name carrying a newline ends that
 /// bullet and starts another, and what follows reads as a second session, of a
@@ -1469,6 +1501,17 @@ pub fn sqlite_datetime_modifier(minutes: i64) -> Cow<'static, str> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_timestamp_is_cut_to_the_minute_and_anything_else_is_left_alone() {
+        assert_eq!(to_the_minute("2026-08-04 18:20:31"), "2026-08-04 18:20");
+        assert_eq!(to_the_minute("2026-08-04T18:20:31Z"), "2026-08-04T18:20");
+        assert_eq!(to_the_minute("2026-08-04"), "2026-08-04");
+        assert_eq!(to_the_minute("yesterday at noon"), "yesterday at noon");
+        // Multibyte text in the digit positions is not a timestamp, and must
+        // not be sliced through a character.
+        assert_eq!(to_the_minute("20é6-08-04 18:20:31"), "20é6-08-04 18:20:31");
+    }
+
     use super::*;
 
     #[test]

@@ -449,7 +449,7 @@ fn a_replicated_session_is_filed_under_the_normalised_project() {
 /// A project name cannot forge a session either.
 ///
 /// The opening context prints the project of every recent session into a
-/// bullet — `- **{project}** ({date}) [{n} observations]` — and
+/// bullet — `- **{project}** ({date}): {summary}` — and
 /// `mem_session_start` takes that name from an agent, because creating a
 /// project is what the tool is for. A name carrying a newline ends that bullet
 /// and starts another, and what follows reads as a second session of a project

@@ -81,6 +81,15 @@ All notable changes to Leteo are documented in this file.
 
 ### Changed
 
+- **The opening block spends fewer tokens on line metadata.** A session line no
+  longer repeats the project the block is already scoped to (a block with no
+  project of its own, and any line from a different project, still names it) and
+  no longer ends in `[N observations]`; session and prompt timestamps, in the
+  block and in `mem_context`, are printed to the minute instead of the second.
+  Which memories, sessions and prompts are selected is unchanged. Measured on a
+  copy of a real store, session start went from 2,596 to 2,521 tokens,
+  post-compaction from 2,066 to 1,991, and `mem_context` from 3,039 to 3,029.
+
 - **basic-memory's row is measured over several passes, not once.** Its
   full-text index is filled asynchronously after `write_note` returns, and
   0.23.2 exposes no completion signal to wait on, so two loads of the same
