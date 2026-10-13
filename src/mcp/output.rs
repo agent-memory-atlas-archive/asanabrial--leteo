@@ -1206,7 +1206,7 @@ pub(super) struct ObservationResultOutput {
     /// The memory, carrying whatever the graph says against it.
     ///
     /// The caveats used to sit beside this rather than on it, and that is one
-    /// place too many. `mem_search` flattens `ObservationOutput`, so a
+    /// place too many. `mem_search` flattens each memory into its result, so a
     /// superseded memory comes back with `caveats` among its own fields;
     /// `mem_context` puts them on each listed memory the same way. Here they
     /// were a sibling of `observation`, so an agent that saw the warning in a
