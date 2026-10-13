@@ -71,8 +71,14 @@ duplicate; call \`mem_suggest_topic_key\` when unsure.
 
 ### Recall before acting
 
-When prior work may be relevant, call \`mem_context\` first. If it is not there,
-call \`mem_search\`, then \`mem_get_observation\` for the full text.
+When prior work may be relevant, call \`mem_search\` with the words of the thing you are asking
+about, then \`mem_get_observation\` when the complete observation is needed.
+
+\`mem_context\` answers a different question — everything a project holds — and it is what a session
+opens with where Leteo installs hooks. Measured on a real store, that opening block named thirty
+memories as titles in 3.4 KB and \`mem_context\` came back with the same thirty, previews included,
+in 8.4 KB. So call it when the session did not open with one, when you have lost it, or for another
+project; not as the first step of looking something up.
 
 ### Projects
 
@@ -85,8 +91,8 @@ which project it belongs to, then retry with their choice plus
 ### Close sessions
 
 Before saying the work is done, call \`mem_session_summary\` with the goal,
-discoveries, accomplishments, next steps, and relevant files. After a
-compaction, persist the compacted summary first, then call \`mem_context\`.`
+discoveries, accomplishments, next steps, and relevant files. After context compaction,
+persist the compacted summary first and then restore context with \`mem_context\`.`
 
 /**
  * Pi names an MCP server's tools `mcp__<server>__<tool>`, and the protocol
@@ -102,6 +108,8 @@ interface HookInput {
   prompt?: string
   stdout?: string
   source?: string
+  /** Leave the memory directive out of a `session-start` answer. */
+  without_directive?: boolean
 }
 
 /** The response `leteo hook` prints. */
@@ -321,7 +329,11 @@ export default function leteo(pi: ExtensionAPI) {
   pi.on("session_start", async (event, ctx) => {
     const id = sessionId(ctx)
     if (!id) return
-    const opening = additionalContext(await runHook("session-start", { session_id: id, cwd: ctx.cwd }))
+    // The protocol is appended to every turn below; the directive on top of it
+    // was about 925 bytes of the same rules said again.
+    const opening = additionalContext(
+      await runHook("session-start", { session_id: id, cwd: ctx.cwd, without_directive: true }),
+    )
     // A reload keeps the transcript, so the opening context is already in it.
     if (opening && event.reason !== "reload") pendingContext.set(id, opening)
   })
@@ -331,12 +343,22 @@ export default function leteo(pi: ExtensionAPI) {
     const source = lastInputSource
     lastInputSource = undefined
 
+    // Asked before the section is built because the hook records every memory it
+    // names as shown, so its answer has to reach the model: it is added to this
+    // run's system prompt, which is where Pi lets an extension speak per prompt.
+    const prompt = event.prompt?.trim() ?? ""
+    let hint = ""
+    if (id && source !== "extension" && prompt.length > MIN_PROMPT_LENGTH) {
+      hint = additionalContext(await runHook("user-prompt-submit", { session_id: id, cwd: ctx.cwd, prompt }))
+    }
+
     let section = `${MEMORY_PROTOCOL}\n\n${TOOL_NAMING}`
     const pending = id ? pendingContext.get(id) : undefined
     if (pending) {
       section += `\n\n${pending}`
       pendingContext.delete(id)
     }
+    if (hint) section += `\n\n${hint}`
 
     // The structured options are the supported place for an addition on newer
     // Pi: a returned `systemPrompt` replaces the whole prompt for the run and
@@ -350,10 +372,6 @@ export default function leteo(pi: ExtensionAPI) {
       result = { systemPrompt: base.length > 0 ? `${base}\n\n${section}` : section }
     }
 
-    const prompt = event.prompt?.trim() ?? ""
-    if (id && source !== "extension" && prompt.length > MIN_PROMPT_LENGTH) {
-      await runHook("user-prompt-submit", { session_id: id, cwd: ctx.cwd, prompt })
-    }
     return result
   })
 

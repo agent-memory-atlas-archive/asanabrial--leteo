@@ -72,8 +72,14 @@ duplicate; call \`mem_suggest_topic_key\` when unsure.
 
 ### Recall before acting
 
-When prior work may be relevant, call \`mem_context\` first. If it is not there,
-call \`mem_search\`, then \`mem_get_observation\` for the full text.
+When prior work may be relevant, call \`mem_search\` with the words of the thing you are asking
+about, then \`mem_get_observation\` when the complete observation is needed.
+
+\`mem_context\` answers a different question — everything a project holds — and it is what a session
+opens with where Leteo installs hooks. Measured on a real store, that opening block named thirty
+memories as titles in 3.4 KB and \`mem_context\` came back with the same thirty, previews included,
+in 8.4 KB. So call it when the session did not open with one, when you have lost it, or for another
+project; not as the first step of looking something up.
 
 ### Projects
 
@@ -86,8 +92,8 @@ which project it belongs to, then retry with their choice plus
 ### Close sessions
 
 Before saying the work is done, call \`mem_session_summary\` with the goal,
-discoveries, accomplishments, next steps, and relevant files. After a
-compaction, persist the compacted summary first, then call \`mem_context\`.`
+discoveries, accomplishments, next steps, and relevant files. After context compaction,
+persist the compacted summary first and then restore context with \`mem_context\`.`
 
 /** One hook event's payload, matching what the Rust side deserializes. */
 interface HookInput {
@@ -96,6 +102,8 @@ interface HookInput {
   prompt?: string
   stdout?: string
   source?: string
+  /** Leave the memory directive out of a `session-start` answer. */
+  without_directive?: boolean
 }
 
 /** The response `leteo hook` prints. */
@@ -188,6 +196,18 @@ export const Leteo: Plugin = async (ctx) => {
   const subAgentSessions = new Set<string>()
   const startedSessions = new Set<string>()
   const recoveredSessions = new Set<string>()
+  /** What `session-start` returned for a session, until its first turn takes it. */
+  const openings = new Map<string, string>()
+  /**
+   * What the per-prompt hook named for the turn in progress, by session.
+   *
+   * The hook records every memory it names as shown, so its answer has to reach
+   * the agent. `chat.message` cannot carry it: adding a part there would put the
+   * hint in the user's transcript as something they said. The system prompt is
+   * rebuilt for every model call of a turn, so the hint is kept until the next
+   * prompt replaces it and every step of the turn sees it.
+   */
+  const hints = new Map<string, string>()
 
   /**
    * Starts a memory session on demand, so a plugin loaded mid-conversation
@@ -198,25 +218,33 @@ export const Leteo: Plugin = async (ctx) => {
     if (!sessionID || subAgentSessions.has(sessionID)) return
     if (startedSessions.has(sessionID)) return
     startedSessions.add(sessionID)
-    await runHook("session-start", { session_id: sessionID, cwd: directory })
+    // Without the directive, because this plugin injects the protocol on every
+    // turn and the opening would say it twice. What is left is the language,
+    // the memory, and any verdicts waiting, which is what a fresh session needs.
+    const output = await runHook("session-start", {
+      session_id: sessionID,
+      cwd: directory,
+      without_directive: true,
+    })
+    const opening = additionalContext(output)
+    if (opening) openings.set(sessionID, opening)
   }
 
   /**
    * Returns this project's prior memory once per session.
    *
-   * The compaction hook is the right one here: unlike `session-start` it
-   * returns the memory alone, without the protocol this plugin already
-   * injects, so nothing is said twice.
+   * It is the opening `ensureSession` already asked for. `post-compaction` used
+   * to be called here for being the hook that returns the memory without the
+   * protocol, and its text begins "Context was compacted", which a session that
+   * had only just been created was told.
    */
   async function recoverContext(sessionID: string): Promise<string> {
     if (!sessionID || subAgentSessions.has(sessionID)) return ""
     if (recoveredSessions.has(sessionID)) return ""
     recoveredSessions.add(sessionID)
-    const output = await runHook("post-compaction", {
-      session_id: sessionID,
-      cwd: directory,
-    })
-    return additionalContext(output)
+    const opening = openings.get(sessionID) ?? ""
+    openings.delete(sessionID)
+    return opening
   }
 
   return {
@@ -245,6 +273,8 @@ export const Leteo: Plugin = async (ctx) => {
         startedSessions.delete(sessionID)
         subAgentSessions.delete(sessionID)
         recoveredSessions.delete(sessionID)
+        openings.delete(sessionID)
+        hints.delete(sessionID)
       }
     },
 
@@ -262,14 +292,21 @@ export const Leteo: Plugin = async (ctx) => {
       const content =
         text ||
         (summary ? `${summary.title ?? ""}\n${summary.body ?? ""}`.trim() : "")
+      // Dropped before the length check: a hint belongs to the turn the hook
+      // evaluated, and a short prompt the hook never sees would otherwise
+      // carry the previous turn's hint into its own.
+      hints.delete(sessionID)
       if (content.length <= MIN_PROMPT_LENGTH) return
 
       await ensureSession(sessionID)
-      await runHook("user-prompt-submit", {
-        session_id: sessionID,
-        cwd: directory,
-        prompt: content,
-      })
+      const hint = additionalContext(
+        await runHook("user-prompt-submit", {
+          session_id: sessionID,
+          cwd: directory,
+          prompt: content,
+        }),
+      )
+      if (hint) hints.set(sessionID, hint)
     },
 
     // A finished sub-agent usually reports what it learned; capture it.
@@ -305,6 +342,8 @@ export const Leteo: Plugin = async (ctx) => {
         if (recovered) {
           block += `\n\n${recovered}`
         }
+        const hint = hints.get(sessionID)
+        if (hint) block += `\n\n${hint}`
       }
 
       if (output.system.length > 0) {

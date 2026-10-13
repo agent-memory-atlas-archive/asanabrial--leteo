@@ -393,6 +393,58 @@ fn post_compaction_recovers_context_without_the_full_protocol() {
     assert!(!context.contains("### Save important work"));
 }
 
+/// A host that carries the protocol itself asks for the opening without the
+/// directive, and gets the rest of it unchanged.
+///
+/// OpenCode used to take its opening from `post-compaction`, so a session that
+/// had just begun was told "Context was compacted" and to summarise it; Pi took
+/// `session-start` whole and said the directive on top of its own protocol.
+/// What is held here is that the opening is exactly the full one minus its
+/// directive, so it cannot be a second builder drifting from the first, and that
+/// the default answer — Claude Code's, byte for byte — is untouched.
+#[test]
+fn an_opening_without_the_directive_is_the_full_opening_minus_it() {
+    let (temp, mut store) = store();
+    let payload = input(temp.path());
+    run(&mut store, HookEvent::SessionStart, &payload).unwrap();
+    store
+        .add_observation(memory(
+            "Opening decision",
+            "Something the project already decided",
+        ))
+        .unwrap();
+
+    let full = run(&mut store, HookEvent::SessionStart, &payload)
+        .unwrap()
+        .additional_context
+        .unwrap();
+    let mut bare_payload = payload.clone();
+    bare_payload.without_directive = true;
+    let bare = run(&mut store, HookEvent::SessionStart, &bare_payload)
+        .unwrap()
+        .additional_context
+        .unwrap();
+
+    let directive = format!("{}\n\n", crate::setup::MEMORY_DIRECTIVE);
+    assert!(
+        full.starts_with(&directive),
+        "the default opening still leads with the directive"
+    );
+    assert_eq!(full.strip_prefix(directive.as_str()), Some(bare.as_str()));
+    assert!(bare.contains("Opening decision"), "{bare}");
+    assert!(!bare.contains("Context was compacted"), "{bare}");
+    assert!(!bare.contains("Three rules"), "{bare}");
+
+    let recovered = run(&mut store, HookEvent::PostCompaction, &payload)
+        .unwrap()
+        .additional_context
+        .unwrap();
+    assert!(
+        recovered.starts_with("Context was compacted."),
+        "the real post-compaction path keeps its preamble: {recovered}"
+    );
+}
+
 #[test]
 fn user_prompts_are_captured_and_quiet_projects_are_nudged() {
     let (temp, mut store) = store();
