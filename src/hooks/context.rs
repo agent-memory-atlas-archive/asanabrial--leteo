@@ -46,6 +46,12 @@ pub(super) const RECALL_LIMIT: usize = 3;
 /// and handed the wrong one is worse off than an agent told nothing. Returns
 /// the context for the agent and how many memories it names, because the person
 /// watching is told the count and the two must not disagree.
+///
+/// The wording does not tell the agent to read anything. The first line used to
+/// order a `mem_get_observation` before assuming, which is an instruction to
+/// spend a tool call on every line the hint names, and the hint is wrong most of
+/// the time it speaks. A title is already enough to tell whether a line fits;
+/// an agent that wants the body knows the tool without being told to use it.
 pub(super) fn prompt_recall(
     store: &Store,
     prompt: &str,
@@ -94,8 +100,8 @@ pub(super) fn prompt_recall(
     let shown: Vec<i64> = matches.iter().map(|observation| observation.id).collect();
 
     let mut recall = String::from(
-        "Leteo may have something on this. Read one with mem_get_observation \
-         before assuming, and ignore any that do not fit.\n",
+        "Leteo may have something on this. These are matches on the words of the \
+         prompt, so ignore any that do not fit.\n",
     );
     for observation in &matches {
         recall.push_str(&format!(
