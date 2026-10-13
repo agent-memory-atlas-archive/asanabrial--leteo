@@ -86,7 +86,7 @@ pub mod measure {
     pub use crate::store::search::{
         FTS_EXACT, FTS_STEMMED, matching_observations_reranked_sql, matching_observations_sql,
     };
-    // The prompt hint's own statement, its sample depth and its two floors.
+    // The prompt hint's own statement, its sample depth and its floors.
     //
     // Here for the same reason the ranking statement is: "would a different
     // floor separate a store that holds the answer from one that does not" can
@@ -101,8 +101,8 @@ pub mod measure {
         crate::store::search::prompt_recall_sql()
     }
 
-    pub fn worth_naming(rank: f64, median: f64, already_in_the_opening_block: bool) -> bool {
-        crate::store::search::worth_naming(rank, median, already_in_the_opening_block)
+    pub fn worth_naming(rank: f64, median: f64) -> bool {
+        crate::store::search::worth_naming(rank, median)
     }
 }
 pub mod sync;

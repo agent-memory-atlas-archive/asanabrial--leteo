@@ -1,0 +1,27 @@
+[
+ {
+  "title": "Rotate signing keys through a key id header, not by redeploying",
+  "type": "decision",
+  "content": "**What**: Tokens carry a key id and the verifier holds the current and previous key.\n**Why**: A rotation by redeploy invalidated every live session.\n**Where**: src/auth/keys.py\n**Learned**: Keep the previous key for as long as the longest token lifetime."
+ },
+ {
+  "title": "Order status webhooks arrive out of order",
+  "type": "discovery",
+  "content": "**What**: The payment provider sends status events without ordering guarantees.\n**Why**: A refunded order flipped back to paid when a late event arrived.\n**Where**: src/webhooks/payment_status.py\n**Learned**: Compare the event timestamp with the stored one and ignore older events."
+ },
+ {
+  "title": "Queue consumers acknowledge after the effect, not before",
+  "type": "bugfix",
+  "content": "**What**: Consumers used to acknowledge on receipt.\n**Why**: A crash between acknowledgement and effect lost the job.\n**Where**: src/jobs/consumer.py\n**Learned**: Acknowledge after commit; the handler is already safe to run twice."
+ },
+ {
+  "title": "Bulk import validates the whole file before writing any row",
+  "type": "decision",
+  "content": "**What**: The importer parses and validates every row first and writes only if all pass.\n**Why**: Half-imported files left customers with partial catalogs.\n**Where**: src/import/bulk.py\n**Learned**: Report all row errors at once, not only the first."
+ },
+ {
+  "title": "Slow query on the audit table fixed with a composite index",
+  "type": "bugfix",
+  "content": "**What**: Audit lookups by tenant and date scanned the table.\n**Why**: The existing index covered only the date.\n**Where**: migrations/0042_audit_index.sql\n**Learned**: Put the equality column first in the composite index."
+ }
+]

@@ -311,6 +311,42 @@ pure logic is checked by `test_llm_tier.py` and needs none of the services.
 
 `bench_cost.py` needs an Engram source checkout because Engram's
 session-start hook is a shell script in its tree, not part of its binary.
+`bench_cost.py` also prints what the per-prompt and post-compaction hooks put in
+the model's context, in tokens where `tiktoken` is installed.
+
+`session_cost.py` is the session model: what each engine puts in the model's
+context over a 20-prompt session (session start, the per-prompt hook, the
+post-compaction hook, the replies of `mem_context`, `mem_save` and `mem_search`,
+the `tools/list` input schemas and the server instructions), totalled with the
+schemas paid upfront and deferred. It is the source of the figures in
+`docs/does-memory-save-tokens.md`.
+
+```bash
+python3 tools/memory-bench/session_cost.py \
+    --leteo-bin target/release/leteo --leteo-store copy.db \
+    --engram-bin "$(command -v engram)" --engram-store engram-copy.db \
+    --engram-plugin-root path/to/engram/plugin/claude-code --project NAME --workdir /tmp
+```
+
+Both stores are copied with the backup API, read-only, into a temporary
+directory, and each engine runs there with its own `HOME`, data directory and
+port, so neither original is written. Use a Python with `tiktoken` for tokens;
+without it the output says `bytes/4` and cannot be compared with a tiktoken run.
+`--prompts`, `--queries` and `--saves` replace the synthetic inputs in
+`session_cost_data/`. The model-visible part of a tool is its name, description
+and input schema: `tools/list` also carries an `outputSchema` per tool, which is
+most of its bytes and is not sent to the model.
+
+`--labels FILE.tsv` replays the per-prompt hint instead: once per labelled
+prompt, in a fresh session, over the store as it is (`source` other than `real`)
+or cut back to how it stood at the prompt's `created_at` (`source` `real`). It
+reports how often the hook is silent on prompts labelled `neutral` and how often
+it names a memory from `best_memory_ids` on prompts labelled `related`, with the
+tokens it cost. `--only real|synthetic` replays one source. The columns are
+`id, created_at, project, source, prompt, label, best_memory_ids`, and later
+columns are ignored. `session_cost_data/labels.example.tsv` is a synthetic
+example; `--build-fixture OUT.db` writes the store it was labelled against, the
+comparison corpus in write order, so the ids line up (a test holds them to it).
 `bench_any.py` reruns Engram with its opt-in `match_mode: "any"`, which agents
 only get if they ask for it.
 

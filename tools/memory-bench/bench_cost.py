@@ -47,3 +47,33 @@ try:
         print(f"{e}: median {pct(lat)[0]:.1f} ms p90 {pct(lat)[1]:.1f} ms")
 finally:
     srv.terminate(); srv.wait()
+
+# What the two hooks beside the session-start one put in the model's context.
+# They are measured by `session_cost.py` over throwaway copies of the stores
+# above, so the stores this script was pointed at are not written to a second
+# time. In tokens where tiktoken is installed, and in bytes/4 when it is not,
+# with the unit printed either way.
+import pathlib
+import tempfile
+
+import session_cost as sc
+
+count, unit = sc.make_counter()
+prompts = sc.read_lines(sc.DATA / "prompts.txt")
+print(f"== per-prompt hook ({len(prompts)} prompts) and post-compaction hook, in {unit} ==")
+with tempfile.TemporaryDirectory(prefix="leteo-bench-cost-") as w:
+    work = pathlib.Path(w)
+    plugin = os.path.join(os.environ["ENGRAM_SRC"], "plugin", "claude-code")
+    for e in ("engram", "leteo"):
+        store = os.path.join(EHOME, "data", "engram.db") if e == "engram" else os.path.join(LHOME, "leteo.db")
+        eng = sc.Engine(e, ENGRAM if e == "engram" else LETEO, store, work, "alpha-api",
+                        plugin_root=plugin if e == "engram" else None)
+        eng.start()
+        try:
+            h = sc.hooks_measure(eng, prompts, count, {})
+        finally:
+            eng.stop()
+        spoke = sum(1 for x in h["prompts"] if x)
+        print(f"{e}: per-prompt hook {sum(h['prompts'])} over the session, spoke on {spoke}/{len(prompts)}"
+              f" (max {max(h['prompts'])}); post-compaction {h['post_compaction']}"
+              f"; per-prompt latency median {h['prompt_ms_median']} ms")

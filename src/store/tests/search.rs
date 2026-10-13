@@ -1012,47 +1012,137 @@ fn both_the_written_word_and_the_inflected_one_find_the_memory() {
     );
 }
 
-/// The hint is stricter about repeating what the session already listed.
+/// One bar for every memory the hint might name.
 ///
-/// A session opens with an index of the project's most recent memories.
-/// Naming one of those again ranks what the agent already has; naming one from
-/// further back is the only way it hears of that memory at all. The cost of a
-/// wrong line is the same either way and the value of a right one is not, so
-/// the bar is not the same on both sides.
+/// There used to be two: a looser one for a memory outside the session's
+/// opening block. Measured on 170 labelled prompts, dropping it made the hint
+/// silent on 56 of 100 prompts with nothing to add instead of 23, for one lost
+/// hit of 31; the numbers are in `prompt_matches`.
 ///
 /// Asserted on numbers rather than on a corpus, and that is deliberate: bm25
 /// needs a varied one for a median to mean anything, and fifty near-identical
-/// fixtures score every term at nothing. The first version of this test built
-/// exactly that and passed with both margins set equal — it proved the query
-/// runs, not that the rule exists. What the rule is worth end to end was
-/// measured over 277 real prompts against a leak-free label, and is in
-/// `prompt_matches`.
+/// fixtures score every term at nothing.
 #[test]
-fn the_bar_is_lower_for_a_memory_the_session_did_not_open_with() {
+fn the_bar_is_the_same_for_every_memory_the_hint_might_name() {
     use crate::store::search::worth_naming;
 
     // Scores are negative and better is more negative, so a smaller margin is
-    // a looser bar: with a median of -10, the strict side asks for -16 and the
-    // other for -12.
+    // a looser bar: with a median of -10 the bar is -16.
     let median = -10.0;
 
-    // Squarely good: named wherever it came from.
-    assert!(worth_naming(-20.0, median, true));
-    assert!(worth_naming(-20.0, median, false));
-
-    // The whole point: between the two bars.
+    assert!(worth_naming(-20.0, median), "squarely good is named");
     assert!(
-        !worth_naming(-13.0, median, true),
-        "a memory the agent already has listed has to earn the line"
+        !worth_naming(-13.0, median),
+        "between 1.2 and 1.6 times the median is what the looser bar let through"
     );
-    assert!(
-        worth_naming(-13.0, median, false),
-        "one it has never seen is worth saying on weaker evidence"
+    assert!(!worth_naming(-5.0, median), "weak is weak");
+}
+
+/// A memory that only clears the old looser bar is not named, and a clearly
+/// relevant one still is.
+///
+/// Built from a store and not from numbers, because the claim is about what the
+/// hint does with a real ranking. The fixture is checked before it is used: it
+/// recomputes the ranks the hint sees and requires at least one candidate
+/// between 1.2 and 1.6 times the median, so a corpus that drifted into having
+/// none cannot let the first assertion pass for nothing.
+#[test]
+fn a_memory_between_the_two_old_bars_is_no_longer_named() {
+    let (_temp, mut store) = store();
+    store.create_session("s1", "leteo", "C:/repo").unwrap();
+    // Tiers, so the median sits on the ordinary match and the others stand off
+    // it by a controlled amount: eight that carry only `arranque`, three that
+    // carry it and `servicio`, four that carry `cola` as well, and the one that
+    // is about the prompt. Unrelated memories, half of them saying `servicio`,
+    // keep the project a realistic size and give the words a document
+    // frequency.
+    let save = |store: &mut Store, title: String, body: String| {
+        store
+            .add_observation(observation("s1", &title, &body))
+            .unwrap();
+    };
+    for index in 0..8 {
+        save(
+            &mut store,
+            format!("Nota {index} sobre el arranque"),
+            format!("arranque del sistema {index}"),
+        );
+    }
+    for index in 0..4 {
+        save(
+            &mut store,
+            format!("Nota {index} sobre el arranque y la cola"),
+            format!("arranque cola del sistema {index}"),
+        );
+    }
+    for index in 0..3 {
+        save(
+            &mut store,
+            format!("Nota {index} sobre el arranque del servicio"),
+            format!("arranque del servicio {index}"),
+        );
+    }
+    for index in 0..30 {
+        save(
+            &mut store,
+            format!("Cambio {index} de otra cosa"),
+            format!(
+                "nada que ver con esto {index} {}",
+                if index % 2 == 0 { "servicio" } else { "" }
+            ),
+        );
+    }
+    save(
+        &mut store,
+        "Planificador de consultas y estadisticas".to_owned(),
+        "El planificador no elige el indice sin estadisticas del indice.".to_owned(),
     );
 
-    // And weak is weak on both sides.
-    assert!(!worth_naming(-5.0, median, true));
-    assert!(!worth_naming(-5.0, median, false));
+    let prompt = "arranque servicio cola planificador estadisticas";
+    let terms =
+        crate::memory::normalize::fts_any_of(&crate::memory::normalize::prompt_terms(prompt));
+    let terms = crate::memory::normalize::fts_within_project(&terms, "leteo").unwrap_or(terms);
+    let mut statement = store
+        .connection
+        .prepare(&crate::store::search::prompt_recall_sql())
+        .unwrap();
+    let ranked: Vec<(String, f64)> = statement
+        .query_map(
+            rusqlite::params![terms, "leteo", RECALL_SAMPLE as i64],
+            |row| Ok((row.get::<_, String>("title")?, row.get::<_, f64>("rank")?)),
+        )
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    let mut sorted: Vec<f64> = ranked.iter().map(|(_, rank)| *rank).collect();
+    sorted.sort_by(|a, b| a.total_cmp(b));
+    let median = sorted[sorted.len() / 2];
+    let between: Vec<&str> = ranked
+        .iter()
+        .filter(|(_, rank)| *rank <= median * 1.2 && *rank > median * 1.6)
+        .map(|(title, _)| title.as_str())
+        .collect();
+    assert!(
+        !between.is_empty(),
+        "the fixture needs a candidate that clears 1.2 and not 1.6: {ranked:?}"
+    );
+
+    let named: Vec<String> = store
+        .prompt_matches(prompt, "leteo", 20)
+        .unwrap()
+        .into_iter()
+        .map(|found| found.title)
+        .collect();
+    for title in &between {
+        assert!(
+            !named.iter().any(|named| named == title),
+            "{title:?} only clears the looser bar and must stay unnamed: {named:?}"
+        );
+    }
+    assert!(
+        named.iter().any(|title| title.starts_with("Planificador")),
+        "the clearly relevant memory is still named: {named:?}"
+    );
 }
 
 /// Narrowing inside the index must not narrow away the project's own memories.

@@ -1,0 +1,27 @@
+id	created_at	project	source	prompt	label	best_memory_ids	best_memory_titles	rationale
+s1	2026-02-01 09:00:00	alpha-api	synthetic	Orders list gets slow on deep pages, how are we paging it?	related	1	Keyset pagination for the orders list	The memory answers it.
+s2	2026-02-01 09:00:00	alpha-api	synthetic	Should the client retry this failed call with backoff and jitter?	related	2	Retries use exponential backoff with jitter	The memory answers it.
+s3	2026-02-01 09:00:00	alpha-api	synthetic	How do we stop a retried request from doing the work twice?	related	4	Mutating requests carry an Idempotency-Key	The memory answers it.
+s4	2026-02-01 09:00:00	alpha-api	synthetic	Requests piled up when a dependency got slow, what did we change?	related	5	Downstream calls had no deadline	The memory answers it.
+s5	2026-02-01 09:00:00	alpha-api	synthetic	Which algorithm limits clients per API key?	related	7	Rate limiting is a token bucket per API key	The memory answers it.
+s6	2026-02-01 09:00:00	alpha-api	synthetic	Can I edit a migration file that already ran?	related	8	Migrations are append-only and timestamp-named	The memory answers it.
+s7	2026-02-01 09:00:00	alpha-api	synthetic	The browser blocks the request with a preflight error	related	10	CORS preflight failed behind the auth middleware	The memory answers it.
+s8	2026-02-01 09:00:00	alpha-api	synthetic	The order history endpoint is slow, looks like N+1 queries	related	11	N+1 queries in the order history endpoint	The memory answers it.
+s9	2026-02-01 09:00:00	alpha-api	synthetic	Where are the feature toggles decided?	related	13	Feature flags are evaluated server-side	The memory answers it.
+s10	2026-02-01 09:00:00	beta-web	synthetic	Where does client state live, and what holds server state?	related	17	Client state is Zustand, server state is TanStack Query	The memory answers it.
+s11	2026-02-01 09:00:00	beta-web	synthetic	What do icon-only buttons need for accessibility?	related	19	Icon-only buttons need an aria-label	The memory answers it.
+s12	2026-02-01 09:00:00	alpha-api	synthetic	what is our parental leave policy	neutral			Nothing on file bears on it.
+s13	2026-02-01 09:00:00	alpha-api	synthetic	who approves travel expenses	neutral			Nothing on file bears on it.
+s14	2026-02-01 09:00:00	alpha-api	synthetic	how many vacation days do we get	neutral			Nothing on file bears on it.
+s15	2026-02-01 09:00:00	alpha-api	synthetic	how do I request a new laptop	neutral			Nothing on file bears on it.
+s16	2026-02-01 09:00:00	alpha-api	synthetic	ok, thanks	neutral			Nothing on file bears on it.
+s17	2026-02-01 09:00:00	alpha-api	synthetic	yes, go ahead	neutral			Nothing on file bears on it.
+s18	2026-02-01 09:00:00	alpha-api	synthetic	commit this and open the pull request	neutral			Nothing on file bears on it.
+s19	2026-02-01 09:00:00	alpha-api	synthetic	rename this helper to something clearer	neutral			Nothing on file bears on it.
+s20	2026-02-01 09:00:00	alpha-api	synthetic	run the tests	neutral			Nothing on file bears on it.
+s21	2026-02-01 09:00:00	alpha-api	synthetic	looks good	neutral			Nothing on file bears on it.
+s22	2026-02-01 09:00:00	alpha-api	synthetic	continue	neutral			Nothing on file bears on it.
+s23	2026-02-01 09:00:00	alpha-api	synthetic	now push it	neutral			Nothing on file bears on it.
+1	2026-01-01 12:00:00	alpha-api	real	Orders list gets slow on deep pages, how are we paging it?	related	1	Keyset pagination for the orders list	Written at 01:00 on the first, so it is in the store cut at noon.
+2	2026-01-01 03:00:00	alpha-api	real	Which algorithm limits clients per API key?	neutral			The answering memory is written at 07:00, after this prompt, so the cut store holds nothing on it.
+3	2026-01-01 12:00:00	alpha-api	real	Should the client retry this failed call with backoff and jitter?	related	2	Retries use exponential backoff with jitter	Written at 02:00 on the first, so it is in the store cut at noon.

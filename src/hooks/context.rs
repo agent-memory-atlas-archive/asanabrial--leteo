@@ -17,25 +17,25 @@ pub(super) const RECALL_LIMIT: usize = 3;
 
 /// Memories worth putting in front of this prompt, or nothing at all.
 ///
-/// Nothing at all about one prompt in five, by design and by measurement.
-/// Against 277 prompts on a real store, labelled without leaking the future —
-/// the memories saved earlier in the same session, which existed when the hint
-/// would have spoken — it speaks on 81% and names something from that session
-/// on 22%, better than one time in four when it speaks at all.
+/// Silent on a little over half of the prompts that had nothing to add, and
+/// that is the most the bar buys.
 ///
-/// The label is a stand-in and it undercounts: a session touches several
-/// subjects, and a hint that brings back something genuinely useful from a
-/// different session is scored here as a miss. What it is good for is
-/// comparing two ways of choosing, since none of them can see the session or
-/// the clock.
+/// Against 170 prompts a person labelled by hand, replayed through the shipped
+/// hook against a store cut back to each prompt's time, it is silent on 56 of
+/// the 100 labelled as needing nothing and names a labelled memory on 30 of the
+/// 70 that had one. A stricter bar is quieter and loses those faster; the
+/// alternatives that were measured and refused are with the numbers in
+/// `Store::prompt_matches`.
 ///
-/// What the choosing is: a relevance floor relative to the median of the
-/// candidates, and it is not the same floor on both sides. The session opened
-/// with an index of the project's most recent memories, so naming one of those
-/// again only repeats what the agent is already holding, while naming an older
-/// one is the only way it hears of that memory at all — see
-/// `Store::worth_naming`. That asymmetry is worth ten points of accuracy over
-/// one floor for everything.
+/// The label is a stand-in and it undercounts: a hint that brings back
+/// something genuinely useful that nobody labelled is scored here as a miss.
+/// What it is good for is comparing two ways of choosing, since none of them
+/// can see the session or the clock.
+///
+/// What the choosing is: one relevance floor relative to the median of the
+/// candidates, `RECALL_MARGIN`, the same for every memory. It used to be looser
+/// for a memory outside the session's opening block, and that looser bar was
+/// worth thirty-three prompts of silence for one hit.
 ///
 /// Most of what is still missed is missed by full-text search rather than by
 /// the threshold: a third of the failures are a question asked in Spanish
@@ -46,6 +46,12 @@ pub(super) const RECALL_LIMIT: usize = 3;
 /// and handed the wrong one is worse off than an agent told nothing. Returns
 /// the context for the agent and how many memories it names, because the person
 /// watching is told the count and the two must not disagree.
+///
+/// The wording does not tell the agent to read anything. The first line used to
+/// order a `mem_get_observation` before assuming, which is an instruction to
+/// spend a tool call on every line the hint names, and the hint is wrong most of
+/// the time it speaks. A title is already enough to tell whether a line fits;
+/// an agent that wants the body knows the tool without being told to use it.
 pub(super) fn prompt_recall(
     store: &Store,
     prompt: &str,
@@ -94,8 +100,8 @@ pub(super) fn prompt_recall(
     let shown: Vec<i64> = matches.iter().map(|observation| observation.id).collect();
 
     let mut recall = String::from(
-        "Leteo may have something on this. Read one with mem_get_observation \
-         before assuming, and ignore any that do not fit.\n",
+        "Leteo may have something on this. These are matches on the words of the \
+         prompt, so ignore any that do not fit.\n",
     );
     for observation in &matches {
         recall.push_str(&format!(

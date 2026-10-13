@@ -55,13 +55,14 @@ use crate::{
 /// English, which no threshold can fix.
 pub(crate) const RECALL_MARGIN: f64 = 1.6;
 
-/// The same test, for a memory the session did not open with.
+/// The looser bar the typed-search fallback keeps.
 ///
-/// Looser, because what it buys is different: naming one of the memories the
-/// opening block already listed ranks what the agent has, while naming one from
-/// further back is the only way it hears of that memory at all. The measurement
-/// and the rows that rule out simply lowering `RECALL_MARGIN` instead are in
-/// `prompt_matches`.
+/// Only `nearest_observations` reads it now. The per-prompt hint used to apply
+/// it to every memory outside the opening block and no longer does: one margin,
+/// `RECALL_MARGIN`, decides there, for the reason written in `prompt_matches`.
+/// The fallback is a different question -- somebody asked, and the stage runs
+/// only after every stricter one found nothing -- so it keeps the number it was
+/// built on.
 pub(crate) const RECALL_MARGIN_UNSEEN: f64 = 1.2;
 
 /// How much better than the ordinary a memory must score to be proposed as
@@ -109,14 +110,6 @@ pub(crate) const RECALL_MARGIN_UNSEEN: f64 = 1.2;
 /// on this query fixes that. What would is a different question from "which of
 /// these scored best".
 const CANDIDATE_MARGIN: f64 = 1.25;
-
-/// How much of a project the opening block is taken to have named.
-///
-/// The same number `ContextSize::Full` hands over, and deliberately not read
-/// from the setting: somebody on `slim` sees twenty, and treating the other
-/// thirty as unseen would make the hint noisier for the person who asked for
-/// less. The strict floor covers what a full opening would have shown.
-const RECALL_RECENT_BLOCK: usize = 50;
 
 /// How many candidates the per-prompt hint scores before it judges any of them.
 ///

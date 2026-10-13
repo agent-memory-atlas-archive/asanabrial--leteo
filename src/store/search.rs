@@ -1565,55 +1565,55 @@ impl Store {
         let mut ranks: Vec<f64> = scored.iter().map(|(_, rank)| *rank).collect();
         ranks.sort_by(|a, b| a.total_cmp(b));
         let median = ranks[ranks.len() / 2];
-        // Two floors, because the two kinds of hit are not worth the same.
+        // One floor, `RECALL_MARGIN`, for every candidate.
         //
-        // A session opens with an index of the project's most recent memories.
-        // Naming one of those again is a ranking service — useful, but the
-        // agent already has the line — while naming one from further back is
-        // the only way it hears of that memory at all. The cost of a wrong line
-        // is the same either way; the value of a right one is not.
-        //
-        // Measured over 277 real prompts against a label with no leak — the
-        // memories saved earlier in the same session, which existed when the
-        // prompt was typed and are marked by the clock rather than by bm25:
+        // It used to be two: 1.6 for a memory the opening block had already
+        // listed and 1.2 for an older one, on the argument that naming an
+        // older memory is the only way the agent hears of it. That argument is
+        // about the value of a right line, and the cost of a wrong one was
+        // never smaller on that side. Measured on 170 prompts a person labelled
+        // by hand, 100 of them with nothing the store could usefully add,
+        // replaying the shipped hook against a store cut back to each prompt's
+        // time:
         //
         // ```text
-        //                        speaks   right   right when it speaks
-        //   1.6 for everything    58.5%   11.9%          20.4%
-        //   1.2 for everything    84.5%   19.5%          23.1%
-        //   1.6 / 1.2             80.9%   22.4%          27.7%
-        //   1.0 for everything    90.3%   23.5%          26.0%
-        //   1.6 / 1.0             89.9%   30.7%          34.1%
+        //                         silent on the     named a labelled   hint tokens,
+        //                         100 without       memory, of 70      all 170 prompts
+        //   1.6 recent / 1.2 older       23              31               16,102
+        //   1.4 for everything           34              34               12,149
+        //   1.6 for everything           56              30                8,004
+        //   1.8 for everything           71              25                5,553
+        //   2.0 for everything           77              21                4,285
         // ```
         //
-        // The rows that matter are the pairs at the same reach: split beats
-        // flat on both axes, so this is not "relax the floor" wearing a hat.
-        // `1.6 / 1.0` is better again and is not taken — no floor at all on
-        // that side means the three best candidates are named on nine prompts
-        // in ten, and a hint that always speaks is one a reader stops seeing.
+        // Split by prompt id parity, 1.6 is 33 and 23 silent and 21 and 9 named
+        // on the two halves, against 15 and 8 silent and 21 and 10 named
+        // shipped. The held-out half is the weaker one on recall: 1.6 costs one
+        // hit of 31 and it was a memory outside the opening block, which is the
+        // side that lost its looser bar. 1.4 does better than 1.6 on recall and
+        // is not taken: it leaves the hint speaking on two prompts in three
+        // that had nothing to add.
         //
-        // Where that has since got to, re-measured on the same store 4,013
-        // memories later: `1.6 / 1.2` now speaks on 92% of 421 distinct prompts
-        // of one project, driven through the built binary's own hook. The
-        // operating point chosen at 80.9% has drifted past the 89.9% row that
-        // was refused, on the very grounds it was refused for. The bar is
-        // relative to the median of the sample, so it says how good a candidate
-        // is *against the others this query found* — it was never a promise
-        // about how often anything is said, and it does not hold one.
+        // The bar cannot be made to reach 80 silent without recall falling
+        // with it, and what was tried instead is recorded so nobody repeats it.
+        // The words that make a neutral prompt match are the words that make a
+        // related one match -- most labelled hits are a shared word in a
+        // different language, not a topic -- so what separates them is not in
+        // the score distribution. A cosine floor between the prompt and each
+        // candidate, from the local semantic model, reaches 79 silent at 0.25
+        // and names 21; semantic candidates alone reach 78 silent and name 14;
+        // a grid over margin, cosine, matched-term count and term rarity tops
+        // out near 25 named at 80 silent; a logistic scorer over ten features
+        // gives 26 named at 80 silent in-sample and 25 to 29 across halves. The
+        // semantic check also adds a median 22.5 ms (p90 29.3) to a hook that
+        // takes 10, because the hook never loads the model today.
         //
-        // Not re-tuned here, and the reason is worth more than the number: the
-        // right-hand columns can no longer be measured. The label is "a memory
-        // saved earlier in the same session", and on this store 1,408 memories
-        // of 4,013 now sit in `manual-save-<project>` buckets while prompts are
-        // written under the agent's session, so only a quarter of prompts have
-        // any same-session memory to find and the column reads 2% — for hints
-        // that are plainly right when read. Moving these two numbers against
-        // that label would be tuning against the store's filing, not against
-        // relevance. Whoever re-tunes them needs a label first.
-        let recent = self.recent_ids(project.as_str(), RECALL_RECENT_BLOCK)?;
+        // The label is a person's, and a hint that is right when read can be
+        // scored a miss, so these numbers rank bars against each other; they
+        // are not the hint's accuracy.
         Ok(scored
             .into_iter()
-            .filter(|(memory, rank)| worth_naming(*rank, median, recent.contains(&memory.id)))
+            .filter(|(_, rank)| worth_naming(*rank, median))
             .take(limit)
             .map(|(memory, _)| memory)
             .collect())
@@ -1653,36 +1653,14 @@ pub(crate) fn prompt_recall_sql() -> String {
 /// Whether a candidate beats the bar for being named.
 ///
 /// Named rather than inlined so the rule can be tested on numbers instead
-/// of on a corpus: bm25 needs a varied one for a median to mean anything —
+/// of on a corpus: bm25 needs a varied one for a median to mean anything --
 /// fifty near-identical fixtures score every term at nothing, which is how
 /// the first attempt at this test passed with both margins equal.
 ///
 /// The bar is relative and the scores are negative, so "better" is more
 /// negative and a *smaller* margin is a looser bar.
-pub(crate) fn worth_naming(rank: f64, median: f64, already_in_the_opening_block: bool) -> bool {
-    let margin = if already_in_the_opening_block {
-        RECALL_MARGIN
-    } else {
-        RECALL_MARGIN_UNSEEN
-    };
-    rank <= median * margin
-}
-
-impl Store {
-    /// The ids a session opening would have named, for the project.
-    ///
-    /// Read rather than assumed: the opening block is the most recent of the
-    /// project, and which memories those are changes with every save.
-    fn recent_ids(&self, project: &str, limit: usize) -> Result<BTreeSet<i64>, StoreError> {
-        let mut statement = self.connection.prepare(
-            "SELECT id FROM observations
-              WHERE deleted_at IS NULL AND project = ?1
-              ORDER BY datetime(created_at) DESC, id DESC LIMIT ?2",
-        )?;
-        let rows =
-            statement.query_map(params![project, limit as i64], |row| row.get::<_, i64>(0))?;
-        rows.collect::<Result<_, _>>().map_err(StoreError::from)
-    }
+pub(crate) fn worth_naming(rank: f64, median: f64) -> bool {
+    rank <= median * RECALL_MARGIN
 }
 
 #[cfg(test)]

@@ -302,7 +302,11 @@ fn a_prompt_surfaces_a_relevant_memory_and_stays_quiet_otherwise() {
         recall.contains("Fixed the paginated closing verification"),
         "{recall}"
     );
-    assert!(recall.contains("mem_get_observation"), "{recall}");
+    assert!(
+        !recall.contains("mem_get_observation"),
+        "the hint is a maybe and must not order a tool call: {recall}"
+    );
+    assert!(recall.contains("ignore any that do not fit"), "{recall}");
     assert!(
         !recall.contains("Unrelated change"),
         "only what stands out: {recall}"
