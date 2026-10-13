@@ -59,6 +59,19 @@ pub(super) type StageError = Box<dyn std::error::Error + Send + Sync>;
 /// cost on disk.
 const CHUNK: usize = 256;
 
+/// What a full pass over the store did, and what it left.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct VectorPass {
+    /// Memories given a vector by this pass.
+    pub embedded: usize,
+    /// Memories the stage can reach that still have no current vector. `None`
+    /// when the coverage could not be read, which is not zero.
+    pub without_vector: Option<i64>,
+    /// Why the rest have none, when some do not.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
 /// How many memories one bounded backfill call embeds.
 ///
 /// An import embeds this many and hands the rest to the background backfill;
@@ -199,6 +212,57 @@ impl Store {
         }
         let model = semantic::load(self.data_dir(), self.model_dir())?;
         self.embed_and_keep(&model, self.stale_any(budget)?)
+    }
+
+    /// Embeds every memory that needs a vector, a bounded step at a time, and
+    /// says what it could not do.
+    ///
+    /// The one loop `doctor --repair` and the two imports share. An import is a
+    /// one-shot process: the bounded step inside it hands the rest to a
+    /// background backfill that a command-line run never starts, so whatever
+    /// the first step did not reach would stay without a vector until somebody
+    /// ran a repair. A model that is not installed is not a failure of the
+    /// import, and is reported here rather than turned into a count of zero,
+    /// which would read as "nothing was missing".
+    pub(crate) fn embed_pending(&self) -> VectorPass {
+        let mut embedded = 0usize;
+        let mut reason = None;
+        if !self.semantic_enabled() {
+            reason = Some(
+                "semantic search is turned off by the semantic_search setting, so no vector is made"
+                    .to_owned(),
+            );
+        } else {
+            loop {
+                match self.backfill_vectors(BACKFILL_BUDGET) {
+                    Ok(done) => {
+                        embedded += done;
+                        if done < BACKFILL_BUDGET {
+                            break;
+                        }
+                    }
+                    Err(error) => {
+                        tracing::warn!(%error, "the vector backfill stopped early");
+                        reason = Some(error.to_string());
+                        break;
+                    }
+                }
+            }
+        }
+        let without_vector = self
+            .vector_coverage()
+            .map(|(covered, total)| total - covered)
+            .ok();
+        // Left alone when everything has its vector, whatever stopped the loop
+        // on the way: the reason explains a gap, and there is none.
+        if without_vector == Some(0) {
+            reason = None;
+        }
+        VectorPass {
+            embedded,
+            without_vector,
+            reason,
+        }
     }
 
     /// Whether the `semantic_search` setting asks for vectors at all.

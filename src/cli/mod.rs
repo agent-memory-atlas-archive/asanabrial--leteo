@@ -79,7 +79,22 @@ pub async fn run(cli: Cli) -> Result<()> {
                 )?,
             };
             let target = store_config(&cli)?.database_path;
-            return print_json(&crate::engram::adopt(&source, &target, *dry_run)?);
+            let adoption = crate::engram::adopt(&source, &target, *dry_run)?;
+            let mut output = serde_json::to_value(&adoption)?;
+            // A dry run wrote nothing, so there is nothing to give a vector to.
+            // Opened only now: adoption replaces the file, and a store opened
+            // before it would hold the one that was replaced.
+            if !*dry_run {
+                let store = Store::open(store_config(&cli)?)
+                    .context("open the adopted store to give its memories their vectors")?;
+                if let Some(object) = output.as_object_mut() {
+                    object.insert(
+                        "vectors".to_owned(),
+                        serde_json::to_value(store.embed_pending())?,
+                    );
+                }
+            }
+            return print_json(&output);
         }
         Command::Setup {
             agent,
@@ -772,24 +787,7 @@ pub async fn run(cli: Cli) -> Result<()> {
             // has searched since the vectors stopped being built during a search
             // has nobody else to ask. It loads the model, and steps through the
             // store a bounded chunk at a time rather than all at once.
-            let embedded = repair.then(|| {
-                let mut total = 0usize;
-                loop {
-                    match store.backfill_vectors(crate::store::semantic_stage::BACKFILL_BUDGET) {
-                        Ok(done) => {
-                            total += done;
-                            if done < crate::store::semantic_stage::BACKFILL_BUDGET {
-                                break;
-                            }
-                        }
-                        Err(error) => {
-                            tracing::warn!(%error, "the vector backfill stopped early");
-                            break;
-                        }
-                    }
-                }
-                total
-            });
+            let embedded = repair.then(|| store.embed_pending().embedded);
             // And the captures a busy hook left beside the database. Before the
             // report, so the `hook_spool` check describes the spool as it is
             // after the repair rather than as it was when somebody asked.
@@ -922,7 +920,15 @@ pub async fn run(cli: Cli) -> Result<()> {
             let path = absolutize(&file)?;
             let json = std::fs::read_to_string(&path)
                 .with_context(|| format!("read import file {}", path.display()))?;
-            print_json(&store.import_json(&json)?)?;
+            let imported = store.import_json(&json)?;
+            let mut output = serde_json::to_value(&imported)?;
+            if let Some(object) = output.as_object_mut() {
+                object.insert(
+                    "vectors".to_owned(),
+                    serde_json::to_value(store.embed_pending())?,
+                );
+            }
+            print_json(&output)?;
         }
         Command::ObsidianExport {
             vault,
