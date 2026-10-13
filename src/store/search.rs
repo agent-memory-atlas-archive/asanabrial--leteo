@@ -1074,9 +1074,8 @@ impl Store {
     /// search that means to find one asks for it by its own words, and the
     /// stages above answer that.
     ///
-    /// The floor is `RECALL_MARGIN_UNSEEN`, the same number the hint uses for a
-    /// memory the session has not already been shown, and for the same reason:
-    /// there is no opening block here to have shown anything.
+    /// The floor is `FALLBACK_RECALL_MARGIN`, looser than the hint's: somebody
+    /// asked, and every stricter stage has already found nothing.
     fn nearest_observations(
         &self,
         query: &str,
@@ -1099,7 +1098,7 @@ impl Store {
         let mut ranks: Vec<f64> = candidates.iter().map(|row| row.rank).collect();
         ranks.sort_by(|left, right| left.total_cmp(right));
         let median = ranks[ranks.len() / 2];
-        candidates.retain(|candidate| candidate.rank <= median * RECALL_MARGIN_UNSEEN);
+        candidates.retain(|candidate| candidate.rank <= median * FALLBACK_RECALL_MARGIN);
         candidates.truncate(limit);
         Ok(candidates)
     }

@@ -57,13 +57,13 @@ pub(crate) const RECALL_MARGIN: f64 = 1.6;
 
 /// The looser bar the typed-search fallback keeps.
 ///
-/// Only `nearest_observations` reads it now. The per-prompt hint used to apply
-/// it to every memory outside the opening block and no longer does: one margin,
-/// `RECALL_MARGIN`, decides there, for the reason written in `prompt_matches`.
-/// The fallback is a different question -- somebody asked, and the stage runs
-/// only after every stricter one found nothing -- so it keeps the number it was
-/// built on.
-pub(crate) const RECALL_MARGIN_UNSEEN: f64 = 1.2;
+/// Only `nearest_observations` reads it. The per-prompt hint is decided by
+/// `RECALL_MARGIN` alone, for the reason written in `prompt_matches`; it used
+/// to apply this looser number to memories outside the opening block, and that
+/// distinction is gone. The fallback is a different question -- somebody asked,
+/// and the stage runs only after every stricter one found nothing -- so it
+/// keeps the number it was built on.
+pub(crate) const FALLBACK_RECALL_MARGIN: f64 = 1.2;
 
 /// How much better than the ordinary a memory must score to be proposed as
 /// something a save might contradict.
