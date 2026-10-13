@@ -817,6 +817,103 @@ fn cli_adopts_an_engram_installation_and_then_refuses_to_do_it_twice() {
     assert_eq!(relation_count(&engram), 1);
 }
 
+/// Adds `count` memories to an Engram fixture, so a pass has to take more than
+/// one bounded step to reach them all.
+fn engram_fixture_with_extra(path: &Path, count: usize) {
+    engram_fixture(path);
+    let connection = rusqlite::Connection::open(path).expect("open Engram fixture");
+    let mut insert = connection
+        .prepare(
+            "INSERT INTO observations (sync_id, session_id, type, title, content, project)
+             VALUES (?1, 's1', 'discovery', ?2, ?3, 'moving-in')",
+        )
+        .expect("prepare extra rows");
+    for index in 0..count {
+        insert
+            .execute(rusqlite::params![
+                format!("extra-{index}"),
+                format!("Extra memory {index}"),
+                format!("Body number {index} about nothing in particular"),
+            ])
+            .expect("insert extra row");
+    }
+}
+
+fn vectors_line(database: &Path, model: Option<&Path>) -> Value {
+    let mut command = leteo(database);
+    if let Some(model) = model {
+        command.env("LETEO_MODEL_DIR", model);
+    }
+    let report = run_json(command.arg("doctor").arg("--check").arg("semantic_vectors"));
+    report["checks"][0].clone()
+}
+
+/// An import with no model installed still lands, and says how many rows it
+/// left without a vector and why, rather than reporting nothing.
+#[test]
+fn engram_adoption_without_a_model_reports_the_rows_it_left_without_a_vector() {
+    let temp = tempfile::tempdir().expect("create adoption test directory");
+    let engram = temp.path().join("engram.db");
+    let database = temp.path().join("leteo.db");
+    engram_fixture(&engram);
+
+    let preview = run_json(
+        leteo(&database)
+            .arg("import")
+            .arg("--from-engram")
+            .arg("--source")
+            .arg(&engram)
+            .arg("--dry-run"),
+    );
+    assert!(
+        preview.get("vectors").is_none(),
+        "a dry run writes nothing, so it has no vectors to report: {preview}"
+    );
+
+    let adopted = run_json(
+        leteo(&database)
+            .arg("import")
+            .arg("--from-engram")
+            .arg("--source")
+            .arg(&engram),
+    );
+    assert_eq!(adopted["adopted"]["observations"], json!(2));
+    assert_eq!(adopted["vectors"]["embedded"], json!(0), "{adopted}");
+    assert_eq!(adopted["vectors"]["without_vector"], json!(2), "{adopted}");
+    let reason = adopted["vectors"]["reason"].as_str().unwrap_or_default();
+    assert!(reason.contains("not installed"), "{adopted}");
+}
+
+/// Adopting an Engram store with the model installed leaves no memory without
+/// its vector, including the ones past the first bounded step.
+#[test]
+fn engram_adoption_gives_every_adopted_memory_its_vector() {
+    let Some(model) = repository_model() else {
+        return;
+    };
+    let temp = tempfile::tempdir().expect("create adoption test directory");
+    let engram = temp.path().join("engram.db");
+    let database = temp.path().join("leteo.db");
+    engram_fixture_with_extra(&engram, 1030);
+
+    let adopted = run_json(
+        leteo(&database)
+            .env("LETEO_MODEL_DIR", &model)
+            .arg("import")
+            .arg("--from-engram")
+            .arg("--source")
+            .arg(&engram),
+    );
+    assert_eq!(adopted["vectors"]["embedded"], json!(1032), "{adopted}");
+    assert_eq!(adopted["vectors"]["without_vector"], json!(0), "{adopted}");
+    assert!(adopted["vectors"].get("reason").is_none(), "{adopted}");
+    let line = vectors_line(&database, Some(&model));
+    assert_eq!(line["ok"], json!(true), "{line}");
+}
+
+/// The JSON import is the sibling: it embeds one bounded step and leaves the
+/// rest to a background backfill a command-line run does not have.
+
 #[test]
 fn cli_setup_offers_the_engram_it_finds_and_stops_once_there_is_nothing_to_offer() {
     let temp = tempfile::tempdir().expect("create setup test directory");
