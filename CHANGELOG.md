@@ -6,6 +6,16 @@ All notable changes to Leteo are documented in this file.
 
 ### Added
 
+- **The session cost the docs quote can be re-measured by anyone.**
+  `tools/memory-bench/session_cost.py` runs both engines' hooks and MCP servers over
+  throwaway copies of stores you name and totals what the model is sent in one
+  session, with the schemas paid upfront or deferred; `--labels` replays the
+  per-prompt hint over a labelled sample and reports how often it is silent and
+  how often it names the right memory. `docs/does-memory-save-tokens.md` is
+  corrected with it: the agent profile has 20 tools, not 19, and most of the
+  `tools/list` bytes it called a fixed cost are output schemas the model is not
+  sent (#198).
+
 - **Pi gets a package that registers Leteo's MCP server itself.** `leteo setup
   pi` writes `plugin/pi` into Pi's agent directory, lists it under `packages` in
   `settings.json` (idempotent, and the other settings and packages are left as

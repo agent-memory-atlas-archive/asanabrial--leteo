@@ -65,24 +65,61 @@ On B2, the arm without memory went **0 for 3** — and all three declared themse
 
 ## What it costs to have it at all
 
-A session pays this before anyone asks anything. Byte counts are measured; the token column is bytes divided by four, which is a rule of thumb and not a tokenizer.
+A session pays this before anyone asks anything, and some of it again every time the context is compacted. Everything here is what the model is sent, measured by running the shipped hooks and the MCP server over a copy of a store and counting the text they return, with tiktoken's `cl100k_base` as a proxy for the model's tokenizer. It is a proxy: the real count differs, and what it is good for is setting two engines side by side under the same ruler.
+
+Conditions, because the figures are meaningless without them: **2026-10-13**, Leteo 0.3.0 at the head of this branch (`394d997`) and Engram 3.4.0, each over a copy of the same 1,048-memory store (1,017 of them in the project the session runs in), `--tools=agent` for both servers, a 20-prompt session, and a fixed mix of one `mem_context`, six `mem_search` and three `mem_save` calls. The prompts, queries and saves came from the project the store was copied from, so they are not published; the committed ones are synthetic and give different absolute numbers.
 
 ```
-  the `tools/list` array (19 tools, agent)      47,781 B   ~11,945 tokens
-  MCP server instructions                       2,250 B         562
-  session-start directive                         925 B         231
-  the memory block itself (50 memories)        10,170 B       2,542
-                                               --------   -----------
-                                               61,126 B   ~15,280 tokens
+                                   Leteo    Engram     Leteo vs Engram
+  session start                    1,586     1,300     +22.0%
+  per-prompt hook, 20 prompts      1,410       421     +234.9%   (Leteo spoke on 17 prompts, Engram on 1)
+  post-compaction                  1,266     1,629     -22.3%
+  mem_context                      2,670     2,594     +2.9%
+  mem_save (median of 5)             299       395     -24.3%
+  mem_search (mean of 20)            726       909     -20.1%
+  tools/list (input schemas)       5,195     5,028     +3.3%     (20 tools against 19)
+  server instructions                411       412     -0.2%
+                                  ------    ------
+  one session, schemas upfront    17,791    18,023     -1.3%
+  one session, schemas deferred   12,185    12,583     -3.2%
 ```
 
-(The column rounds per row, so it sums to 15,280 where 61,126/4 is 15,281.5.)
+*Upfront* pays every tool's schema in every session. *Deferred* is for a client that loads schemas only when a tool is first used, so they cost nothing until then; it is the same sum without the `tools/list` and `server instructions` lines. Engram's per-prompt figure is one 387-token reminder on the first prompt plus 34 for the save nudge it fires once in a session, which the harness triggers by ageing the session in the copy.
 
-The schema figure is the one the MCP tool list measures, and the command that produces it also produces the 2,128 below, so both figures this page borrows can be re-derived rather than trusted.
+The same session that morning, before the changes between then and this page, was 22,565 upfront and 16,959 deferred for Leteo (at `78bc173`) against 17,734 and 12,294 for Engram, a gap of +27% and +38%. Engram's own figure moved by 1.6% between the two runs with no Engram change, mostly in `mem_context`; I did not isolate why, and it is the size of the difference to treat as noise when reading the rest.
 
-**78% of that is the tool list**, and I am not going to pretend it belongs to somebody else. That figure is *the largest fixed cost Leteo imposes*, and it breaks down. Only one thing in it says nothing about my tools: the JSON-Schema dialect declaration, *the only pure ceremony left among the keywords*, which weighs 2,128 bytes, about 532 tokens by the same rule of thumb. Even that is one line per schema, so it grows with how many tools I expose — what a server pays regardless is the declaration, not its size. Everything else is mine: the descriptions I wrote, the keywords carrying the shape of my own nineteen tools, and the names and structure under them. So the split is not schemas-versus-memory. It is 11,945 tokens of tool surface against 3,335 of context, and **both of those are mine**.
+**The per-prompt hook is the row where Leteo is worst, and it is not fixed.** On this store it speaks on 17 of 20 prompts, including "continue", "yes, go with that" and "looks good, commit it", each time with three memories chosen on the words of the prompt. Against a hand-labelled sample of 150 prompts over a real store the hint is now silent on 54 of the 90 that need nothing, where it was silent on 21 before the single relevance bar, and it names a right memory on 20 of the 60 that have one, where it named 21. On the imported copy used here that bar buys nothing yet: it is silent on 2 of 10 neutral prompts, before and after.
 
-That is the part worth taking away. I had spent weeks trimming the block's 2,542 tokens and had never once measured the 12,000 sitting next to it. It was never somebody else's number.
+### The tool list, corrected
+
+An earlier version of this page put the `tools/list` array at 19 tools, 47,781 bytes and about 12,000 tokens, and called it 78% of the fixed cost. Two things were wrong. The count: the agent profile has **20** tools (the default profile has 23). And the measure: the array holds more than the model is sent. A client shows the model each tool's name, description and input schema. The **output schema** of each tool is in the array too, and the model is not sent it. Counted properly:
+
+```
+  tools/list, as the server sends it        65,621 B   (20 tools)
+    of which outputSchema                   40,617 B   not model-visible
+    name + description + inputSchema        21,801 B   5,195 tokens
+      of which descriptions                  3,564 B
+      of which input schemas                16,971 B
+```
+
+The 47.8 KB figure was mostly output schemas, which is why it was far too large to be the cost of the tools. Engram publishes no output schemas, and that is the whole of the difference between the two engines' `tools/list` bytes; in the tokens the model reads they are within 3% of each other. This count takes the name, description and input schema as the model-visible part and leaves out `annotations`; that is an assumption about the client, and the one to check first if the totals look off.
+
+Each input schema starts with the JSON-Schema dialect declaration, 57 bytes times 20 tools, 1,140 bytes: the only pure ceremony in it. The rest is mine, the descriptions I wrote and the shape of my own tools. With the output schemas out, the tool list is 29% of a session's upfront total, not 78%, and under a client that defers schemas it is none of it.
+
+What I take from this is narrower than what I wrote before. The cost I had been trimming, the memory block, is 1,586 tokens at the start and 1,266 after each compaction, and the tool list next to it is about three times that on an upfront client. Neither is the largest line. The replies to the tools in that mix are 7,923 tokens, 44% of the session upfront and 65% deferred, and they grow with use.
+
+### Re-running it
+
+```bash
+cargo build --release
+python3 tools/memory-bench/session_cost.py \
+    --leteo-bin target/release/leteo --leteo-store copy-of-leteo.db \
+    --engram-bin "$(command -v engram)" --engram-store copy-of-engram.db \
+    --engram-plugin-root path/to/engram/plugin/claude-code \
+    --project the-project --workdir /tmp
+```
+
+Run it with a Python that has `tiktoken` for the figures above; without it the output says `~tokens (bytes/4)` and must not be compared with them. The stores are copied with SQLite's backup API into a temporary directory and each engine runs there with its own `HOME`, data directory and port, so neither the originals nor a store in use are written. `--prompts`, `--queries` and `--saves` take your own inputs. To replay the per-prompt hook over a labelled sample instead, add `--labels labels.tsv`; the committed `session_cost_data/labels.example.tsv` shows the columns and is run against `--build-fixture`'s synthetic store. `tools/memory-bench/bench_cost.py` prints the same hook costs beside its byte counts.
 
 ## Why the saving is small here, and where it would not be
 
