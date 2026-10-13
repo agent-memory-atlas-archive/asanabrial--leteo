@@ -142,7 +142,11 @@ test("session_start opens the session as the Pi package", async () => {
     leteo(pi as any)
     await pi.handlers.get("session_start")!({ type: "session_start", reason: "startup" }, context())
     const [started] = hooks(h, "session-start")
-    assert.deepEqual(started.payload, { session_id: "pi-session-1", cwd: "/work/project" })
+    assert.deepEqual(started.payload, {
+      session_id: "pi-session-1",
+      cwd: "/work/project",
+      without_directive: true,
+    })
     assert.equal(started.client, "pi", "the binary's Pi guard lets this caller through")
   } finally {
     h.cleanup()

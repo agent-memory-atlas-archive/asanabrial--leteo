@@ -8,7 +8,9 @@
 // Run with: `node --test leteo.test.ts` from this directory.
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { readFileSync } from "node:fs"
+import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 
 import plugin, { Leteo, runHook } from "./leteo.ts"
@@ -103,4 +105,78 @@ test("no Bun-only API on the hook path", () => {
   const code = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "")
   assert.ok(!/\bBun\b/.test(code), "the plugin must not use Bun")
   assert.ok(code.includes("node:child_process"), "the hook path spawns through Node")
+})
+
+// A stand-in for the `leteo` binary that records every hook it is asked to run
+// and answers the way the real one does: a session opening without its
+// directive when asked, and the compaction text only for `post-compaction`.
+const FAKE_LETEO = `#!/usr/bin/env node
+const fs = require("node:fs")
+let body = ""
+process.stdin.setEncoding("utf8")
+process.stdin.on("data", (chunk) => (body += chunk))
+process.stdin.on("end", () => {
+  const event = process.argv[3]
+  const payload = JSON.parse(body || "{}")
+  fs.appendFileSync(process.env.LETEO_FAKE_LOG, JSON.stringify({ event, payload }) + "\\n")
+  const context = {
+    "session-start": payload.without_directive ? "MEMORY BLOCK" : "DIRECTIVE AND MEMORY BLOCK",
+    "post-compaction": "Context was compacted. MEMORY BLOCK",
+  }[event]
+  process.stdout.write(context ? JSON.stringify({ hookSpecificOutput: { additionalContext: context } }) : "{}")
+})
+`
+
+/** Points the plugin at the fake binary with a fresh log, and undoes it. */
+async function withFakeLeteo(run: (calls: () => any[]) => Promise<void>): Promise<void> {
+  const directory = mkdtempSync(join(tmpdir(), "leteo-opencode-"))
+  const binary = join(directory, "leteo")
+  const log = join(directory, "calls.log")
+  writeFileSync(binary, FAKE_LETEO)
+  chmodSync(binary, 0o755)
+  writeFileSync(log, "")
+  const previous = { bin: process.env.LETEO_BIN, log: process.env.LETEO_FAKE_LOG }
+  process.env.LETEO_BIN = binary
+  process.env.LETEO_FAKE_LOG = log
+  try {
+    await run(() =>
+      readFileSync(log, "utf8")
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line)),
+    )
+  } finally {
+    for (const [key, value] of [
+      ["LETEO_BIN", previous.bin],
+      ["LETEO_FAKE_LOG", previous.log],
+    ] as const) {
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
+    }
+  }
+}
+
+test("a fresh session is opened with the memory alone, not a compaction notice", async () => {
+  await withFakeLeteo(async (calls) => {
+    const hooks = (await Leteo({ directory: HERE } as any)) as Record<string, any>
+    await hooks.event({ event: { type: "session.created", properties: { info: { id: "s1" } } } })
+
+    const system = ["base"]
+    await hooks["experimental.chat.system.transform"]({ sessionID: "s1" }, { system })
+
+    const text = system.join("\n")
+    assert.ok(text.includes("MEMORY BLOCK"), "the memory reaches the agent")
+    assert.ok(!text.includes("Context was compacted"), "a fresh session was not compacted")
+    assert.ok(!text.includes("DIRECTIVE"), "the directive is not said on top of the protocol")
+    assert.equal(text.split("## Leteo Persistent Memory").length, 2, "the protocol appears once")
+    assert.deepEqual(
+      calls().map((call) => call.event),
+      ["session-start"],
+      "no compaction hook runs for a session nobody compacted",
+    )
+
+    const again = ["base"]
+    await hooks["experimental.chat.system.transform"]({ sessionID: "s1" }, { system: again })
+    assert.ok(!again.join("\n").includes("MEMORY BLOCK"), "the opening is handed over once")
+  })
 })

@@ -102,6 +102,8 @@ interface HookInput {
   prompt?: string
   stdout?: string
   source?: string
+  /** Leave the memory directive out of a `session-start` answer. */
+  without_directive?: boolean
 }
 
 /** The response `leteo hook` prints. */
@@ -194,6 +196,8 @@ export const Leteo: Plugin = async (ctx) => {
   const subAgentSessions = new Set<string>()
   const startedSessions = new Set<string>()
   const recoveredSessions = new Set<string>()
+  /** What `session-start` returned for a session, until its first turn takes it. */
+  const openings = new Map<string, string>()
 
   /**
    * Starts a memory session on demand, so a plugin loaded mid-conversation
@@ -204,25 +208,33 @@ export const Leteo: Plugin = async (ctx) => {
     if (!sessionID || subAgentSessions.has(sessionID)) return
     if (startedSessions.has(sessionID)) return
     startedSessions.add(sessionID)
-    await runHook("session-start", { session_id: sessionID, cwd: directory })
+    // Without the directive, because this plugin injects the protocol on every
+    // turn and the opening would say it twice. What is left is the language,
+    // the memory, and any verdicts waiting, which is what a fresh session needs.
+    const output = await runHook("session-start", {
+      session_id: sessionID,
+      cwd: directory,
+      without_directive: true,
+    })
+    const opening = additionalContext(output)
+    if (opening) openings.set(sessionID, opening)
   }
 
   /**
    * Returns this project's prior memory once per session.
    *
-   * The compaction hook is the right one here: unlike `session-start` it
-   * returns the memory alone, without the protocol this plugin already
-   * injects, so nothing is said twice.
+   * It is the opening `ensureSession` already asked for. `post-compaction` used
+   * to be called here for being the hook that returns the memory without the
+   * protocol, and its text begins "Context was compacted", which a session that
+   * had only just been created was told.
    */
   async function recoverContext(sessionID: string): Promise<string> {
     if (!sessionID || subAgentSessions.has(sessionID)) return ""
     if (recoveredSessions.has(sessionID)) return ""
     recoveredSessions.add(sessionID)
-    const output = await runHook("post-compaction", {
-      session_id: sessionID,
-      cwd: directory,
-    })
-    return additionalContext(output)
+    const opening = openings.get(sessionID) ?? ""
+    openings.delete(sessionID)
+    return opening
   }
 
   return {
@@ -251,6 +263,7 @@ export const Leteo: Plugin = async (ctx) => {
         startedSessions.delete(sessionID)
         subAgentSessions.delete(sessionID)
         recoveredSessions.delete(sessionID)
+        openings.delete(sessionID)
       }
     },
 

@@ -216,6 +216,17 @@ pub struct HookInput {
     /// event that carried the text.
     #[serde(default)]
     pub agent_type: Option<String>,
+    /// Leave the memory directive out of a `session-start` answer.
+    ///
+    /// For a host that injects the protocol itself on every turn: OpenCode and
+    /// Pi each carry a protocol of their own, and the directive on top was about
+    /// 925 bytes said twice in Pi. They used to ask `post-compaction` for the
+    /// bare memory block instead, which opened every fresh OpenCode session
+    /// with "Context was compacted" and an invitation to summarise nothing.
+    /// Everything else a session opening carries stays: the language, the
+    /// memory, and the verdicts waiting for a ruling.
+    #[serde(default)]
+    pub without_directive: bool,
 }
 
 impl HookInput {
@@ -497,7 +508,13 @@ fn run_event(store: &mut Store, event: HookEvent, input: &HookInput) -> Result<H
             }
             ensure_session(store, &session_id, &project, &directory, &mut outcome);
             sweep_stale_nudges(store);
-            let mut context = crate::setup::MEMORY_DIRECTIVE.to_owned();
+            let mut context = if input.without_directive {
+                String::new()
+            } else {
+                let mut directive = crate::setup::MEMORY_DIRECTIVE.to_owned();
+                directive.push_str("\n\n");
+                directive
+            };
             // Which language to write memories in, said every session.
             //
             // It cannot live in the skill: the skill ships identical to
@@ -505,11 +522,6 @@ fn run_event(store: &mut Store, event: HookEvent, input: &HookInput) -> Result<H
             // both routes — the plugin bundle and `leteo setup --hooks` — and
             // reflects the settings file as it is now rather than as it was
             // when somebody installed.
-            context.push_str(
-                "
-
-",
-            );
             context.push_str(&settings.language_directive());
             if let Some((memory, _)) = memory_context(store, &project, &settings, &mut outcome) {
                 context.push_str("\n\n");

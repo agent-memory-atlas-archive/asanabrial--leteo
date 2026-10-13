@@ -108,6 +108,8 @@ interface HookInput {
   prompt?: string
   stdout?: string
   source?: string
+  /** Leave the memory directive out of a `session-start` answer. */
+  without_directive?: boolean
 }
 
 /** The response `leteo hook` prints. */
@@ -327,7 +329,11 @@ export default function leteo(pi: ExtensionAPI) {
   pi.on("session_start", async (event, ctx) => {
     const id = sessionId(ctx)
     if (!id) return
-    const opening = additionalContext(await runHook("session-start", { session_id: id, cwd: ctx.cwd }))
+    // The protocol is appended to every turn below; the directive on top of it
+    // was about 925 bytes of the same rules said again.
+    const opening = additionalContext(
+      await runHook("session-start", { session_id: id, cwd: ctx.cwd, without_directive: true }),
+    )
     // A reload keeps the transcript, so the opening context is already in it.
     if (opening && event.reason !== "reload") pendingContext.set(id, opening)
   })
