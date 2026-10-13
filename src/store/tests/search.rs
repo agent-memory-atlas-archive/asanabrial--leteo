@@ -1031,9 +1031,10 @@ fn the_bar_is_the_same_for_every_memory_the_hint_might_name() {
     let median = -10.0;
 
     assert!(worth_naming(-20.0, median), "squarely good is named");
+    let between = median * (FALLBACK_RECALL_MARGIN + RECALL_MARGIN) / 2.0;
     assert!(
-        !worth_naming(-13.0, median),
-        "between 1.2 and 1.6 times the median is what the looser bar let through"
+        !worth_naming(between, median),
+        "between the fallback margin and the hint's is what the looser bar let through"
     );
     assert!(!worth_naming(-5.0, median), "weak is weak");
 }
@@ -1043,9 +1044,10 @@ fn the_bar_is_the_same_for_every_memory_the_hint_might_name() {
 ///
 /// Built from a store and not from numbers, because the claim is about what the
 /// hint does with a real ranking. The fixture is checked before it is used: it
-/// recomputes the ranks the hint sees and requires at least one candidate
-/// between 1.2 and 1.6 times the median, so a corpus that drifted into having
-/// none cannot let the first assertion pass for nothing.
+/// recomputes the ranks the hint sees and requires at least one candidate that
+/// clears `FALLBACK_RECALL_MARGIN` and not `RECALL_MARGIN`, the two bars the
+/// hint once used, so a corpus that drifted into having none, or a retuning
+/// that closes the band, cannot let the first assertion pass for nothing.
 #[test]
 fn a_memory_between_the_two_old_bars_is_no_longer_named() {
     let (_temp, mut store) = store();
@@ -1119,12 +1121,14 @@ fn a_memory_between_the_two_old_bars_is_no_longer_named() {
     let median = sorted[sorted.len() / 2];
     let between: Vec<&str> = ranked
         .iter()
-        .filter(|(_, rank)| *rank <= median * 1.2 && *rank > median * 1.6)
+        .filter(|(_, rank)| {
+            *rank <= median * FALLBACK_RECALL_MARGIN && *rank > median * RECALL_MARGIN
+        })
         .map(|(title, _)| title.as_str())
         .collect();
     assert!(
         !between.is_empty(),
-        "the fixture needs a candidate that clears 1.2 and not 1.6: {ranked:?}"
+        "the fixture needs a candidate that clears the fallback margin and not the hint's: {ranked:?}"
     );
 
     let named: Vec<String> = store

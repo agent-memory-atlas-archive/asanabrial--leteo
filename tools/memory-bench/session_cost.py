@@ -195,6 +195,7 @@ class Engine:
         self.cwd.mkdir(parents=True)
         self.plugin_root = pathlib.Path(plugin_root).resolve() if plugin_root else None
         self.server = None
+        self.failures = []
         bindir = pathlib.Path(self.bin).parent if os.sep in self.bin else None
         env = base_env(self.home, [bindir] if bindir else [])
         env["CLAUDE_CONFIG_DIR"] = str(self.home / ".claude")
@@ -251,9 +252,25 @@ class Engine:
                 "cwd": str(self.cwd), "hook_event_name": "UserPromptSubmit" if kind == "prompt" else "SessionStart"}
         body.update(extra)
         t0 = time.perf_counter()
-        r = subprocess.run(self.hook_cmd(kind), input=json.dumps(body), capture_output=True, text=True,
-                           cwd=self.cwd, env=self.env, timeout=120)
-        return r.stdout, r.stderr, r.returncode, (time.perf_counter() - t0) * 1000
+        try:
+            r = subprocess.run(self.hook_cmd(kind), input=json.dumps(body), capture_output=True, text=True,
+                               cwd=self.cwd, env=self.env, timeout=120)
+            out, err, rc = r.stdout, r.stderr, r.returncode
+        except subprocess.TimeoutExpired:
+            out, err, rc = "", "timed out after 120 s", -1
+        if rc != 0:
+            # Empty stdout from a crashed hook reads as "said nothing", which is
+            # a measurement of a quiet hook, not of a broken one. Recorded here,
+            # where every call passes, so no mode can forget to look.
+            first = next((l for l in err.splitlines() if l.strip()), "no stderr")
+            what = f"{kind} hook" + (f" on prompt {extra['prompt']!r}" if "prompt" in extra else "")
+            self.failures.append(f"{self.name}: {what} exited {rc}: {first}")
+        return out, err, rc, (time.perf_counter() - t0) * 1000
+
+    def refuse_failed_measurement(self):
+        """Exit non-zero, naming each failed hook, if any hook did not exit cleanly."""
+        if self.failures:
+            sys.exit("measurement failed, no result printed:\n  " + "\n  ".join(self.failures))
 
     def mcp_cmd(self):
         return [self.bin, "mcp", "--tools=agent"]
@@ -469,7 +486,9 @@ def run_session(args, count, unit, work):
         raw = raws[eng.name] = {}
         eng.start()
         try:
-            r = {"hooks": hooks_measure(eng, prompts, count, raw),
+            hooks = hooks_measure(eng, prompts, count, raw)
+            eng.refuse_failed_measurement()
+            r = {"hooks": hooks,
                  "mcp": mcp_measure(eng, queries, saves, count, raw)}
         finally:
             eng.stop()
@@ -581,6 +600,7 @@ def run_labels(args, count, unit, work):
     eng = Engine("leteo", args.leteo_bin, args.leteo_store, work, args.project,
                  model_dir=args.model_dir, settings=args.leteo_settings)
     res = replay(eng, items, count)
+    eng.refuse_failed_measurement()
     s = score(res)
     print(f"\nUnit: {unit}. {len(items)} labelled prompts, store copy of {args.leteo_store}\n")
     print(f"silent on neutral prompts : {s['neutral_silent']}/{s['neutral']}")

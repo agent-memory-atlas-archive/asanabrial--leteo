@@ -6,7 +6,9 @@ No real engine is started. The end-to-end case drives the labels mode with a
 stub binary that answers the prompt hook from a fixed rule, which exercises the
 copy, the isolated environment, the time cut and the scoring together.
 """
+import contextlib
 import hashlib
+import io
 import json
 import os
 import pathlib
@@ -214,6 +216,51 @@ class EndToEnd(unittest.TestCase):
         self.assertEqual((s["related_named"], s["related"]), (2, 2))
         self.assertEqual(s["hook_failures"], 0)
         self.assertEqual(sha(d / "store.db"), before, "the store that was given must not change")
+
+
+FAILING_STUB = """#!{python}
+import sys
+sys.stderr.write("boom: {why}\\nsecond line\\n")
+sys.exit(3)
+"""
+
+
+class HookFailure(unittest.TestCase):
+    """A hook that exits non-zero has produced no measurement, not a quiet one."""
+
+    def setup(self, why):
+        d = pathlib.Path(tempfile.mkdtemp())
+        stub = d / "leteo"
+        stub.write_text(FAILING_STUB.format(python=sys.executable, why=why))
+        stub.chmod(stub.stat().st_mode | stat.S_IEXEC)
+        tiny_store(d / "store.db")
+        return d, stub
+
+    def run_failing(self, d, stub, extra):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            with self.assertRaises(SystemExit) as ctx:
+                sc.main(["--leteo-bin", str(stub), "--leteo-store", str(d / "store.db"), *extra])
+        return str(ctx.exception.code), buf.getvalue()
+
+    def test_session_mode_names_the_failed_hook_and_prints_no_table(self):
+        d, stub = self.setup("session")
+        prompts = d / "p.txt"
+        prompts.write_text("one prompt\n")
+        msg, out = self.run_failing(d, stub, ["--prompts", str(prompts)])
+        self.assertIn("leteo: start hook exited 3: boom: session", msg)
+        self.assertIn("one prompt", msg)
+        self.assertNotIn("second line", msg)
+        self.assertEqual(out, "", "no table may be printed for a measurement with a failed hook")
+
+    def test_labels_mode_names_the_failed_prompt_and_prints_no_score(self):
+        d, stub = self.setup("labels")
+        (d / "l.tsv").write_text(
+            "id\tcreated_at\tproject\tsource\tprompt\tlabel\tbest_memory_ids\n"
+            "s2\tx\tp\tsynthetic\tok thanks\tneutral\t\n")
+        msg, out = self.run_failing(d, stub, ["--labels", str(d / "l.tsv")])
+        self.assertIn("prompt 'ok thanks' exited 3: boom: labels", msg)
+        self.assertEqual(out, "")
 
 
 if __name__ == "__main__":

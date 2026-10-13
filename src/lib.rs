@@ -95,7 +95,7 @@ pub mod measure {
     pub const RECALL_SAMPLE: usize = crate::store::RECALL_SAMPLE;
     pub const MIN_RECALL_SAMPLE: usize = crate::store::MIN_RECALL_SAMPLE;
     pub const RECALL_MARGIN: f64 = crate::store::RECALL_MARGIN;
-    pub const RECALL_MARGIN_UNSEEN: f64 = crate::store::RECALL_MARGIN_UNSEEN;
+    pub const FALLBACK_RECALL_MARGIN: f64 = crate::store::FALLBACK_RECALL_MARGIN;
 
     pub fn prompt_recall_sql() -> String {
         crate::store::search::prompt_recall_sql()
