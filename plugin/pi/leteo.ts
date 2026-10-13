@@ -71,8 +71,14 @@ duplicate; call \`mem_suggest_topic_key\` when unsure.
 
 ### Recall before acting
 
-When prior work may be relevant, call \`mem_context\` first. If it is not there,
-call \`mem_search\`, then \`mem_get_observation\` for the full text.
+When prior work may be relevant, call \`mem_search\` with the words of the thing you are asking
+about, then \`mem_get_observation\` when the complete observation is needed.
+
+\`mem_context\` answers a different question — everything a project holds — and it is what a session
+opens with where Leteo installs hooks. Measured on a real store, that opening block named thirty
+memories as titles in 3.4 KB and \`mem_context\` came back with the same thirty, previews included,
+in 8.4 KB. So call it when the session did not open with one, when you have lost it, or for another
+project; not as the first step of looking something up.
 
 ### Projects
 
@@ -85,8 +91,8 @@ which project it belongs to, then retry with their choice plus
 ### Close sessions
 
 Before saying the work is done, call \`mem_session_summary\` with the goal,
-discoveries, accomplishments, next steps, and relevant files. After a
-compaction, persist the compacted summary first, then call \`mem_context\`.`
+discoveries, accomplishments, next steps, and relevant files. After context compaction,
+persist the compacted summary first and then restore context with \`mem_context\`.`
 
 /**
  * Pi names an MCP server's tools `mcp__<server>__<tool>`, and the protocol

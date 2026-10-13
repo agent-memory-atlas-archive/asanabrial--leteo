@@ -689,3 +689,61 @@ fn the_pi_package_registers_the_default_tool_profile() {
         leteo::setup::DEFAULT_TOOLS
     );
 }
+
+/// The protocol text a TypeScript plugin embeds, with its escaped backticks
+/// restored.
+fn embedded_protocol(plugin: &str) -> String {
+    let source = std::fs::read_to_string(repository_root().join(plugin))
+        .unwrap_or_else(|error| panic!("read {plugin}: {error}"));
+    let start = source
+        .find("const MEMORY_PROTOCOL = `")
+        .unwrap_or_else(|| panic!("{plugin} embeds no MEMORY_PROTOCOL"))
+        + "const MEMORY_PROTOCOL = `".len();
+    let length = source[start..]
+        .find("`\n")
+        .unwrap_or_else(|| panic!("{plugin}: MEMORY_PROTOCOL is never closed"));
+    source[start..start + length].replace("\\`", "`")
+}
+
+/// One `###` section of a protocol, whitespace collapsed so that a plugin may
+/// wrap its lines where the Rust constant wraps them elsewhere.
+fn protocol_section(protocol: &str, heading: &str) -> String {
+    let marker = format!("### {heading}");
+    let start = protocol
+        .find(&marker)
+        .unwrap_or_else(|| panic!("the protocol has no {heading:?} section"));
+    let rest = &protocol[start + marker.len()..];
+    let body = rest.find("\n### ").map_or(rest, |end| &rest[..end]);
+    body.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// The OpenCode and Pi plugins cannot import a Rust constant, so each carries a
+/// copy of the protocol, and the copies said the opposite of the original: both
+/// told the agent to call `mem_context` first, while the measurement in the
+/// Rust text is that it returns the memories the session already opened with, at
+/// twice the size. An agent that obeyed the plugin paid that on every lookup.
+/// What is held here is the recall rule and the post-compaction sentence, the
+/// two places the copies named `mem_context`.
+#[test]
+fn the_plugin_protocols_give_the_recall_rule_the_rust_protocol_gives() {
+    let rust = leteo::setup::MEMORY_PROTOCOL;
+    for plugin in ["plugin/opencode/leteo.ts", "plugin/pi/leteo.ts"] {
+        let embedded = embedded_protocol(plugin);
+        assert_eq!(
+            protocol_section(&embedded, "Recall before acting"),
+            protocol_section(rust, "Recall before acting"),
+            "{plugin} gives a different recall rule than src/setup/mod.rs"
+        );
+        let compaction = "After context compaction, persist the compacted summary first and then \
+                          restore context with `mem_context`.";
+        assert!(
+            protocol_section(&embedded, "Close sessions").contains(compaction)
+                && protocol_section(rust, "Close sessions").contains(compaction),
+            "{plugin} and src/setup/mod.rs disagree about what follows a compaction"
+        );
+        assert!(
+            !embedded.contains("mem_context` first"),
+            "{plugin} sends the agent to mem_context as its first step"
+        );
+    }
+}
