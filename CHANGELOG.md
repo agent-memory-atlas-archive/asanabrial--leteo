@@ -146,6 +146,12 @@ All notable changes to Leteo are documented in this file.
 
 ### Fixed
 
+- **Titles in the per-prompt hint and the verdict handover are bounded like the
+  opening block's.** The hint's memory lines, the title of the other memory in a
+  hint caveat, and the titles in the verdict handover printed the whole title,
+  while the opening block cuts at 140 characters; 93 of the 4,756 titles in a
+  real store are longer. All three now use the block's own rule.
+
 - **Claude Code's hooks no longer register a second session inside Pi.** Pi
   runs Claude models through pi-claude-bridge, which loads the user's Claude
   Code settings, so every `leteo hook` it fired put the conversation in the

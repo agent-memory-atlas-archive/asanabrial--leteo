@@ -102,14 +102,14 @@ pub(super) fn prompt_recall(
             "- #{} [{}] {}\n",
             observation.id,
             observation.kind,
-            crate::memory::normalize::one_line(&observation.title)
+            crate::recall::one_line_title(&observation.title)
         ));
         for caveat in caveats.get(&observation.sync_id).into_iter().flatten() {
             recall.push_str(&format!(
                 "  ({} #{}: {})\n",
                 caveat.verb.phrase(),
                 caveat.other_id,
-                caveat.other_title
+                crate::recall::one_line_title(&caveat.other_title)
             ));
         }
     }
@@ -313,7 +313,7 @@ pub(super) fn pending_handover(store: &Store, project: &str) -> Option<String> {
                 "  - #{} [{}] {}{}\n",
                 side.id,
                 side.kind,
-                crate::memory::normalize::one_line(&side.title),
+                crate::recall::one_line_title(&side.title),
                 side.topic_key
                     .as_deref()
                     .filter(|key| !key.trim().is_empty())

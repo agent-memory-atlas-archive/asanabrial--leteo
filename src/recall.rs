@@ -581,15 +581,6 @@ fn render_context(sections: &Sections, shown: &Shown, budget_bytes: usize) -> St
 /// warning nobody reads. The title of the other memory comes along: "this was
 /// overturned" without saying by what leaves the agent knowing only that it
 /// cannot trust what it just read.
-/// A title as a list prints it: one line, and short enough to sit on one.
-///
-/// The two surfaces that hand memories to an agent both print titles, and both
-/// print the title of a *second* memory beside a caveat. This is the shape
-/// they agree on; `normalize::one_line` is where the reason lives.
-pub fn one_line_title(value: &str) -> String {
-    truncate(value, TITLE_CHARS)
-}
-
 fn push_caveats(context: &mut String, caveats: &BTreeMap<String, Vec<Caveat>>, sync_id: &str) {
     for caveat in caveats.get(sync_id).into_iter().flatten() {
         context.push_str(&format!(
@@ -599,6 +590,17 @@ fn push_caveats(context: &mut String, caveats: &BTreeMap<String, Vec<Caveat>>, s
             truncate(&caveat.other_title, TITLE_CHARS)
         ));
     }
+}
+
+/// A title as a list prints it: one line, and short enough to sit on one.
+///
+/// Every surface that hands memories to an agent prints titles, and prints the
+/// title of a *second* memory beside a caveat. This is the one rule they share,
+/// so the block, the per-prompt hint and the handover cannot disagree about how
+/// long a title may be; `normalize::one_line` is where the reason for folding
+/// lives.
+pub fn one_line_title(value: &str) -> String {
+    truncate(value, TITLE_CHARS)
 }
 
 /// A preview, on one line, of at most `max_chars`.
@@ -1311,15 +1313,11 @@ And the tests could not see it, because a small store scores near zero."
         // nothing, so the only ceiling left on it was `max_observation_length`:
         // fifty thousand bytes, the same cap a memory's body gets.
         //
-        // The census is worth stating exactly, because an earlier version of
-        // this comment counted `one_line_title` as one of the sites that kept
-        // the promise and it prints nothing: no production path calls it, only
-        // `a_caveat_in_the_hint_prints_one_short_line`, which is a guard for
-        // the hint that never runs the hint. Two blind reviewers caught that
-        // independently. Three genuine sites are still unbounded and are not in
-        // this file — `src/hooks/context.rs:105`, `:112` and `:310` — so a
-        // reader auditing "every place a title is printed" should start there
-        // rather than believe this block is the whole surface.
+        // The three sites outside this file - the per-prompt hint, the title
+        // of the other memory in a hint caveat, and the verdict handover, all
+        // in `src/hooks/context.rs` - were unbounded the same way and now go
+        // through `one_line_title`, with a test each in `src/hooks/tests.rs`.
+        // `one_line_title` is the one rule for how long a printed title may be.
         //
         // Nothing had fallen in when this was fixed. Measured over a copy of a
         // real store, the two sections rendered 89 title lines across 27
