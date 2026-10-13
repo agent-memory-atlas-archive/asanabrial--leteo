@@ -385,7 +385,8 @@ fn platform_locale() -> Option<String> {
 ///
 /// The opening block is an index of titles, and how long that index is, is the
 /// one number that decides what a session costs before anybody has asked
-/// anything. It was fifty, chosen for shape rather than for size.
+/// anything. It was fifty, chosen for shape rather than for size; it is thirty
+/// now, the 50.4% row below.
 ///
 /// Measured on a real store, over its 586 distinct questions: for each one,
 /// the memory that best answers it among those written *before* it was found,
@@ -401,8 +402,11 @@ fn platform_locale() -> Option<String> {
 /// ```
 ///
 /// The first twenty buy 4.9 points a kilobyte and the last thirty buy 0.75, so
-/// the knee is around twenty to thirty and `Full` sits past it deliberately:
-/// what an agent is not told about, it does not know to ask for.
+/// the knee is around twenty to thirty and `Full` sits at the far side of it:
+/// thirty, 50.4%. The bytes in that table are from when the newest few memories
+/// carried a preview; the block is titles only now, so what thirty cost is
+/// measured again beside [`ContextSize::bytes`], and the percentages, which are
+/// about which memory is named and not about how it is printed, still hold.
 ///
 /// Three named sizes rather than a number, because the number that matters is
 /// what it buys, and that is what the names are for.
@@ -411,7 +415,8 @@ fn platform_locale() -> Option<String> {
 pub enum ContextSize {
     /// Twenty: 44.5% for 5 KB, for a small context window or a long session.
     Slim,
-    /// Fifty. What a session opens with unless somebody says otherwise.
+    /// Thirty: 50.4%, titles only. What a session opens with unless somebody
+    /// says otherwise.
     #[default]
     Full,
     /// Eighty: 61.5% for 20 KB, when the store matters more than the budget.
@@ -422,7 +427,7 @@ impl ContextSize {
     pub fn memories(self) -> usize {
         match self {
             Self::Slim => 20,
-            Self::Full => 50,
+            Self::Full => 30,
             Self::Deep => 80,
         }
     }
@@ -438,7 +443,29 @@ impl ContextSize {
     /// already are and only a store that outgrows them is cut. Derived from this
     /// project's own measurements rather than copied from Engram's single 16 KiB
     /// default, which is one number where this project has three.
+    ///
+    /// `Full` was measured again when the block lost its previews and the
+    /// default dropped to thirty memories: on a copy of a real store of 1,045
+    /// memories, the thirty-memory block for its main project is 3,425 bytes,
+    /// rounded up the same way. `Slim` and `Deep` rendered 2,479 and 8,395 bytes
+    /// there, far under the ceilings they still carry from the sizes above, and
+    /// were left as they were because their ceilings were not measured again.
     pub fn bytes(self) -> usize {
+        match self {
+            Self::Full => 4_000,
+            other => other.tool_bytes(),
+        }
+    }
+
+    /// The most a `mem_context` answer may carry, in bytes.
+    ///
+    /// The ceilings the three sizes were measured with, kept for the tool
+    /// because its JSON is not the markdown block: it still gives the newest
+    /// memories a preview, repeats a project and a count on every session, and
+    /// wraps all of it in structure. Sharing the markdown's `Full` ceiling cut
+    /// it to 4 KB, which is a different selection of memories rather than a
+    /// cheaper rendering of the same one.
+    pub fn tool_bytes(self) -> usize {
         match self {
             Self::Slim => 15_000,
             Self::Full => 32_000,
@@ -1203,16 +1230,16 @@ mod context_size_tests {
     ///
     /// Measured over the 586 distinct questions of a real store: for each, the
     /// memory that best answers it among those written before it, and whether
-    /// the opening block would have named it. 20 buys 44.5%, 50 buys 55.9%,
-    /// 80 buys 61.5%. Written out rather than read from the enum, because the
+    /// the opening block would have named it. 20 buys 44.5%, 30 buys 50.4%,
+    /// 50 buys 55.9%, 80 buys 61.5%. Written out rather than read from the enum, because the
     /// numbers *are* the decision.
     #[test]
     fn each_size_names_the_measured_number_of_memories() {
         assert_eq!(ContextSize::Slim.memories(), 20);
-        assert_eq!(ContextSize::Full.memories(), 50);
+        assert_eq!(ContextSize::Full.memories(), 30);
         assert_eq!(ContextSize::Deep.memories(), 80);
         assert_eq!(ContextSize::default(), ContextSize::Full);
-        assert_eq!(Settings::default().context_size().memories(), 50);
+        assert_eq!(Settings::default().context_size().memories(), 30);
     }
 
     #[test]
@@ -1240,7 +1267,7 @@ mod context_size_tests {
         assert_eq!(settings.voice, Voice::Quiet);
         assert_eq!(
             settings.context_size().memories(),
-            50,
+            30,
             "an unreadable size is nobody having chosen one"
         );
     }

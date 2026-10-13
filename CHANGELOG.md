@@ -81,6 +81,29 @@ All notable changes to Leteo are documented in this file.
 
 ### Changed
 
+- **A session opens with thirty memories as titles, not fifty with previews.**
+  The default `full` size now names thirty memories (50.4% of the questions
+  measured against a real store, against 55.9% for fifty), and the opening block
+  carries no content under any of them: the newest five no longer open with their
+  first three hundred characters, and pinned memories are titles too. `slim` and
+  `deep` keep twenty and eighty, and `mem_context` follows the setting for its
+  count but keeps its own previews and its own byte ceiling. The markdown
+  block's `full` ceiling was measured again at 4,000 bytes (3,425 for the
+  thirty-memory block of a real store). The first thirty are the same memories,
+  in the same order, as before. Measured on a copy of that store, session start
+  went from 2,521 to 1,586 tokens, post-compaction from 1,991 to 1,056, and
+  `mem_context` from 3,029 to 2,422. The skills now say every entry of the block
+  is a title alone.
+
+- **The opening block spends fewer tokens on line metadata.** A session line no
+  longer repeats the project the block is already scoped to (a block with no
+  project of its own, and any line from a different project, still names it) and
+  no longer ends in `[N observations]`; session and prompt timestamps, in the
+  block and in `mem_context`, are printed to the minute instead of the second.
+  Which memories, sessions and prompts are selected is unchanged. Measured on a
+  copy of a real store, session start went from 2,596 to 2,521 tokens,
+  post-compaction from 2,066 to 1,991, and `mem_context` from 3,039 to 3,029.
+
 - **basic-memory's row is measured over several passes, not once.** Its
   full-text index is filled asynchronously after `write_note` returns, and
   0.23.2 exposes no completion signal to wait on, so two loads of the same
@@ -136,6 +159,12 @@ All notable changes to Leteo are documented in this file.
   as a token count (#112, #200).
 
 ### Fixed
+
+- **Titles in the per-prompt hint and the verdict handover are bounded like the
+  opening block's.** The hint's memory lines, the title of the other memory in a
+  hint caveat, and the titles in the verdict handover printed the whole title,
+  while the opening block cuts at 140 characters; 93 of the 4,756 titles in a
+  real store are longer. All three now use the block's own rule.
 
 - **Claude Code's hooks no longer register a second session inside Pi.** Pi
   runs Claude models through pi-claude-bridge, which loads the user's Claude

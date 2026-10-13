@@ -32,11 +32,43 @@ static MARKDOWN_CODE: LazyLock<Regex> =
 static MARKDOWN_ITALIC: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\*([^*]+)\*").expect("italic regex is valid"));
 
+/// A timestamp as an agent reads it: to the minute.
+///
+/// The store keeps seconds and the opening block printed them, nine bytes a
+/// line on every session and prompt that nobody can act on — what separates
+/// two entries is the day and the hour. Anything not shaped like
+/// `YYYY-MM-DD HH:MM:SS` or its `T` form is returned as it came rather than
+/// cut blind.
+pub fn to_the_minute(value: &str) -> &str {
+    match value.as_bytes() {
+        [
+            _,
+            _,
+            _,
+            _,
+            b'-',
+            _,
+            _,
+            b'-',
+            _,
+            _,
+            b' ' | b'T',
+            _,
+            _,
+            b':',
+            _,
+            _,
+            ..,
+        ] => value.get(..16).unwrap_or(value),
+        _ => value,
+    }
+}
+
 /// A project name, as the store spells it.
 ///
 /// Folded to one line for the reason [`one_line`] gives about titles, and it
 /// is the same hole: the opening context prints the project of every recent
-/// session into a bullet — `- **{project}** ({date}) [{n} observations]` —
+/// session into a bullet — `- **{project}** ({date}): {summary}` —
 /// and `mem_session_start` accepts a name from an agent, because creating a
 /// project is what that tool is for. A name carrying a newline ends that
 /// bullet and starts another, and what follows reads as a second session, of a
@@ -974,11 +1006,10 @@ pub fn truncate_content(mut value: String, max_bytes: usize) -> String {
     // It used to be appended after the cut, so `max_bytes` was the size of
     // everything *except* the fifteen bytes that say it was cut. A caller
     // asking for four hundred got four hundred and fifteen, and the number is
-    // published: the tool descriptions promise "a 400-byte preview" and
-    // the skill tells agents the context opens with the first three hundred
-    // characters, so that they know to fetch the whole memory rather than
-    // answer from what they can see. A budget that is not the number quoted to
-    // the reader is a budget nobody can plan against.
+    // published: the tool descriptions promise "a 400-byte preview", so that
+    // agents know to fetch the whole memory rather than answer from what they
+    // can see. A budget that is not the number quoted to the reader is a budget
+    // nobody can plan against.
     const MARKER: &str = "... [truncated]";
     if max_bytes <= MARKER.len() {
         // No room to say anything about the cut; the text itself is all there
@@ -1469,6 +1500,17 @@ pub fn sqlite_datetime_modifier(minutes: i64) -> Cow<'static, str> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_timestamp_is_cut_to_the_minute_and_anything_else_is_left_alone() {
+        assert_eq!(to_the_minute("2026-08-04 18:20:31"), "2026-08-04 18:20");
+        assert_eq!(to_the_minute("2026-08-04T18:20:31Z"), "2026-08-04T18:20");
+        assert_eq!(to_the_minute("2026-08-04"), "2026-08-04");
+        assert_eq!(to_the_minute("yesterday at noon"), "yesterday at noon");
+        // Multibyte text in the digit positions is not a timestamp, and must
+        // not be sliced through a character.
+        assert_eq!(to_the_minute("20é6-08-04 18:20:31"), "20é6-08-04 18:20:31");
+    }
+
     use super::*;
 
     #[test]
@@ -2531,7 +2573,6 @@ mod idempotence_tests {
         let bounds = [
             crate::mcp::PREVIEW_BYTES,
             crate::memory::normalize::TITLE_CHARS,
-            crate::recall::CONTEXT_PREVIEW_CHARS,
             crate::recall::SESSION_LINE_CHARS,
             crate::recall::PROMPT_LINE_CHARS,
         ];

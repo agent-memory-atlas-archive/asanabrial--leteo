@@ -860,6 +860,111 @@ fn a_memory_a_later_one_overturned_is_not_handed_over() {
     );
 }
 
+/// A title long enough to be cut, ending in a word nothing else says.
+///
+/// The marker sits past the 140th character, so a line that carries it was
+/// not cut and one that does not was.
+fn overlong_title(opening: &str) -> String {
+    format!(
+        "{opening} {}ENDMARKER",
+        "and then some more words ".repeat(12)
+    )
+}
+
+/// Builds the corpus the hint needs relief from: a crowd that shares a word,
+/// and one memory with a title of the given text that answers the question.
+fn crowd_and_answer(store: &mut Store, title: &str) -> crate::memory::model::Observation {
+    for index in 0..14 {
+        store
+            .add_observation(memory(
+                &format!("Engine note {index}"),
+                "A passing remark about the rendering engine and nothing else",
+            ))
+            .unwrap();
+    }
+    store
+        .add_observation(memory(
+            title,
+            "The storage engine question was settled: SQLite, chosen for being local-first",
+        ))
+        .unwrap()
+        .observation
+}
+
+/// A title in the per-prompt hint is cut where the opening block cuts it.
+///
+/// The hint printed `one_line(title)`, which folds and cuts nothing, while the
+/// block bound the same title at `TITLE_CHARS`: 93 of 4,756 real titles were
+/// past it, and the hint is the line printed at every prompt.
+#[test]
+fn a_long_title_in_the_hint_is_cut_like_the_blocks() {
+    let (temp, mut store) = store();
+    let payload = input(temp.path());
+    run(&mut store, HookEvent::SessionStart, &payload).unwrap();
+    let long = overlong_title("We chose SQLite as the storage engine");
+    assert!(long.chars().count() > crate::memory::normalize::TITLE_CHARS);
+    let answer = crowd_and_answer(&mut store, &long);
+
+    let mut prompt = payload.clone();
+    prompt.prompt = "Which storage engine did we choose?".to_owned();
+    let hint = run(&mut store, HookEvent::UserPromptSubmit, &prompt)
+        .unwrap()
+        .additional_context
+        .expect("the prompt matches something");
+    let line = hint
+        .lines()
+        .find(|line| line.starts_with(&format!("- #{}", answer.id)))
+        .unwrap_or_else(|| panic!("the memory that answers is named: {hint}"));
+    assert!(line.contains("We chose SQLite"), "{line}");
+    assert!(!line.contains("ENDMARKER"), "the title was not cut: {line}");
+    assert!(line.ends_with("..."), "{line}");
+}
+
+/// The title of the other memory in a caveat is cut like any other.
+#[test]
+fn a_long_title_in_a_hint_caveat_is_cut_like_the_blocks() {
+    let (temp, mut store) = store();
+    let payload = input(temp.path());
+    run(&mut store, HookEvent::SessionStart, &payload).unwrap();
+    let answer = crowd_and_answer(
+        &mut store,
+        &overlong_title("We chose SQLite as the storage engine"),
+    );
+    let newer = store
+        .add_observation(memory(
+            "We moved the storage engine to Postgres",
+            "The storage engine is no longer SQLite",
+        ))
+        .unwrap()
+        .observation;
+    let relation = propose(&mut store, &newer.sync_id, &answer.sync_id);
+    store
+        .judge_relation(crate::memory::model::JudgeRelationParams {
+            judgment_id: relation,
+            relation: crate::store::RELATION_CONFLICTS_WITH.to_owned(),
+            marked_by_actor: "agent".to_owned(),
+            marked_by_kind: "agent".to_owned(),
+            ..Default::default()
+        })
+        .unwrap();
+
+    let mut prompt = payload.clone();
+    prompt.prompt = "Which storage engine did we choose?".to_owned();
+    let hint = run(&mut store, HookEvent::UserPromptSubmit, &prompt)
+        .unwrap()
+        .additional_context
+        .expect("the prompt matches something");
+    let caveat = hint
+        .lines()
+        .find(|line| line.starts_with("  (") && line.contains("We chose SQLite"))
+        .unwrap_or_else(|| panic!("a conflicting memory carries the caveat: {hint}"));
+    assert!(caveat.contains("We chose SQLite"), "{caveat}");
+    assert!(
+        !caveat.contains("ENDMARKER"),
+        "the title was not cut: {caveat}"
+    );
+}
+
 /// Files a pending pair the way a save that found a candidate leaves one, and
 /// answers with its `judgment_id`.
 fn propose(store: &mut Store, source: &str, target: &str) -> String {
@@ -885,6 +990,41 @@ fn verdict_block(context: &str) -> &str {
         .find("## Waiting on a verdict")
         .unwrap_or_else(|| panic!("no handover in this opening block: {context}"));
     &context[start..]
+}
+
+/// A title in the verdict handover is cut like the opening block's.
+#[test]
+fn a_long_title_in_the_handover_is_cut_like_the_blocks() {
+    let (temp, mut store) = store();
+    let payload = input(temp.path());
+    run(&mut store, HookEvent::SessionStart, &payload).unwrap();
+    let first = store
+        .add_observation(memory(
+            &overlong_title("Tabs are the rule"),
+            "we indent with tabs",
+        ))
+        .unwrap()
+        .observation;
+    let second = store
+        .add_observation(memory(
+            &overlong_title("Spaces are the rule"),
+            "we indent with spaces",
+        ))
+        .unwrap()
+        .observation;
+    propose(&mut store, &first.sync_id, &second.sync_id);
+
+    let context = run(&mut store, HookEvent::SessionStart, &payload)
+        .unwrap()
+        .additional_context
+        .expect("a session opening carries context");
+    let handed = verdict_block(&context);
+    assert!(handed.contains("Tabs are the rule"), "{handed}");
+    assert!(handed.contains("Spaces are the rule"), "{handed}");
+    assert!(
+        !handed.contains("ENDMARKER"),
+        "a title was not cut: {handed}"
+    );
 }
 
 /// Moves a pair's clock back, because the ordering under test is by date and

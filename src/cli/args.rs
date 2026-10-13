@@ -267,7 +267,7 @@ pub enum Command {
         language: Option<String>,
         /// How many memories a session opens with: `slim`, `full` or `deep`.
         ///
-        /// Twenty, fifty or eighty. What each buys is measured, and the table
+        /// Twenty, thirty or eighty. What each buys is measured, and the table
         /// is on `settings::ContextSize`: the first twenty are worth 4.9 points
         /// of recall a kilobyte and the last thirty 0.75. `slim` is for a small
         /// context window, `deep` for a store that matters more than the

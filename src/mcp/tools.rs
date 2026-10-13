@@ -639,8 +639,8 @@ impl LeteoMcpServer {
         // setting, never raises it: the setting is the budget a person chose for
         // this store, and one call is not the place to overrule it.
         let byte_budget = match params.byte_limit {
-            Some(asked) => asked.min(settings.context_size().bytes()),
-            None => settings.context_size().bytes(),
+            Some(asked) => asked.min(settings.context_size().tool_bytes()),
+            None => settings.context_size().tool_bytes(),
         };
         let named: Vec<String> = observations
             .iter()
