@@ -1006,11 +1006,10 @@ pub fn truncate_content(mut value: String, max_bytes: usize) -> String {
     // It used to be appended after the cut, so `max_bytes` was the size of
     // everything *except* the fifteen bytes that say it was cut. A caller
     // asking for four hundred got four hundred and fifteen, and the number is
-    // published: the tool descriptions promise "a 400-byte preview" and
-    // the skill tells agents the context opens with the first three hundred
-    // characters, so that they know to fetch the whole memory rather than
-    // answer from what they can see. A budget that is not the number quoted to
-    // the reader is a budget nobody can plan against.
+    // published: the tool descriptions promise "a 400-byte preview", so that
+    // agents know to fetch the whole memory rather than answer from what they
+    // can see. A budget that is not the number quoted to the reader is a budget
+    // nobody can plan against.
     const MARKER: &str = "... [truncated]";
     if max_bytes <= MARKER.len() {
         // No room to say anything about the cut; the text itself is all there
@@ -2574,7 +2573,6 @@ mod idempotence_tests {
         let bounds = [
             crate::mcp::PREVIEW_BYTES,
             crate::memory::normalize::TITLE_CHARS,
-            crate::recall::CONTEXT_PREVIEW_CHARS,
             crate::recall::SESSION_LINE_CHARS,
             crate::recall::PROMPT_LINE_CHARS,
         ];

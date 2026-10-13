@@ -6635,7 +6635,7 @@ fn every_ceiling_a_tool_publishes_is_one_something_applies() {
     // The byte ceiling a `byte_limit` publishes, which is the third number this
     // surface bounds an answer by: a list of rows, the depth of a context, and
     // now the bytes of one.
-    let bytes = crate::settings::ContextSize::Deep.bytes();
+    let bytes = crate::settings::ContextSize::Deep.tool_bytes();
 
     let mut published = Vec::new();
     for tool in server.router.list_all() {
@@ -6900,7 +6900,7 @@ fn a_context_answer_is_never_larger_than_the_size_byte_budget() {
             byte_limit: None,
         }))
         .expect("the context answers");
-    let budget = crate::settings::ContextSize::Full.bytes();
+    let budget = crate::settings::ContextSize::Full.tool_bytes();
     let serialized = serde_json::to_string(&answer).expect("the answer serializes");
     assert!(
         serialized.len() <= budget,
@@ -7504,7 +7504,7 @@ fn mem_context_does_not_grow_past_the_size_setting() {
         answer
     };
 
-    let asked = context(Some(crate::settings::ContextSize::Deep.bytes()));
+    let asked = context(Some(crate::settings::ContextSize::Deep.tool_bytes()));
     let natural = context(None);
     assert!(
         natural.memories_omitted > 0,

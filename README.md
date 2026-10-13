@@ -518,7 +518,7 @@ name, the ISO code and the spelling without the accent all work.
 reminder alone, or nothing. It is `reminders` unless you say otherwise: a report
 line on every prompt is noise nobody asked for, and the reminder is the line that
 does the work, so `all` is what brings the reports back. `context_size` is how
-many memories a session opens with: twenty, fifty or eighty, for a small context
+many memories a session opens with: twenty, thirty or eighty, for a small context
 window or for a store that
 matters more than the budget. `semantic_search` is whether a search the words
 cannot answer goes on to look by meaning, in all thirteen languages, with a model

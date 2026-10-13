@@ -81,6 +81,20 @@ All notable changes to Leteo are documented in this file.
 
 ### Changed
 
+- **A session opens with thirty memories as titles, not fifty with previews.**
+  The default `full` size now names thirty memories (50.4% of the questions
+  measured against a real store, against 55.9% for fifty), and the opening block
+  carries no content under any of them: the newest five no longer open with their
+  first three hundred characters, and pinned memories are titles too. `slim` and
+  `deep` keep twenty and eighty, and `mem_context` follows the setting for its
+  count but keeps its own previews and its own byte ceiling. The markdown
+  block's `full` ceiling was measured again at 4,000 bytes (3,425 for the
+  thirty-memory block of a real store). The first thirty are the same memories,
+  in the same order, as before. Measured on a copy of that store, session start
+  went from 2,521 to 1,586 tokens, post-compaction from 1,991 to 1,056, and
+  `mem_context` from 3,029 to 2,422. The skills now say every entry of the block
+  is a title alone.
+
 - **The opening block spends fewer tokens on line metadata.** A session line no
   longer repeats the project the block is already scoped to (a block with no
   project of its own, and any line from a different project, still names it) and

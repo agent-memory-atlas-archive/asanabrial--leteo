@@ -1861,7 +1861,7 @@ fn every_surface_that_opens_a_context_names_the_size_that_was_configured() {
     // Three surfaces build this same context and one of them was not asked.
     //
     // The session-start hook and `mem_context` both read `context_size`;
-    // `leteo context` used a constant twenty. The default is fifty, so on an
+    // `leteo context` used a constant twenty. The default was fifty, so on an
     // untouched installation a person at a terminal saw 40% of what their agent
     // was handed — and `leteo setup --context deep` moved two of the three.
     // Twenty is Slim's number, which is why it went unseen: the two agreed
@@ -1930,11 +1930,11 @@ fn every_surface_that_opens_a_context_names_the_size_that_was_configured() {
         )
     };
 
-    // Unset is the default, and the default is fifty rather than the twenty
+    // Unset is the default, and the default is thirty rather than the twenty
     // that used to be written out here.
     assert_eq!(
         from_the_hook(),
-        50,
+        30,
         "an untouched installation opens at full"
     );
     assert_eq!(
@@ -1943,7 +1943,7 @@ fn every_surface_that_opens_a_context_names_the_size_that_was_configured() {
         "the terminal and the agent are shown the same store"
     );
 
-    for (size, named) in [("slim", 20), ("full", 50), ("deep", 80)] {
+    for (size, named) in [("slim", 20), ("full", 30), ("deep", 80)] {
         std::fs::write(
             temp.path().join("settings.json"),
             format!("{{\"context_size\":\"{size}\"}}"),

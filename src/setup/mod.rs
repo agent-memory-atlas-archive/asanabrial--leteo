@@ -60,10 +60,10 @@ When prior work may be relevant, call `mem_search` with the words of the thing y
 about, then `mem_get_observation` when the complete observation is needed.
 
 `mem_context` answers a different question — everything a project holds — and it is what a session
-opens with where Leteo installs hooks. Measured on a real store, that opening block named fifty
-memories in 11 KB and `mem_context` came back with twenty of those same fifty in 22 KB. So call it
-when the session did not open with one, when you have lost it, or for another project; not as the
-first step of looking something up.
+opens with where Leteo installs hooks. Measured on a real store, that opening block named thirty
+memories as titles in 3.4 KB and `mem_context` came back with the same thirty, previews included,
+in 8.4 KB. So call it when the session did not open with one, when you have lost it, or for another
+project; not as the first step of looking something up.
 
 ### Close sessions
 
