@@ -913,6 +913,64 @@ fn engram_adoption_gives_every_adopted_memory_its_vector() {
 
 /// The JSON import is the sibling: it embeds one bounded step and leaves the
 /// rest to a background backfill a command-line run does not have.
+#[test]
+fn json_import_gives_every_imported_memory_its_vector_and_reports_the_gap_without_a_model() {
+    let temp = tempfile::tempdir().expect("create import test directory");
+    let engram = temp.path().join("engram.db");
+    let source = temp.path().join("source.db");
+    engram_fixture_with_extra(&engram, 1030);
+    run_json(
+        leteo(&source)
+            .arg("import")
+            .arg("--from-engram")
+            .arg("--source")
+            .arg(&engram),
+    );
+    let export_file = temp.path().join("export.json");
+    run_json(
+        leteo(&source)
+            .arg("export")
+            .arg("--output")
+            .arg(&export_file),
+    );
+
+    let bare = temp.path().join("bare.db");
+    let imported = run_json(leteo(&bare).arg("import").arg(&export_file));
+    assert_eq!(imported["observations_imported"], json!(1032), "{imported}");
+    assert_eq!(imported["vectors"]["embedded"], json!(0), "{imported}");
+    assert_eq!(
+        imported["vectors"]["without_vector"],
+        json!(1032),
+        "{imported}"
+    );
+    assert!(
+        imported["vectors"]["reason"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("not installed"),
+        "{imported}"
+    );
+
+    let Some(model) = repository_model() else {
+        return;
+    };
+    let modelled = temp.path().join("modelled.db");
+    let imported = run_json(
+        leteo(&modelled)
+            .env("LETEO_MODEL_DIR", &model)
+            .arg("import")
+            .arg(&export_file),
+    );
+    // The import's own bounded step embeds 1,024 before this pass starts, so
+    // the pass reports the 8 that step left behind: the gap a command-line run
+    // used to keep.
+    assert_eq!(imported["vectors"]["embedded"], json!(8), "{imported}");
+    assert_eq!(
+        imported["vectors"]["without_vector"],
+        json!(0),
+        "{imported}"
+    );
+}
 
 #[test]
 fn cli_setup_offers_the_engram_it_finds_and_stops_once_there_is_nothing_to_offer() {

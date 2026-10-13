@@ -137,6 +137,15 @@ All notable changes to Leteo are documented in this file.
 
 ### Fixed
 
+- **An import gives every memory its vector.** `import --from-engram` replaced
+  the database before any embedder could see it, so an adopted Engram store
+  came over with no vectors at all — 0 of 1,045 on a real copy — and was found
+  by its words only until a backfill caught up. A JSON import embedded one
+  budget step of 1,024 rows and left the rest. Both now embed every row before
+  the command returns, and report what they embedded as `vectors`; without the
+  semantic model the import still succeeds and says how many rows it left
+  without a vector and why.
+
 - **Claude Code's hooks no longer register a second session inside Pi.** Pi
   runs Claude models through pi-claude-bridge, which loads the user's Claude
   Code settings, so every `leteo hook` it fired put the conversation in the

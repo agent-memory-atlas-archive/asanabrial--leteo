@@ -920,7 +920,15 @@ pub async fn run(cli: Cli) -> Result<()> {
             let path = absolutize(&file)?;
             let json = std::fs::read_to_string(&path)
                 .with_context(|| format!("read import file {}", path.display()))?;
-            print_json(&store.import_json(&json)?)?;
+            let imported = store.import_json(&json)?;
+            let mut output = serde_json::to_value(&imported)?;
+            if let Some(object) = output.as_object_mut() {
+                object.insert(
+                    "vectors".to_owned(),
+                    serde_json::to_value(store.embed_pending())?,
+                );
+            }
+            print_json(&output)?;
         }
         Command::ObsidianExport {
             vault,
