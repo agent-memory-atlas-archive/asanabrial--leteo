@@ -204,5 +204,11 @@ test("what the per-prompt hook named reaches the model on every step of that tur
     await prompt("Something else entirely, please")
     assert.ok(!(await system()).includes("RECALL HINT"), "a later prompt with no hint drops the old one")
     assert.equal(calls().filter((call) => call.event === "user-prompt-submit").length, 2)
+
+    await prompt("Which storage engine did we choose?")
+    assert.ok((await system()).includes("RECALL HINT"))
+    await prompt("ok")
+    assert.ok(!(await system()).includes("RECALL HINT"), "a prompt too short for the hook drops the old hint")
+    assert.equal(calls().filter((call) => call.event === "user-prompt-submit").length, 3)
   })
 })

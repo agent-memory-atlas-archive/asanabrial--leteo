@@ -292,6 +292,10 @@ export const Leteo: Plugin = async (ctx) => {
       const content =
         text ||
         (summary ? `${summary.title ?? ""}\n${summary.body ?? ""}`.trim() : "")
+      // Dropped before the length check: a hint belongs to the turn the hook
+      // evaluated, and a short prompt the hook never sees would otherwise
+      // carry the previous turn's hint into its own.
+      hints.delete(sessionID)
       if (content.length <= MIN_PROMPT_LENGTH) return
 
       await ensureSession(sessionID)
@@ -303,7 +307,6 @@ export const Leteo: Plugin = async (ctx) => {
         }),
       )
       if (hint) hints.set(sessionID, hint)
-      else hints.delete(sessionID)
     },
 
     // A finished sub-agent usually reports what it learned; capture it.
