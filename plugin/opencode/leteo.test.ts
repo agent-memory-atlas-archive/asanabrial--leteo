@@ -122,6 +122,7 @@ process.stdin.on("end", () => {
   const context = {
     "session-start": payload.without_directive ? "MEMORY BLOCK" : "DIRECTIVE AND MEMORY BLOCK",
     "post-compaction": "Context was compacted. MEMORY BLOCK",
+    "user-prompt-submit": (payload.prompt || "").includes("storage") ? "RECALL HINT" : "",
   }[event]
   process.stdout.write(context ? JSON.stringify({ hookSpecificOutput: { additionalContext: context } }) : "{}")
 })
@@ -178,5 +179,30 @@ test("a fresh session is opened with the memory alone, not a compaction notice",
     const again = ["base"]
     await hooks["experimental.chat.system.transform"]({ sessionID: "s1" }, { system: again })
     assert.ok(!again.join("\n").includes("MEMORY BLOCK"), "the opening is handed over once")
+  })
+})
+
+test("what the per-prompt hook named reaches the model on every step of that turn only", async () => {
+  await withFakeLeteo(async (calls) => {
+    const hooks = (await Leteo({ directory: HERE } as any)) as Record<string, any>
+    await hooks.event({ event: { type: "session.created", properties: { info: { id: "s1" } } } })
+    const prompt = async (text: string) =>
+      hooks["chat.message"](
+        { sessionID: "s1" },
+        { parts: [{ type: "text", text }], message: {} },
+      )
+    const system = async () => {
+      const out = ["base"]
+      await hooks["experimental.chat.system.transform"]({ sessionID: "s1" }, { system: out })
+      return out.join("\n")
+    }
+
+    await prompt("Which storage engine did we choose?")
+    assert.ok((await system()).includes("RECALL HINT"), "the hint the hook recorded as shown is shown")
+    assert.ok((await system()).includes("RECALL HINT"), "and on the next model call of the same turn")
+
+    await prompt("Something else entirely, please")
+    assert.ok(!(await system()).includes("RECALL HINT"), "a later prompt with no hint drops the old one")
+    assert.equal(calls().filter((call) => call.event === "user-prompt-submit").length, 2)
   })
 })

@@ -198,6 +198,16 @@ export const Leteo: Plugin = async (ctx) => {
   const recoveredSessions = new Set<string>()
   /** What `session-start` returned for a session, until its first turn takes it. */
   const openings = new Map<string, string>()
+  /**
+   * What the per-prompt hook named for the turn in progress, by session.
+   *
+   * The hook records every memory it names as shown, so its answer has to reach
+   * the agent. `chat.message` cannot carry it: adding a part there would put the
+   * hint in the user's transcript as something they said. The system prompt is
+   * rebuilt for every model call of a turn, so the hint is kept until the next
+   * prompt replaces it and every step of the turn sees it.
+   */
+  const hints = new Map<string, string>()
 
   /**
    * Starts a memory session on demand, so a plugin loaded mid-conversation
@@ -264,6 +274,7 @@ export const Leteo: Plugin = async (ctx) => {
         subAgentSessions.delete(sessionID)
         recoveredSessions.delete(sessionID)
         openings.delete(sessionID)
+        hints.delete(sessionID)
       }
     },
 
@@ -284,11 +295,15 @@ export const Leteo: Plugin = async (ctx) => {
       if (content.length <= MIN_PROMPT_LENGTH) return
 
       await ensureSession(sessionID)
-      await runHook("user-prompt-submit", {
-        session_id: sessionID,
-        cwd: directory,
-        prompt: content,
-      })
+      const hint = additionalContext(
+        await runHook("user-prompt-submit", {
+          session_id: sessionID,
+          cwd: directory,
+          prompt: content,
+        }),
+      )
+      if (hint) hints.set(sessionID, hint)
+      else hints.delete(sessionID)
     },
 
     // A finished sub-agent usually reports what it learned; capture it.
@@ -324,6 +339,8 @@ export const Leteo: Plugin = async (ctx) => {
         if (recovered) {
           block += `\n\n${recovered}`
         }
+        const hint = hints.get(sessionID)
+        if (hint) block += `\n\n${hint}`
       }
 
       if (output.system.length > 0) {

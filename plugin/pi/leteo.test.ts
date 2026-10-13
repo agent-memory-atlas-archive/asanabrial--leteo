@@ -29,7 +29,7 @@ if (command === "hook") {
   process.stdin.on("data", (chunk) => (body += chunk))
   process.stdin.on("end", () => {
     log({ kind: "hook", event: rest[0], client: process.env.LETEO_HOOK_CLIENT, payload: JSON.parse(body || "{}") })
-    const context = { "session-start": "OPENING CONTEXT", "post-compaction": "RECOVERED CONTEXT" }[rest[0]]
+    const context = { "session-start": "OPENING CONTEXT", "post-compaction": "RECOVERED CONTEXT", "user-prompt-submit": "RECALL HINT" }[rest[0]]
     process.stdout.write(context ? JSON.stringify({ hookSpecificOutput: { additionalContext: context } }) : "{}")
     if (process.env.LETEO_FAKE_HOOK_EXIT) process.exit(Number(process.env.LETEO_FAKE_HOOK_EXIT))
   })
@@ -205,6 +205,10 @@ test("before_agent_start appends the protocol, the tool names, the opening conte
     assert.ok(options.appendSystemPrompt.startsWith("existing\n\n## Leteo Persistent Memory"))
     assert.ok(options.appendSystemPrompt.includes("mcp__leteo__mem_save"), "the model is told what Pi calls the tools")
     assert.ok(options.appendSystemPrompt.includes("OPENING CONTEXT"))
+    assert.ok(
+      options.appendSystemPrompt.includes("RECALL HINT"),
+      "what the per-prompt hook named reaches the model, because the hook records it as shown",
+    )
     assert.deepEqual(
       hooks(h, "user-prompt-submit").map((entry) => entry.payload),
       [{ session_id: "pi-session-1", cwd: "/work/project", prompt: "Why did we choose SQLite?" }],
@@ -217,6 +221,7 @@ test("before_agent_start appends the protocol, the tool names, the opening conte
     )
     assert.ok(second.appendSystemPrompt.startsWith("## Leteo Persistent Memory"))
     assert.ok(!second.appendSystemPrompt.includes("OPENING CONTEXT"), "the opening context is handed over once")
+    assert.ok(!second.appendSystemPrompt.includes("RECALL HINT"), "a prompt the hook never saw carries no hint")
     assert.equal(hooks(h, "user-prompt-submit").length, 1, "a prompt of ten characters or fewer is not kept")
   } finally {
     h.cleanup()

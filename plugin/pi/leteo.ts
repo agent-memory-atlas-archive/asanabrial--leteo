@@ -343,12 +343,22 @@ export default function leteo(pi: ExtensionAPI) {
     const source = lastInputSource
     lastInputSource = undefined
 
+    // Asked before the section is built because the hook records every memory it
+    // names as shown, so its answer has to reach the model: it is added to this
+    // run's system prompt, which is where Pi lets an extension speak per prompt.
+    const prompt = event.prompt?.trim() ?? ""
+    let hint = ""
+    if (id && source !== "extension" && prompt.length > MIN_PROMPT_LENGTH) {
+      hint = additionalContext(await runHook("user-prompt-submit", { session_id: id, cwd: ctx.cwd, prompt }))
+    }
+
     let section = `${MEMORY_PROTOCOL}\n\n${TOOL_NAMING}`
     const pending = id ? pendingContext.get(id) : undefined
     if (pending) {
       section += `\n\n${pending}`
       pendingContext.delete(id)
     }
+    if (hint) section += `\n\n${hint}`
 
     // The structured options are the supported place for an addition on newer
     // Pi: a returned `systemPrompt` replaces the whole prompt for the run and
@@ -362,10 +372,6 @@ export default function leteo(pi: ExtensionAPI) {
       result = { systemPrompt: base.length > 0 ? `${base}\n\n${section}` : section }
     }
 
-    const prompt = event.prompt?.trim() ?? ""
-    if (id && source !== "extension" && prompt.length > MIN_PROMPT_LENGTH) {
-      await runHook("user-prompt-submit", { session_id: id, cwd: ctx.cwd, prompt })
-    }
     return result
   })
 
