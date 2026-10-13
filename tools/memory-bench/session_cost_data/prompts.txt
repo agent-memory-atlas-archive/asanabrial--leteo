@@ -1,0 +1,20 @@
+Orders list gets slow on deep pages, how are we paging it?
+ok, thanks
+Should the client retry this failed call with backoff and jitter?
+yes, go ahead
+How do we stop a retried request from doing the work twice?
+run the tests
+Requests piled up when a dependency got slow, what did we change?
+looks good
+Which algorithm limits clients per API key?
+what is our parental leave policy
+Can I edit a migration file that already ran?
+continue
+The browser blocks the request with a preflight error
+commit this and open the pull request
+The order history endpoint is slow, looks like N+1 queries
+rename this helper to something clearer
+Where are the feature toggles decided?
+who approves travel expenses
+Where does client state live, and what holds server state?
+now push it
